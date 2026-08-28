@@ -1,0 +1,50 @@
+import type { NextConfig } from "next";
+
+const isProd = process.env.NODE_ENV === "production";
+
+const securityHeaders = [
+  // CSP is set dynamically in middleware.ts (nonce-based, per-request).
+  // All other headers below are static and safe to set here.
+
+  // ── HTTPS enforcement (HSTS) ──────────────────────────────────────────────
+  // Tells browsers to always use HTTPS for 1 year. Only effective in production.
+  ...(isProd
+    ? [{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains; preload" }]
+    : []),
+
+  // ── Prevent MIME sniffing ─────────────────────────────────────────────────
+  { key: "X-Content-Type-Options", value: "nosniff" },
+
+  // ── Block clickjacking ────────────────────────────────────────────────────
+  { key: "X-Frame-Options", value: "DENY" },
+
+  // ── Limit referrer information ────────────────────────────────────────────
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+
+  // ── Disable browser features the app doesn't use ─────────────────────────
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+  },
+
+  // ── Prevent cross-site scripting via DNS prefetch ─────────────────────────
+  { key: "X-DNS-Prefetch-Control", value: "off" },
+];
+
+const nextConfig: NextConfig = {
+  // Prevent Next.js from bundling @libsql/client — load it from Node.js at
+  // runtime instead. Bundling it causes two class instances (ESM + CJS) which
+  // breaks private class fields (#promiseLimitFunction).
+  serverExternalPackages: ["@libsql/client"],
+
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: securityHeaders,
+      },
+    ];
+  },
+};
+
+export default nextConfig;

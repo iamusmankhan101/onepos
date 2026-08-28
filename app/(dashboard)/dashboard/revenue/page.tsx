@@ -1,0 +1,1659 @@
+"use client";
+
+import { useState, useEffect, useMemo } from "react";
+import { getStoredAppointments } from "@/lib/storage";
+import { getInvoices } from "@/lib/invoices";
+import { getExpenses, type Expense, type ExpenseCategory } from "@/lib/expenses";
+import { getManualCashIncome, type ManualCashIncome } from "@/lib/cash-flow-income";
+import { getActiveSection } from "@/lib/sections";
+import type { Appointment } from "@/lib/types";
+import MobilePageHeader from "@/components/mobile-page-header";
+import PageTitle from "@/components/page-title";
+import {
+  Download, ArrowUpRight, ArrowDownRight,
+  TrendingUp, TrendingDown, CalendarDays, Percent, ChevronLeft,
+  ChevronDown, ChevronUp, Receipt, Clock, Wallet,
+} from "lucide-react";
+
+import { fmtCurrency as fmt } from "@/lib/format";
+import { syncFromDB } from "@/lib/turso-sync";
+const fmtK = (n: number) =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
+  : n >= 1_000   ? `${Math.round(n / 1_000)}K`
+  : String(Math.round(n));
+
+function computeYLabels(maxVal: number): string[] {
+  const step = maxVal <= 10_000 ? 2_500 : maxVal <= 50_000 ? 10_000 : maxVal <= 200_000 ? 50_000 : maxVal <= 1_000_000 ? 250_000 : 500_000;
+  const top = Math.ceil(maxVal / step) * step || step;
+  return [top, top * 0.75, top * 0.5, top * 0.25, 0].map(v => fmtK(v));
+}
+
+function hourLabel(hour: number): string {
+  if (hour === 0) return "12 AM";
+  if (hour === 12) return "12 PM";
+  return hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
+}
+
+type Period = "today" | "7d" | "14d" | "30d" | "1y" | "custom";
+
+const PERIODS: { key: Period; label: string; days: number }[] = [
+  { key: "today",  label: "Today",   days: 1   },
+  { key: "7d",     label: "7 Days",  days: 7   },
+  { key: "14d",    label: "14 Days", days: 14  },
+  { key: "30d",    label: "Month",   days: 30  },
+  { key: "1y",     label: "1 Year",  days: 365 },
+  { key: "custom", label: "Custom",  days: 0   },
+];
+
+const METHOD_COLORS: Record<string, string> = {
+  cash: "#22c55e", jazzcash: "#f97316", easypaisa: "#10b981",
+  raast: "#3b82f6", card: "#6366f1", bank: "#F97316",
+};
+const METHOD_LABELS: Record<string, string> = {
+  cash: "Cash", jazzcash: "JazzCash", easypaisa: "EasyPaisa",
+  raast: "Raast", card: "Card", bank: "Bank Transfer",
+};
+
+// Mirrors EXPENSE_CATEGORIES on the Cash Flow page (app/(dashboard)/dashboard/cash-flow/page.tsx)
+// — kept local rather than imported since page files in this app are self-contained.
+const EXPENSE_CATEGORIES: { key: ExpenseCategory; label: string; color: string }[] = [
+  { key: "rent",          label: "Rent",                color: "#ef4444" },
+  { key: "water_bill",    label: "Water Bill",          color: "#0ea5e9" },
+  { key: "electricity_bill", label: "Electricity Bill", color: "#f59e0b" },
+  { key: "committee",     label: "Committee",           color: "#14b8a6" },
+  { key: "salaries",      label: "Staff Salaries",      color: "#f97316" },
+  { key: "utilities",     label: "Utilities",           color: "#eab308" },
+  { key: "supplies",      label: "Products & Supplies", color: "#22c55e" },
+  { key: "equipment",     label: "Equipment",           color: "#3b82f6" },
+  { key: "marketing",     label: "Marketing",           color: "#f97316" },
+  { key: "food",          label: "Food & Tea",          color: "#ec4899" },
+  { key: "miscellaneous", label: "Miscellaneous",       color: "#6b7280" },
+];
+const EXPENSE_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CATEGORIES.map(c => [c.key, c.label]));
+const EXPENSE_COLORS: Record<string, string> = Object.fromEntries(EXPENSE_CATEGORIES.map(c => [c.key, c.color]));
+
+type RevTab = "overview" | "net";
+
+function toDateStr(d: Date) { return d.toLocaleDateString("en-CA"); }
+
+function fmtTime(t: string) {
+  const [hourValue, minuteValue] = t.split(":").map(Number);
+  if (!Number.isFinite(hourValue) || !Number.isFinite(minuteValue)) return t;
+  const period = hourValue < 12 ? "AM" : "PM";
+  return `${hourValue % 12 || 12}:${String(minuteValue).padStart(2, "0")} ${period}`;
+}
+
+function fmtShortDate(date: string) {
+  return new Date(`${date}T12:00:00`).toLocaleDateString("en-PK", { day: "numeric", month: "short" });
+}
+
+function getDaysArray(count: number): string[] {
+  const arr: string[] = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    arr.push(toDateStr(d));
+  }
+  return arr;
+}
+
+function getDaysInRange(start: string, end: string): string[] {
+  const arr: string[] = [];
+  const cur = new Date(start + "T12:00:00");
+  const endDate = new Date(end + "T12:00:00");
+  while (cur <= endDate && arr.length < 366) {
+    arr.push(toDateStr(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return arr;
+}
+
+
+interface ChartBar {
+  label: string;
+  value: number;
+  isCurrentPeriod: boolean;
+  monthKey: string; // "YYYY-MM" for 1y, "YYYY-MM-DD" for daily views
+}
+
+export default function RevenuePage() {
+  const [tab, setTab]                   = useState<RevTab>("overview");
+  const [period, setPeriod]             = useState<Period>("today");
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [posInvoices, setPosInvoices]   = useState<ReturnType<typeof getInvoices>>([]);
+  const [posInvoiceAppointmentIds, setPosInvoiceAppointmentIds] = useState<string[]>([]);
+  const [manualIncome, setManualIncome] = useState<ManualCashIncome[]>([]);
+  const [expenses, setExpenses]         = useState<Expense[]>([]);
+  const [today, setToday]               = useState("");
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [hoveredBar, setHoveredBar]     = useState<number | null>(null);
+  const [dailyReportOpen, setDailyReportOpen] = useState(true);
+  const [customStart, setCustomStart]   = useState(() => toDateStr(new Date()));
+  const [customEnd, setCustomEnd]       = useState(() => toDateStr(new Date()));
+
+  // Revenue visibility by dashboard section: only "All Sections" sees
+  // everything combined (with per-row section tags, added below) — Men's and
+  // Women's are each restricted to their own revenue, symmetrically.
+  const activeSection = getActiveSection();
+  const revenueScoped = activeSection !== "all";
+
+  useEffect(() => {
+    let cancelled = false;
+    syncFromDB().finally(() => {
+      if (cancelled) return;
+      setToday(toDateStr(new Date()));
+      setAppointments(
+        getStoredAppointments()
+          .filter(a => !revenueScoped || a.section === activeSection)
+      );
+      // Match Cash Flow: count paid POS invoices as the source of truth. Keep
+      // every POS-linked appointment id separately, including unpaid invoices,
+      // so unpaid/credit invoices do not leak in through completed appointments.
+      const allPosInvoices = getInvoices()
+        .filter(inv => !inv.source || inv.source === "pos")
+        .filter(inv => !revenueScoped || inv.section === activeSection);
+      setPosInvoiceAppointmentIds(allPosInvoices.map(inv => inv.appointmentId).filter((id): id is string => !!id));
+      setPosInvoices(allPosInvoices.filter(inv => inv.status === "paid"));
+      // Cash Flow's "Import" feature records income (e.g. bulk-uploaded past
+      // sales) as ManualCashIncome entries rather than business invoices — Cash
+      // Flow already counts these, so Revenue needs the same source or it
+      // undercounts every imported entry. These have no section of their own,
+      // so a section-restricted view can't attribute them and excludes them.
+      setManualIncome(revenueScoped ? [] : getManualCashIncome());
+      // Untagged expenses are shared overhead (rent, general salaries, etc.)
+      // that can't be attributed to one section, so a restricted view excludes
+      // them too — only expenses explicitly tagged to the active section count
+      // against it, same rule as manual income above.
+      setExpenses(
+        getExpenses().filter(e => !revenueScoped || e.section === activeSection)
+      );
+    });
+    return () => { cancelled = true; };
+  }, [revenueScoped, activeSection]);
+
+  // Reset drill-down when period changes
+  useEffect(() => { setSelectedMonth(null); }, [period]);
+
+  const cfg = PERIODS.find(p => p.key === period)!;
+
+  const filterEnd = period === "custom" ? customEnd : today;
+
+  const rangeStart = useMemo(() => {
+    if (!today) return "";
+    if (period === "custom") return customStart;
+    const d = new Date(today); d.setDate(d.getDate() - (cfg.days - 1));
+    return toDateStr(d);
+  }, [period, today, customStart]);
+
+  const prevEnd = useMemo(() => {
+    if (!today || period === "custom") return "";
+    const d = new Date(today); d.setDate(d.getDate() - cfg.days);
+    return toDateStr(d);
+  }, [period, today]);
+
+  const prevStart = useMemo(() => {
+    if (!today || period === "custom") return "";
+    const d = new Date(today); d.setDate(d.getDate() - cfg.days * 2 + 1);
+    return toDateStr(d);
+  }, [period, today]);
+
+  const posLinkedAppointmentIds = useMemo(() =>
+    new Set(posInvoiceAppointmentIds),
+    [posInvoiceAppointmentIds]);
+
+  const currentAppts = useMemo(() =>
+    appointments.filter(a => a.status === "completed" && !posLinkedAppointmentIds.has(a.id) && a.date >= rangeStart && a.date <= filterEnd),
+    [appointments, posLinkedAppointmentIds, rangeStart, filterEnd]);
+
+  const prevAppts = useMemo(() =>
+    appointments.filter(a => a.status === "completed" && !posLinkedAppointmentIds.has(a.id) && a.date >= prevStart && a.date <= prevEnd),
+    [appointments, posLinkedAppointmentIds, prevStart, prevEnd]);
+
+  // POS invoices in current / previous range
+  const currentPos = useMemo(() =>
+    posInvoices.filter(inv => inv.date >= rangeStart && inv.date <= filterEnd),
+    [posInvoices, rangeStart, filterEnd]);
+
+  const prevPos = useMemo(() =>
+    posInvoices.filter(inv => inv.date >= prevStart && inv.date <= prevEnd),
+    [posInvoices, prevStart, prevEnd]);
+
+  // Imported/manual cash income in current / previous range (see Cash Flow's
+  // identical manualIncome filtering)
+  const currentManual = useMemo(() =>
+    manualIncome.filter(entry => entry.date >= rangeStart && entry.date <= filterEnd),
+    [manualIncome, rangeStart, filterEnd]);
+
+  const prevManual = useMemo(() =>
+    manualIncome.filter(entry => entry.date >= prevStart && entry.date <= prevEnd),
+    [manualIncome, prevStart, prevEnd]);
+
+  const totalRevenue = useMemo(() =>
+    currentAppts.reduce((s, a) => s + a.totalAmount, 0) + currentPos.reduce((s, inv) => s + inv.total, 0) + currentManual.reduce((s, e) => s + e.amount, 0),
+    [currentAppts, currentPos, currentManual]);
+
+  const prevRevenue = useMemo(() =>
+    prevAppts.reduce((s, a) => s + a.totalAmount, 0) + prevPos.reduce((s, inv) => s + inv.total, 0) + prevManual.reduce((s, e) => s + e.amount, 0),
+    [prevAppts, prevPos, prevManual]);
+
+  const totalCount = currentAppts.length + currentPos.length + currentManual.length;
+  const prevCount  = prevAppts.length  + prevPos.length  + prevManual.length;
+  const avgTicket  = totalCount ? totalRevenue / totalCount : 0;
+  const prevAvg    = prevCount  ? prevRevenue  / prevCount  : 0;
+
+  const revChange = prevRevenue ? ((totalRevenue - prevRevenue) / prevRevenue) * 100 : 0;
+  const cntChange = prevCount   ? ((totalCount   - prevCount)   / prevCount)   * 100 : 0;
+  const avgChange = prevAvg     ? ((avgTicket    - prevAvg)     / prevAvg)     * 100 : 0;
+
+  // ── Chart data (1y / custom-long = monthly bars, else daily) ────────────────
+  const chartData = useMemo((): ChartBar[] => {
+    if (!today) return [];
+
+    // Helper: build monthly bars from a set of dates
+    const monthlyBars = (start: string, end: string): ChartBar[] => {
+      const monthMap: Record<string, number> = {};
+      const cur = new Date(start + "T12:00:00");
+      const endDate = new Date(end + "T12:00:00");
+      while (cur <= endDate) {
+        monthMap[toDateStr(cur).substring(0, 7)] = 0;
+        cur.setMonth(cur.getMonth() + 1); cur.setDate(1);
+      }
+      appointments.forEach(a => {
+        if (a.status === "completed" && !posLinkedAppointmentIds.has(a.id)) { const k = a.date.substring(0, 7); if (k in monthMap) monthMap[k] += a.totalAmount; }
+      });
+      posInvoices.forEach(inv => { const k = inv.date.substring(0, 7); if (k in monthMap) monthMap[k] += inv.total; });
+      manualIncome.forEach(entry => { const k = entry.date.substring(0, 7); if (k in monthMap) monthMap[k] += entry.amount; });
+      const keys = Object.keys(monthMap).sort();
+      return keys.map((key, idx) => {
+        const d = new Date(key + "-01T12:00:00");
+        return { label: d.toLocaleDateString("en-PK", { month: "short" }), value: monthMap[key], isCurrentPeriod: idx === keys.length - 1, monthKey: key };
+      });
+    };
+
+    if (period === "1y") return monthlyBars(rangeStart, today);
+
+    if (period === "custom") {
+      if (!customStart || !customEnd || customStart > customEnd) return [];
+      const days = getDaysInRange(customStart, customEnd);
+      if (days.length > 62) return monthlyBars(customStart, customEnd);
+      const byDay: Record<string, number> = {};
+      days.forEach(d => { byDay[d] = 0; });
+      appointments.forEach(a => { if (a.status === "completed" && !posLinkedAppointmentIds.has(a.id) && a.date in byDay) byDay[a.date] += a.totalAmount; });
+      posInvoices.forEach(inv => { if (inv.date in byDay) byDay[inv.date] += inv.total; });
+      manualIncome.forEach(entry => { if (entry.date in byDay) byDay[entry.date] += entry.amount; });
+      return days.map((date, idx) => {
+        const d = new Date(date + "T12:00:00");
+        const label = days.length > 14 ? String(d.getDate()) : d.toLocaleDateString("en-PK", { weekday: "short" });
+        return { label, value: byDay[date], isCurrentPeriod: idx === days.length - 1, monthKey: date };
+      });
+    }
+
+    const days = getDaysArray(cfg.days);
+    const byDay: Record<string, number> = {};
+    days.forEach(d => { byDay[d] = 0; });
+    appointments.forEach(a => { if (a.status === "completed" && !posLinkedAppointmentIds.has(a.id) && a.date in byDay) byDay[a.date] += a.totalAmount; });
+    posInvoices.forEach(inv => { if (inv.date in byDay) byDay[inv.date] += inv.total; });
+    manualIncome.forEach(entry => { if (entry.date in byDay) byDay[entry.date] += entry.amount; });
+    return days.map((date, idx) => {
+      const d = new Date(date + "T12:00:00");
+      const label = period === "30d" ? String(d.getDate()) : d.toLocaleDateString("en-PK", { weekday: "short" });
+      return { label, value: byDay[date], isCurrentPeriod: idx === days.length - 1, monthKey: date };
+    });
+  }, [appointments, posLinkedAppointmentIds, posInvoices, manualIncome, period, today, rangeStart, customStart, customEnd]);
+
+  // ── Drill-down: daily rows for the selected month ─────────────────────────
+  const drillRows = useMemo(() => {
+    if (!selectedMonth) return null;
+    const [y, m] = selectedMonth.split("-").map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const rows: { date: string; dow: string; count: number; revenue: number }[] = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const appts = appointments.filter(a => a.status === "completed" && !posLinkedAppointmentIds.has(a.id) && a.date === date);
+      const pos   = posInvoices.filter(inv => inv.date === date);
+      const manual = manualIncome.filter(entry => entry.date === date);
+      const dow   = new Date(date + "T12:00:00").toLocaleDateString("en-PK", { weekday: "short" });
+      rows.push({
+        date, dow,
+        count:   appts.length + pos.length + manual.length,
+        revenue: appts.reduce((s, a) => s + a.totalAmount, 0) + pos.reduce((s, inv) => s + inv.total, 0) + manual.reduce((s, e) => s + e.amount, 0),
+      });
+    }
+    return rows.reverse();
+  }, [selectedMonth, appointments, posLinkedAppointmentIds, posInvoices, manualIncome]);
+
+  // Drill-down totals
+  const drillTotal   = drillRows ? drillRows.reduce((s, r) => s + r.revenue, 0) : 0;
+  const drillCount   = drillRows ? drillRows.reduce((s, r) => s + r.count, 0) : 0;
+  const drillAvg     = drillCount ? drillTotal / drillCount : 0;
+
+  // Expenses for the drilled-into month — same paid-only filter as periodExpenses
+  // below, just scoped to the selected month instead of the page's date range.
+  const drillExpenses = useMemo(() => {
+    if (!selectedMonth) return 0;
+    const [y, m] = selectedMonth.split("-").map(Number);
+    const monthStart = `${y}-${String(m).padStart(2, "0")}-01`;
+    const monthEnd = `${y}-${String(m).padStart(2, "0")}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+    return expenses
+      .filter(e => e.date >= monthStart && e.date <= monthEnd && e.paymentStatus !== "pending")
+      .reduce((s, e) => s + e.amount, 0);
+  }, [selectedMonth, expenses]);
+  const drillNetProfit = drillTotal - drillExpenses;
+
+  // ── Default daily rows (no drill-down) ────────────────────────────────────
+  const dailyRows = useMemo(() => {
+    if (!today) return [] as { date: string; dow: string; count: number; revenue: number }[];
+    const days = period === "custom" && customStart && customEnd && customStart <= customEnd
+      ? getDaysInRange(customStart, customEnd)
+      : getDaysArray(Math.min(cfg.days, 31));
+    const byDay: Record<string, { count: number; revenue: number }> = {};
+    days.forEach(d => { byDay[d] = { count: 0, revenue: 0 }; });
+    currentAppts.forEach(a => {
+      if (a.date in byDay) { byDay[a.date].count++; byDay[a.date].revenue += a.totalAmount; }
+    });
+    currentPos.forEach(inv => {
+      if (inv.date in byDay) { byDay[inv.date].count++; byDay[inv.date].revenue += inv.total; }
+    });
+    currentManual.forEach(entry => {
+      if (entry.date in byDay) { byDay[entry.date].count++; byDay[entry.date].revenue += entry.amount; }
+    });
+    return days.map(date => ({
+      date,
+      dow: new Date(date + "T12:00:00").toLocaleDateString("en-PK", { weekday: "short" }),
+      ...byDay[date],
+    })).reverse();
+  }, [currentAppts, currentPos, currentManual, period, today, customStart, customEnd]);
+
+  const methodBreakdown = useMemo(() => {
+    const invoices = getInvoices().filter((inv) => {
+      if (inv.status !== "paid") return false;
+      if (inv.source && inv.source !== "pos") return false;
+      if (revenueScoped && inv.section !== activeSection) return false;
+      return inv.date >= rangeStart && inv.date <= filterEnd;
+    });
+    const totals: Record<string, number> = {};
+    invoices.forEach(inv => {
+      if (!inv.paymentMethod) return;
+      totals[inv.paymentMethod] = (totals[inv.paymentMethod] ?? 0) + inv.total;
+    });
+    const grand = Object.values(totals).reduce((s, v) => s + v, 0) || 1;
+    return Object.entries(totals)
+      .map(([method, amount]) => ({ method, amount, pct: (amount / grand) * 100 }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [rangeStart, filterEnd, revenueScoped, activeSection]);
+
+  // Custom selections drive a combined report for their entire date range.
+  // Preset periods keep this card as today's operational snapshot.
+  const customReportRange = period === "custom" && customStart <= customEnd;
+  const reportStart = customReportRange ? customStart : today;
+  const reportEnd = customReportRange ? customEnd : today;
+  const reportHasMultipleDays = reportStart !== reportEnd;
+  const reportAppts = useMemo(() =>
+    appointments
+      .filter(a => a.status === "completed" && !posLinkedAppointmentIds.has(a.id) && a.date >= reportStart && a.date <= reportEnd)
+      .sort((a, b) => `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`)),
+    [appointments, posLinkedAppointmentIds, reportStart, reportEnd]);
+
+  const reportPos = useMemo(() =>
+    posInvoices
+      .filter(inv => inv.date >= reportStart && inv.date <= reportEnd)
+      .sort((a, b) => `${a.date}T${a.createdAt}`.localeCompare(`${b.date}T${b.createdAt}`)),
+    [posInvoices, reportStart, reportEnd]);
+
+  const reportManual = useMemo(() =>
+    manualIncome
+      .filter(entry => entry.date >= reportStart && entry.date <= reportEnd)
+      .sort((a, b) => `${a.date}T${a.createdAt}`.localeCompare(`${b.date}T${b.createdAt}`)),
+    [manualIncome, reportStart, reportEnd]);
+
+  const reportRevenue = reportAppts.reduce((s, a) => s + a.totalAmount, 0) + reportPos.reduce((s, inv) => s + inv.total, 0) + reportManual.reduce((s, e) => s + e.amount, 0);
+  const reportCount   = reportAppts.length + reportPos.length + reportManual.length;
+  const reportAvg     = reportCount ? reportRevenue / reportCount : 0;
+
+  const reportMethodBreakdown = useMemo(() => {
+    const totals: Record<string, number> = {};
+    reportPos.forEach(inv => {
+      if (!inv.paymentMethod) return;
+      totals[inv.paymentMethod] = (totals[inv.paymentMethod] ?? 0) + inv.total;
+    });
+    return Object.entries(totals)
+      .map(([method, amount]) => ({ method, amount }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [reportPos]);
+
+  const topServices = useMemo(() => {
+    const map: Record<string, { name: string; count: number; revenue: number }> = {};
+    currentAppts.forEach(a => {
+      const k = a.serviceNames[0] ?? "Other";
+      if (!map[k]) map[k] = { name: k, count: 0, revenue: 0 };
+      map[k].count++; map[k].revenue += a.totalAmount;
+    });
+    currentPos.forEach(inv => {
+      inv.items.forEach(item => {
+        const k = item.description || "POS Sale";
+        if (!map[k]) map[k] = { name: k, count: 0, revenue: 0 };
+        map[k].count += item.qty; map[k].revenue += item.total;
+      });
+    });
+    return Object.values(map).sort((a, b) => b.revenue - a.revenue).slice(0, 6);
+  }, [currentAppts, currentPos]);
+
+  // ── Net profit ─────────────────────────────────────────────────────────────
+  // Net Profit = Revenue − all logged Expenses (rent, utilities, marketing, etc,
+  // including the "salaries" category) for the selected period. Only expenses
+  // marked paid count — a pending/unpaid bill isn't a cost that's actually hit
+  // the business yet, matching the same paid-only filter the Cash Flow page uses.
+  const periodExpenses = useMemo(() =>
+    expenses.filter(e => e.date >= rangeStart && e.date <= filterEnd && e.paymentStatus !== "pending"),
+    [expenses, rangeStart, filterEnd]);
+
+  const totalExpenses = useMemo(() => periodExpenses.reduce((s, e) => s + e.amount, 0), [periodExpenses]);
+
+  const expenseByCategory = useMemo(() => {
+    const totals: Record<string, number> = {};
+    periodExpenses.forEach(e => { totals[e.category] = (totals[e.category] ?? 0) + e.amount; });
+    const grand = Object.values(totals).reduce((s, v) => s + v, 0) || 1;
+    return Object.entries(totals)
+      .map(([category, amount]) => ({ category, amount, pct: (amount / grand) * 100 }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [periodExpenses]);
+
+  const netProfit = totalRevenue - totalExpenses;
+  const netMarginPct = totalRevenue ? (netProfit / totalRevenue) * 100 : 0;
+
+  // ── Net profit by payment channel ──────────────────────────────────────────
+  // Same bucketing convention the Cash Flow page uses: an appointment closed
+  // without a POS checkout, an imported/manual entry, or anything with no
+  // tracked method counts as cash; card, bank and mobile wallets are online.
+  const revenueByChannel = useMemo(() => {
+    let cash = currentAppts.reduce((s, a) => s + a.totalAmount, 0) + currentManual.reduce((s, e) => s + e.amount, 0);
+    let online = 0;
+    currentPos.forEach(inv => {
+      if ((inv.paymentMethod || "cash") === "cash") cash += inv.total;
+      else online += inv.total;
+    });
+    return { cash, online };
+  }, [currentAppts, currentPos, currentManual]);
+
+  const expensesByChannel = useMemo(() => {
+    let cash = 0, online = 0;
+    periodExpenses.forEach(e => {
+      if ((e.paymentMethod || "cash") === "cash") cash += e.amount;
+      else online += e.amount;
+    });
+    return { cash, online };
+  }, [periodExpenses]);
+
+  const netProfitByChannel = useMemo(() => ({
+    cash:   revenueByChannel.cash   - expensesByChannel.cash,
+    online: revenueByChannel.online - expensesByChannel.online,
+  }), [revenueByChannel, expensesByChannel]);
+
+  const maxChart = Math.max(...chartData.map(d => d.value), 1);
+
+  const yLabels = useMemo(() => computeYLabels(maxChart), [maxChart]);
+
+  // ── Hourly breakdown for "today" — a single day of daily bars is just one
+  // bar filling the whole width, which reads as a broken chart rather than a
+  // trend. Break it into hours instead and render as a line, so "today" still
+  // shows a shape even with one day of data.
+  const hourlyChartData = useMemo(() => {
+    if (period !== "today") return [] as { hour: number; label: string; value: number }[];
+    const byHour = Array.from({ length: 24 }, () => 0);
+    currentAppts.forEach(a => {
+      const h = Number(a.startTime.split(":")[0]);
+      if (h >= 0 && h < 24) byHour[h] += a.totalAmount;
+    });
+    currentPos.forEach(inv => {
+      const h = new Date(inv.createdAt).getHours();
+      if (h >= 0 && h < 24) byHour[h] += inv.total;
+    });
+    currentManual.forEach(entry => {
+      const h = new Date(entry.createdAt).getHours();
+      if (h >= 0 && h < 24) byHour[h] += entry.amount;
+    });
+    return byHour.map((value, hour) => ({ hour, label: hourLabel(hour), value }));
+  }, [period, currentAppts, currentPos, currentManual]);
+
+  const maxHourly = Math.max(...hourlyChartData.map(d => d.value), 1);
+  const hourlyYLabels = useMemo(() => computeYLabels(maxHourly), [maxHourly]);
+
+  // Selected month label e.g. "November 2025"
+  const selectedMonthLabel = selectedMonth
+    ? new Date(selectedMonth + "-01T12:00:00").toLocaleDateString("en-PK", { month: "long", year: "numeric" })
+    : "";
+
+  function Trend({ change }: { change: number }) {
+    const up = change >= 0;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 12, fontWeight: 600, color: up ? "#22c55e" : "#ef4444" }}>
+        {up ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
+        {Math.abs(change).toFixed(1)}% vs prev period
+      </div>
+    );
+  }
+
+  // ── PDF Export ─────────────────────────────────────────────────────────────
+  function exportPDF() {
+    if (period === "custom" && (!customStart || !customEnd || customStart > customEnd)) {
+      alert("Please select a valid start and end date for the custom range before downloading.");
+      return;
+    }
+
+    const now = new Date();
+    const isYearDrill = !!selectedMonth;
+
+    // For 1y or long custom (>62 days) we aggregate monthly; otherwise daily
+    const customDayCount = period === "custom"
+      ? getDaysInRange(customStart, customEnd).length : 0;
+    const useMonthlyTable = !isYearDrill && (period === "1y" || (period === "custom" && customDayCount > 62));
+
+    // Build PDF table rows independent of the UI's capped dailyRows
+    let tableRows: { date: string; dow: string; count: number; revenue: number }[];
+    if (isYearDrill) {
+      tableRows = drillRows ?? [];
+    } else if (useMonthlyTable) {
+      // Monthly aggregation over the full selected range
+      const monthlyMap: Record<string, { count: number; revenue: number }> = {};
+      const cur = new Date(rangeStart + "T12:00:00"); cur.setDate(1);
+      const endD = new Date(filterEnd + "T12:00:00");
+      while (cur <= endD) {
+        const key = toDateStr(cur).substring(0, 7);
+        monthlyMap[key] = { count: 0, revenue: 0 };
+        cur.setMonth(cur.getMonth() + 1);
+      }
+      currentAppts.forEach(a => {
+        const key = a.date.substring(0, 7);
+        if (key in monthlyMap) { monthlyMap[key].count++; monthlyMap[key].revenue += a.totalAmount; }
+      });
+      currentPos.forEach(inv => {
+        const key = inv.date.substring(0, 7);
+        if (key in monthlyMap) { monthlyMap[key].count++; monthlyMap[key].revenue += inv.total; }
+      });
+      currentManual.forEach(entry => {
+        const key = entry.date.substring(0, 7);
+        if (key in monthlyMap) { monthlyMap[key].count++; monthlyMap[key].revenue += entry.amount; }
+      });
+      tableRows = Object.keys(monthlyMap).sort().reverse().map(key => ({
+        date: key,
+        dow: new Date(key + "-01T12:00:00").toLocaleDateString("en-PK", { month: "long", year: "numeric" }),
+        count: monthlyMap[key].count,
+        revenue: monthlyMap[key].revenue,
+      }));
+    } else {
+      // Full daily rows for the period — no cap
+      const days = getDaysInRange(rangeStart, filterEnd);
+      const byDay: Record<string, { count: number; revenue: number }> = {};
+      days.forEach(d => { byDay[d] = { count: 0, revenue: 0 }; });
+      currentAppts.forEach(a => {
+        if (a.date in byDay) { byDay[a.date].count++; byDay[a.date].revenue += a.totalAmount; }
+      });
+      currentPos.forEach(inv => {
+        if (inv.date in byDay) { byDay[inv.date].count++; byDay[inv.date].revenue += inv.total; }
+      });
+      currentManual.forEach(entry => {
+        if (entry.date in byDay) { byDay[entry.date].count++; byDay[entry.date].revenue += entry.amount; }
+      });
+      tableRows = days.map(date => ({
+        date,
+        dow: new Date(date + "T12:00:00").toLocaleDateString("en-PK", { weekday: "short" }),
+        count: byDay[date].count,
+        revenue: byDay[date].revenue,
+      })).reverse();
+    }
+
+    const pdfTotal   = isYearDrill ? drillTotal   : totalRevenue;
+    const pdfCount   = isYearDrill ? drillCount   : totalCount;
+    const pdfAvg     = isYearDrill ? drillAvg     : avgTicket;
+    const pdfExpenses    = isYearDrill ? drillExpenses    : totalExpenses;
+    const pdfNetProfit = isYearDrill ? drillNetProfit : netProfit;
+    const pdfNetMarginPct = pdfTotal ? (pdfNetProfit / pdfTotal) * 100 : 0;
+    const periodLabel = period === "custom" ? `${rangeStart} → ${filterEnd}` : cfg.label;
+    const pdfTitle   = isYearDrill ? `${selectedMonthLabel} — Daily Detail` : `Revenue Report — ${periodLabel}`;
+    const pdfRange   = isYearDrill ? selectedMonthLabel : `${rangeStart} to ${filterEnd}`;
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <title>OnePOS ${pdfTitle}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Montserrat', sans-serif; background: #fff; color: #1a1a2e; font-size: 13px; }
+    .page { max-width: 820px; margin: 0 auto; padding: 40px 48px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #f0f0f8; }
+    .logo-wm { display:flex; align-items:center; gap:9px; }
+    .logo-tile { width:30px; height:30px; border-radius:9px; background:linear-gradient(135deg,#9A3412,#F97316); display:flex; align-items:center; justify-content:center; }
+    .logo-tile span { display:block; width:15px; height:2px; background:#fff; box-shadow:0 -5px 0 #fff, 0 5px 0 #fff; }
+    .logo-word { font-size:22px; font-weight:800; letter-spacing:-0.02em; color:#1a1a2e; }
+    .logo-word em { font-style:normal; color:#EA580C; }
+    .logo-sub  { font-size: 12px; color: #a0a0b8; margin-top: 6px; }
+    .report-meta { text-align: right; }
+    .report-title { font-size: 16px; font-weight: 800; color: #EA580C; }
+    .report-sub   { font-size: 12px; color: #6b6b8a; margin-top: 4px; }
+    .report-gen   { font-size: 11px; color: #c0c0d0; margin-top: 2px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 28px; }
+    .stat-card  { background: #FFF7ED; border-radius: 12px; padding: 16px; border: 1px solid #FFEDD5; }
+    .stat-label { font-size: 10px; font-weight: 700; color: #a0a0b8; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 8px; }
+    .stat-value { font-size: 20px; font-weight: 800; color: #EA580C; }
+    .stat-value.expense { color: #dc2626; }
+    .stat-value.profit { color: ${pdfNetProfit >= 0 ? "#059669" : "#dc2626"}; }
+    .stat-sub   { font-size: 10px; color: #a0a0b8; margin-top: 4px; }
+    .section { margin-bottom: 28px; }
+    .section-title { font-size: 14px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px; }
+    .section-sub   { font-size: 11px; color: #a0a0b8; margin-bottom: 16px; }
+    .chart-area   { display: flex; align-items: flex-end; gap: 5px; height: 130px; border-bottom: 2px solid #f0f0f8; padding: 0 2px; }
+    .bar-wrap     { flex: 1; display: flex; align-items: flex-end; height: 100%; }
+    .bar          { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; }
+    .bar-labels   { display: flex; gap: 5px; padding-top: 6px; }
+    .bar-lbl      { flex: 1; text-align: center; font-size: 9px; color: #c0c0d0; overflow: hidden; }
+    .methods-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .method-row   { border: 1px solid #f0f0f8; border-radius: 10px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; }
+    .method-dot   { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; flex-shrink: 0; }
+    .method-name  { font-weight: 600; font-size: 13px; display: flex; align-items: center; }
+    .method-pct   { font-size: 11px; color: #a0a0b8; margin-top: 2px; }
+    .method-amount{ font-weight: 700; color: #EA580C; font-size: 13px; }
+    .svc-grid     { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .svc-card     { border: 1px solid #f0f0f8; border-radius: 10px; padding: 12px 14px; }
+    .svc-name     { font-weight: 600; font-size: 12px; color: #1a1a2e; margin-bottom: 4px; }
+    .svc-count    { font-size: 10px; color: #a0a0b8; }
+    .svc-rev      { font-weight: 700; color: #EA580C; font-size: 13px; margin-top: 6px; }
+    table         { width: 100%; border-collapse: collapse; }
+    thead tr      { background: #FFF7ED; }
+    th { font-size: 10px; font-weight: 700; color: #a0a0b8; letter-spacing: 0.07em; text-transform: uppercase; padding: 10px 14px; text-align: left; border-bottom: 1px solid #f0f0f8; }
+    td { padding: 10px 14px; font-size: 12px; border-bottom: 1px solid #f8f8fc; }
+    tr:last-child td { border-bottom: none; }
+    .total-row td { font-weight: 700; background: #FFF7ED; color: #EA580C; border-top: 1px solid #f0f0f8; }
+    .amount { font-weight: 700; color: #EA580C; }
+    .muted  { color: #a0a0b8; }
+    .footer { margin-top: 36px; padding-top: 20px; border-top: 1px solid #f0f0f8; display: flex; justify-content: space-between; }
+    .footer-txt { font-size: 11px; color: #c0c0d0; }
+    @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } .page { padding: 24px 32px; } }
+  </style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div>
+      <div class="logo-wm"><span class="logo-tile"><span></span></span><span class="logo-word">One<em>POS</em></span></div>
+      <div class="logo-sub">Point of Sale</div>
+    </div>
+    <div class="report-meta">
+      <div class="report-title">${pdfTitle}</div>
+      <div class="report-sub">${pdfRange}</div>
+      <div class="report-gen">Generated ${now.toLocaleDateString("en-PK", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} · ${now.toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })}</div>
+    </div>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Total Revenue</div>
+      <div class="stat-value">${fmt(pdfTotal)}</div>
+      <div class="stat-sub">${!isYearDrill ? (revChange >= 0 ? "▲" : "▼") + " " + Math.abs(revChange).toFixed(1) + "% vs prev" : pdfRange}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Paid Expenses</div>
+      <div class="stat-value expense">${fmt(pdfExpenses)}</div>
+      <div class="stat-sub">Total expenses</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Net Profit</div>
+      <div class="stat-value profit">${fmt(pdfNetProfit)}</div>
+      <div class="stat-sub">${pdfNetMarginPct.toFixed(1)}% net margin</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Appointments</div>
+      <div class="stat-value">${pdfCount}</div>
+      <div class="stat-sub">Completed services</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Ticket</div>
+      <div class="stat-value">${fmt(pdfAvg)}</div>
+      <div class="stat-sub">Per appointment</div>
+    </div>
+  </div>
+
+  ${!isYearDrill ? `
+  <div class="section">
+    <div class="section-title">Net Profit by Payment Channel</div>
+    <div class="section-sub">Revenue minus paid expenses, split by how each was settled</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Channel</th>
+          <th style="text-align:right">Revenue</th>
+          <th style="text-align:right">Expenses</th>
+          <th style="text-align:right">Net Profit</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${[
+          { label: "Cash",   revenue: revenueByChannel.cash,   expenses: expensesByChannel.cash,   net: netProfitByChannel.cash   },
+          { label: "Online", revenue: revenueByChannel.online, expenses: expensesByChannel.online, net: netProfitByChannel.online },
+        ].map(c => `
+          <tr>
+            <td>${c.label}</td>
+            <td style="text-align:right">${fmt(c.revenue)}</td>
+            <td style="text-align:right;color:#dc2626">−${fmt(c.expenses)}</td>
+            <td style="text-align:right;font-weight:700;color:${c.net >= 0 ? "#059669" : "#dc2626"}">${fmt(c.net)}</td>
+          </tr>`).join("")}
+        <tr class="total-row">
+          <td>Total</td>
+          <td style="text-align:right">${fmt(pdfTotal)}</td>
+          <td style="text-align:right">−${fmt(pdfExpenses)}</td>
+          <td style="text-align:right">${fmt(pdfNetProfit)}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  ` : ""}
+
+  ${!isYearDrill ? `
+  <div class="section">
+    <div class="section-title">Revenue Trend</div>
+    <div class="section-sub">${useMonthlyTable ? "Monthly" : "Daily"} breakdown · ${pdfRange}</div>
+    <div class="chart-area">
+      ${chartData.map(d => {
+        const h = maxChart > 0 ? Math.max(2, Math.round((d.value / maxChart) * 100)) : 2;
+        return `<div class="bar-wrap"><div class="bar" style="height:${h}%;background:${d.isCurrentPeriod ? "#EA580C" : "#FED7AA"}"></div></div>`;
+      }).join("")}
+    </div>
+    <div class="bar-labels">${chartData.map(d => `<div class="bar-lbl">${d.label}</div>`).join("")}</div>
+  </div>
+  <div class="section">
+    <div class="section-title">Payment Methods</div>
+    <div class="section-sub">Revenue by channel</div>
+    <div class="methods-grid">
+      ${methodBreakdown.map(m => `
+      <div class="method-row">
+        <div>
+          <div class="method-name"><span class="method-dot" style="background:${METHOD_COLORS[m.method] ?? "#888"}"></span>${METHOD_LABELS[m.method] ?? m.method}</div>
+          <div class="method-pct">${m.pct.toFixed(0)}% of total</div>
+        </div>
+        <div class="method-amount">${fmt(m.amount)}</div>
+      </div>`).join("")}
+    </div>
+  </div>
+  ${topServices.length > 0 ? `
+  <div class="section">
+    <div class="section-title">Top Services by Revenue</div>
+    <div class="section-sub">Most profitable this period</div>
+    <div class="svc-grid">
+      ${topServices.map(s => `
+      <div class="svc-card">
+        <div class="svc-name">${s.name}</div>
+        <div class="svc-count">${s.count} appointment${s.count !== 1 ? "s" : ""}</div>
+        <div class="svc-rev">${fmt(s.revenue)}</div>
+      </div>`).join("")}
+    </div>
+  </div>` : ""}` : ""}
+
+  <div class="section">
+    <div class="section-title">${isYearDrill ? selectedMonthLabel + " — Daily Breakdown" : (useMonthlyTable ? "Monthly Breakdown" : "Daily Breakdown")}</div>
+    <div class="section-sub">Complete breakdown · ${pdfRange}</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Day</th>
+          <th style="text-align:center">Appts</th>
+          <th style="text-align:right">Revenue</th>
+          <th style="text-align:right">Avg Ticket</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows.map(row => {
+          const avg = row.count ? row.revenue / row.count : 0;
+          return `
+          <tr>
+            <td>${row.date}</td>
+            <td class="muted">${row.dow ?? ""}</td>
+            <td style="text-align:center">${row.count}</td>
+            <td class="amount" style="text-align:right">${fmt(row.revenue)}</td>
+            <td style="text-align:right" class="muted">${avg ? fmt(avg) : "—"}</td>
+          </tr>`;
+        }).join("")}
+        <tr class="total-row">
+          <td colspan="2"><strong>Total</strong></td>
+          <td style="text-align:center"><strong>${pdfCount}</strong></td>
+          <td style="text-align:right"><strong>${fmt(pdfTotal)}</strong></td>
+          <td style="text-align:right"><strong>${fmt(pdfAvg)}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <div class="footer-txt">OnePOS · Point of Sale</div>
+    <div class="footer-txt">Confidential · For internal use only</div>
+  </div>
+</div>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, "_blank");
+    if (!win) {
+      URL.revokeObjectURL(url);
+      alert("Pop-up was blocked. Please allow pop-ups for this site to download the PDF.");
+      return;
+    }
+    win.addEventListener("load", () => {
+      win.focus();
+      win.print();
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  // ── Table rows to display ──────────────────────────────────────────────────
+  const tableRows    = selectedMonth ? (drillRows ?? []) : dailyRows;
+  const tableTotal   = selectedMonth ? drillTotal   : totalRevenue;
+  const tableCount   = selectedMonth ? drillCount   : totalCount;
+  const tableAvg     = selectedMonth ? drillAvg     : avgTicket;
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  return (
+    <div className="dashboard-polish" style={{ background: "#ffffff", minHeight: "100vh" }}>
+
+      {/* ── Native mobile app bar ── */}
+      <MobilePageHeader
+        title="Revenue"
+        subtitle={cfg.label}
+        action={{ label: "Export PDF", onClick: exportPDF }}
+      />
+
+      {/* ── Mobile period tabs ── */}
+      <div className="mobile-tab-bar mobile-only">
+        {PERIODS.map((p) => (
+          <button key={p.key} type="button" className={`mobile-tab-btn ${period === p.key ? "active" : ""}`} onClick={() => setPeriod(p.key)}>{p.label}</button>
+        ))}
+      </div>
+
+      {/* ── Mobile hero revenue card ── */}
+      <div className="mobile-only">
+        <div className="mobile-hero-card">
+          <div className="mobile-hero-label">Total Revenue · {cfg.label}</div>
+          <div className="mobile-hero-value">{fmt(totalRevenue)}</div>
+          <div className="mobile-hero-sub" style={{ color: revChange >= 0 ? "#4ade80" : "#f87171" }}>
+            {revChange >= 0 ? "▲" : "▼"} {Math.abs(revChange).toFixed(1)}% vs previous {cfg.label.toLowerCase()}
+          </div>
+        </div>
+
+        {/* Mobile stats scroll */}
+        <div className="mobile-stat-scroll">
+          {[
+            { label: "Appointments", value: String(totalCount), color: "#3b82f6", change: cntChange },
+            { label: "Avg Ticket",   value: fmtK(avgTicket),   color: "#059669", change: avgChange },
+          ].map((s) => (
+            <div key={s.label} className="mobile-stat-card">
+              <div className="mobile-stat-card-label">{s.label}</div>
+              <div className="mobile-stat-card-value" style={{ color: s.color }}>{s.value}</div>
+              {s.change !== 0 && <div className="mobile-stat-card-sub" style={{ color: s.change >= 0 ? "#059669" : "#dc2626" }}>{s.change >= 0 ? "▲" : "▼"} {Math.abs(s.change).toFixed(1)}%</div>}
+            </div>
+          ))}
+        </div>
+
+        {/* Mobile payment methods */}
+        {methodBreakdown.length > 0 && (
+          <>
+            <div className="mobile-section-header">By Payment Method</div>
+            <div style={{ padding: "0 16px" }}>
+              {methodBreakdown.slice(0, 4).map((m) => (
+                <div key={m.method} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: METHOD_COLORS[m.method] ?? "#888", flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e", flex: 1 }}>{METHOD_LABELS[m.method]}</span>
+                  <span style={{ fontSize: 12, color: "#9898b0" }}>{m.pct.toFixed(0)}%</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#EA580C", minWidth: 80, textAlign: "right" }}>{fmt(m.amount)}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Mobile daily table */}
+        {dailyRows.length > 0 && (
+          <>
+            <div className="mobile-section-header">Daily Breakdown</div>
+            <div className="mobile-list">
+              {dailyRows.slice(0, 10).map((row) => (
+                <div key={row.date} className="mobile-list-card">
+                  <div className="mobile-list-icon" style={{ background: row.date === today ? "#ffedd5" : "#f4f4fb" }}>
+                    <CalendarDays size={16} color={row.date === today ? "#EA580C" : "#9898b0"} />
+                  </div>
+                  <div className="mobile-list-body">
+                    <div className="mobile-list-title">{row.date === today ? "Today" : row.date}</div>
+                    <div className="mobile-list-sub">{row.count} appointment{row.count !== 1 ? "s" : ""}</div>
+                  </div>
+                  <div className="mobile-list-right">
+                    <div className="mobile-list-amount" style={{ color: "#EA580C" }}>{fmt(row.revenue)}</div>
+                    <div style={{ fontSize: 11, color: "#9898b0" }}>{row.count ? fmt(row.revenue / row.count) : "—"} avg</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Desktop layout ── */}
+      <div className="dash-page dashboard-polish desktop-only" style={{ background: "#ffffff", padding: "28px 32px 48px", display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* Title + controls */}
+      <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <PageTitle
+          icon={<TrendingUp size={24} />}
+          title="Revenue"
+          subtitle={revenueScoped ? `Restricted to ${activeSection} revenue only` : "Track your business's financial performance — combined across all sections"}
+        />
+        <div className="rev-header-controls" style={{ display: "flex", gap: 12 }}>
+          <div className="rev-period-selector segment-control">
+            {PERIODS.map(p => (
+              <button
+                key={p.key}
+                onClick={() => setPeriod(p.key)}
+                className={`segment-btn ${period === p.key ? "active" : ""}`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={exportPDF}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 12, border: "1px solid #e3e0eb", cursor: "pointer", background: "#fff", color: "#6b6b8a", fontSize: 13, fontWeight: 750, transition: "all 0.15s" }}
+            className="hover-bg-light"
+          >
+            <Download size={15} /> Export PDF
+          </button>
+        </div>
+      </div>
+
+      {/* Custom date range picker */}
+      {period === "custom" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1.5px solid #EA580C", borderRadius: 12, padding: "10px 18px", marginBottom: 4 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#EA580C" }}>Date Range</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label style={{ fontSize: 12, color: "#6b6b8a", fontWeight: 600 }}>From</label>
+            <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #e8e8f0", fontSize: 13, color: "#1a1a2e", outline: "none" }} />
+          </div>
+          <span style={{ color: "#c0c0d0", fontSize: 16 }}>→</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label style={{ fontSize: 12, color: "#6b6b8a", fontWeight: 600 }}>To</label>
+            <input type="date" value={customEnd} min={customStart} onChange={e => setCustomEnd(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #e8e8f0", fontSize: 13, color: "#1a1a2e", outline: "none" }} />
+          </div>
+          {customStart && customEnd && customStart <= customEnd && (
+            <span style={{ fontSize: 12, color: "#a0a0b8", marginLeft: 4 }}>
+              {getDaysInRange(customStart, customEnd).length} days
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Content tabs */}
+      <div style={{ display: "flex", gap: 0, borderBottom: "1px solid #f0f0f8" }}>
+        {([
+          { key: "overview", label: "Overview" },
+          { key: "net",      label: "Net Profit" },
+        ] as { key: RevTab; label: string }[]).map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)} style={{
+            background: "none", border: "none", cursor: "pointer",
+            padding: "10px 16px", fontSize: 13, fontWeight: 700,
+            color: tab === t.key ? "#EA580C" : "#9898b0",
+            borderBottom: tab === t.key ? "2px solid #EA580C" : "2px solid transparent",
+          }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "overview" && (
+      <>
+      {/* Empty state banner */}
+      {appointments.filter(a => a.status === "completed").length === 0 && posInvoices.length === 0 && manualIncome.length === 0 && (
+        <div style={{ background: "#f8f9ff", border: "1px solid #e0e0f8", borderRadius: 10, padding: "12px 16px", marginBottom: 20, fontSize: 13, color: "#6b6b8a", display: "flex", alignItems: "center", gap: 10 }}>
+          <TrendingUp size={16} color="#a0a0c8" />
+          No completed appointments yet — revenue figures will appear here once you complete your first appointment.
+        </div>
+      )}
+
+      {/* Stat cards */}
+      <div className="stats-grid-3">
+        {[
+          { label: "Total Revenue", value: fmt(totalRevenue), change: revChange, icon: TrendingUp,   color: "var(--accent)", bg: "rgba(234, 88, 12, 0.08)", showTrend: true  },
+          { label: "Appointments",  value: String(totalCount), change: cntChange, icon: CalendarDays, color: "#3b82f6", bg: "#eff6ff", showTrend: true  },
+          { label: "Revenue Growth", value: `${revChange >= 0 ? "+" : ""}${revChange.toFixed(1)}%`, change: revChange, icon: Percent, color: revChange >= 0 ? "#059669" : "#dc2626", bg: revChange >= 0 ? "#f0fdf4" : "#fef2f2", showTrend: false },
+        ].map(({ label, value, change, icon: Icon, color, bg, showTrend }) => (
+          <div key={label} style={{ background: "#fff", borderRadius: 16, border: "1px solid rgba(226,223,235,0.8)", padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, boxShadow: "0 4px 12px rgba(0,0,0,0.02)", flex: 1 }}>
+            <div style={{ width: 46, height: 46, borderRadius: 12, background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color }}>
+              <Icon size={24} color={color} />
+            </div>
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 850, color, lineHeight: 1.1 }}>{value}</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
+              {showTrend && <div style={{ marginTop: 2 }}><Trend change={change} /></div>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Daily Report ── */}
+      <div style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", overflow: "hidden" }}>
+        {/* Header */}
+        <div
+          style={{ padding: "18px 24px", borderBottom: dailyReportOpen ? "1px solid #f0f0f8" : "none", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+          onClick={() => setDailyReportOpen(o => !o)}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: "#FFF7ED", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Receipt size={17} color="#EA580C" />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: "#1a1a2e" }}>Daily Report</div>
+              <div style={{ fontSize: 12, color: "#a0a0b8", marginTop: 2 }}>
+                {reportHasMultipleDays ? `${reportStart} → ${reportEnd} · Combined range activity` : `${reportStart} · ${reportStart === today ? "Today’s activity" : "Selected day activity"}`}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#a0a0b8", letterSpacing: "0.06em", textTransform: "uppercase" }}>Revenue</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#EA580C" }}>{fmt(reportRevenue)}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#a0a0b8", letterSpacing: "0.06em", textTransform: "uppercase" }}>Appts</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#3b82f6" }}>{reportCount}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#a0a0b8", letterSpacing: "0.06em", textTransform: "uppercase" }}>Avg Ticket</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{reportCount ? fmt(reportAvg) : "—"}</div>
+            </div>
+            <div style={{ color: "#c0c0d0" }}>
+              {dailyReportOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            </div>
+          </div>
+        </div>
+
+        {dailyReportOpen && (
+          <>
+            {/* Column headers */}
+            <div style={{ display: "grid", gridTemplateColumns: "90px 1.4fr 1.4fr 1fr 1fr 110px", padding: "9px 24px", background: "#fafafa", borderBottom: "1px solid #f0f0f8" }}>
+              {[reportHasMultipleDays ? "DATE / TIME" : "TIME", "CLIENT", "SERVICE / ITEM", "STAFF", "PAYMENT", "AMOUNT"].map(h => (
+                <div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#b0b0c8", letterSpacing: "0.08em" }}>{h}</div>
+              ))}
+            </div>
+
+            {/* Appointment rows */}
+            {reportAppts.length === 0 && reportPos.length === 0 && reportManual.length === 0 ? (
+              <div style={{ padding: "32px 24px", textAlign: "center", fontSize: 13, color: "#c0c0d0" }}>
+                No transactions found for {reportHasMultipleDays ? `${reportStart} to ${reportEnd}` : reportStart}
+              </div>
+            ) : (
+              <>
+                {reportAppts.map((a) => (
+                  <div key={a.id} style={{ display: "grid", gridTemplateColumns: "90px 1.4fr 1.4fr 1fr 1fr 110px", padding: "11px 24px", borderBottom: "1px solid #f8f8fc", alignItems: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6b6b8a" }}>
+                      <Clock size={12} color="#c0c0d0" />
+                      {reportHasMultipleDays ? `${fmtShortDate(a.date)} · ` : ""}{fmtTime(a.startTime)}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      {a.clientName}
+                      {a.section && <span style={{ fontSize: 10, fontWeight: 700, background: "#FFF7ED", color: "#EA580C", padding: "1px 7px", borderRadius: 20 }}>{a.section}</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#6b6b8a" }}>{a.serviceNames.join(", ") || "—"}</div>
+                    <div style={{ fontSize: 12, color: "#6b6b8a" }}>{a.staffName}</div>
+                    <div>
+                      <span style={{ fontSize: 11, background: "#f0f0f8", color: "#6b6b8a", padding: "2px 8px", borderRadius: 20, fontWeight: 600 }}>Appointment</span>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#EA580C" }}>{fmt(a.totalAmount)}</div>
+                  </div>
+                ))}
+
+                {reportPos.map((inv) => (
+                  <div key={inv.id} style={{ display: "grid", gridTemplateColumns: "90px 1.4fr 1.4fr 1fr 1fr 110px", padding: "11px 24px", borderBottom: "1px solid #f8f8fc", alignItems: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6b6b8a" }}>
+                      <Clock size={12} color="#c0c0d0" />
+                      {reportHasMultipleDays ? `${fmtShortDate(inv.date)} · ` : ""}
+                      {inv.createdAt ? new Date(inv.createdAt).toLocaleTimeString("en-PK", { hour: "numeric", minute: "2-digit", hour12: true }) : "—"}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      {inv.clientName || "Walk-in"}
+                      {inv.section && <span style={{ fontSize: 10, fontWeight: 700, background: "#FFF7ED", color: "#EA580C", padding: "1px 7px", borderRadius: 20 }}>{inv.section}</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#6b6b8a" }}>{inv.items.map(it => it.description).join(", ") || "POS Sale"}</div>
+                    <div style={{ fontSize: 12, color: "#6b6b8a" }}>{inv.staffName || "—"}</div>
+                    <div>
+                      <span style={{
+                        fontSize: 11,
+                        background: METHOD_COLORS[inv.paymentMethod] ? `${METHOD_COLORS[inv.paymentMethod]}18` : "#f0f0f8",
+                        color: METHOD_COLORS[inv.paymentMethod] ?? "#6b6b8a",
+                        padding: "2px 8px", borderRadius: 20, fontWeight: 700,
+                      }}>
+                        {METHOD_LABELS[inv.paymentMethod] ?? inv.paymentMethod ?? "—"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#EA580C" }}>{fmt(inv.total)}</div>
+                  </div>
+                ))}
+
+                {reportManual.map((entry) => (
+                  <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "90px 1.4fr 1.4fr 1fr 1fr 110px", padding: "11px 24px", borderBottom: "1px solid #f8f8fc", alignItems: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6b6b8a" }}>
+                      <Clock size={12} color="#c0c0d0" />
+                      {reportHasMultipleDays ? fmtShortDate(entry.date) : "—"}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>{entry.category || "Imported Income"}</div>
+                    <div style={{ fontSize: 12, color: "#6b6b8a" }}>{entry.description || "—"}</div>
+                    <div style={{ fontSize: 12, color: "#6b6b8a" }}>—</div>
+                    <div>
+                      <span style={{ fontSize: 11, background: "#FFF7ED", color: "#EA580C", padding: "2px 8px", borderRadius: 20, fontWeight: 600 }}>Imported</span>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#EA580C" }}>{fmt(entry.amount)}</div>
+                  </div>
+                ))}
+
+                {/* Footer totals */}
+                <div style={{ display: "grid", gridTemplateColumns: "90px 1.4fr 1.4fr 1fr 1fr 110px", padding: "11px 24px", background: "#fafafa", borderTop: "1px solid #f0f0f8", alignItems: "center" }}>
+                  <div />
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#1a1a2e" }}>Total · {reportCount} transactions</div>
+                  <div />
+                  <div />
+                  {/* Payment method pills */}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {reportMethodBreakdown.map(m => (
+                      <span key={m.method} style={{ fontSize: 10, background: `${METHOD_COLORS[m.method] ?? "#888"}18`, color: METHOD_COLORS[m.method] ?? "#888", padding: "2px 7px", borderRadius: 20, fontWeight: 700 }}>
+                        {METHOD_LABELS[m.method] ?? m.method} {fmt(m.amount)}
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#EA580C" }}>{fmt(reportRevenue)}</div>
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Revenue bar chart */}
+      <div style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", padding: "26px 30px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 22 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16, color: "#1a1a2e" }}>Revenue Trend</div>
+            <div style={{ fontSize: 12, color: "#a0a0b8", marginTop: 3 }}>
+              {period === "1y" ? "Monthly breakdown" : period === "today" ? "Hourly breakdown" : "Daily breakdown"} · {rangeStart} → {filterEnd}
+              {period === "1y" && (
+                <span style={{ marginLeft: 8, fontSize: 11, color: "#F97316", fontWeight: 600 }}>
+                  Click a bar to drill into that month
+                </span>
+              )}
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#EA580C" }}>{fmt(totalRevenue)}</div>
+            <div style={{ fontSize: 12, color: "#a0a0b8", marginTop: 2 }}>{cfg.label} total</div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 14 }}>
+          {/* Y-axis */}
+          <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", paddingBottom: 26, minWidth: 40 }}>
+            {(period === "today" ? hourlyYLabels : yLabels).map((l, i) => (
+              <div key={`${l}-${i}`} style={{ fontSize: 10, color: "#c0c0d0", textAlign: "right" }}>{l}</div>
+            ))}
+          </div>
+
+          {period === "today" ? (
+            /* Hourly line chart — a single daily bar just fills the whole
+               width, so "today" gets an hour-by-hour line instead. */
+            <div style={{ flex: 1 }}>
+              <div style={{ position: "relative", height: 230 }}>
+                {[0, 25, 50, 75, 100].map(pct => (
+                  <div key={pct} style={{ position: "absolute", bottom: `${pct}%`, left: 0, right: 0, height: 1, background: "#f0f0f8" }} />
+                ))}
+
+                <svg viewBox="0 0 1000 230" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+                  <defs>
+                    <linearGradient id="revenueLineFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#EA580C" stopOpacity="0.28" />
+                      <stop offset="100%" stopColor="#EA580C" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                  {(() => {
+                    const pts = hourlyChartData.map((d, i) => {
+                      const x = (i / (hourlyChartData.length - 1)) * 1000;
+                      const y = 230 - Math.max(d.value, 0) / maxHourly * 230;
+                      return [x, y];
+                    });
+                    const line = pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x},${y}`).join(" ");
+                    const area = `${line} L1000,230 L0,230 Z`;
+                    return (
+                      <>
+                        <path d={area} fill="url(#revenueLineFill)" stroke="none" />
+                        <path d={line} fill="none" stroke="#EA580C" strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />
+                      </>
+                    );
+                  })()}
+                </svg>
+
+                {/* Hover columns + tooltip + hover dot */}
+                <div style={{ position: "absolute", inset: 0, display: "flex" }}>
+                  {hourlyChartData.map((pt, i) => {
+                    const isHovered = hoveredBar === i;
+                    const bottomPct = Math.max(pt.value, 0) / maxHourly * 100;
+                    return (
+                      <div
+                        key={i}
+                        style={{ flex: 1, position: "relative", cursor: "default" }}
+                        onMouseEnter={() => setHoveredBar(i)}
+                        onMouseLeave={() => setHoveredBar(null)}
+                      >
+                        {/* Always-visible point on the line for this hour */}
+                        <div style={{
+                          position: "absolute", bottom: `${bottomPct}%`, left: "50%",
+                          transform: "translate(-50%, 50%)",
+                          width: isHovered ? 9 : 6, height: isHovered ? 9 : 6, borderRadius: "50%",
+                          background: "#EA580C", border: "2px solid #fff",
+                          boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+                          transition: "width 0.15s, height 0.15s",
+                        }} />
+                        {isHovered && (
+                          <div style={{
+                            position: "absolute", bottom: `${bottomPct + 4}%`, left: "50%", transform: "translateX(-50%)",
+                            background: "#1a1a2e", color: "#fff", fontSize: 11, fontWeight: 700,
+                            padding: "5px 9px", borderRadius: 7, whiteSpace: "nowrap", zIndex: 10,
+                            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                            pointerEvents: "none",
+                          }}>
+                            {fmt(pt.value)}
+                            <div style={{ fontSize: 9, fontWeight: 500, color: "#fb923c", textAlign: "center", marginTop: 1 }}>{pt.label}</div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              {/* X-axis labels — every 3rd hour to avoid crowding 24 labels */}
+              <div style={{ display: "flex", paddingTop: 8 }}>
+                {hourlyChartData.map((pt, i) => (
+                  <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 10, color: "#c0c0d0" }}>
+                    {i % 3 === 0 ? pt.label : ""}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+          /* Bars */
+          <div style={{ flex: 1 }}>
+            <div style={{ position: "relative", height: 230 }}>
+              {[0, 25, 50, 75, 100].map(pct => (
+                <div key={pct} style={{ position: "absolute", bottom: `${pct}%`, left: 0, right: 0, height: 1, background: "#f0f0f8" }} />
+              ))}
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "flex-end", gap: period === "30d" ? 4 : period === "1y" ? 7 : 10 }}>
+                {chartData.map((bar, i) => {
+                  const h = maxChart > 0 ? (bar.value / maxChart) * 100 : 0;
+                  const isHovered = hoveredBar === i;
+                  const isSelected = period === "1y" && selectedMonth === bar.monthKey;
+                  const isClickable = period === "1y";
+                  const barBg = isSelected
+                    ? "linear-gradient(135deg, #9A3412 0%, #7c2d12 100%)"
+                    : bar.isCurrentPeriod
+                    ? "#EA580C"
+                    : isHovered
+                    ? "#F97316"
+                    : "linear-gradient(180deg, #FB923C 0%, #FED7AA 100%)";
+
+                  return (
+                    <div
+                      key={i}
+                      style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", cursor: isClickable ? "pointer" : "default", position: "relative" }}
+                      onClick={() => { if (isClickable) setSelectedMonth(isSelected ? null : bar.monthKey); }}
+                      onMouseEnter={() => setHoveredBar(i)}
+                      onMouseLeave={() => setHoveredBar(null)}
+                    >
+                      {/* Tooltip */}
+                      {isHovered && (
+                        <div style={{
+                          position: "absolute", bottom: `${h + 2}%`, left: "50%", transform: "translateX(-50%)",
+                          background: "#1a1a2e", color: "#fff", fontSize: 11, fontWeight: 700,
+                          padding: "5px 9px", borderRadius: 7, whiteSpace: "nowrap", zIndex: 10,
+                          boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                          pointerEvents: "none",
+                        }}>
+                          {fmt(bar.value)}
+                          {isClickable && (
+                            <div style={{ fontSize: 9, fontWeight: 500, color: "#F97316", textAlign: "center", marginTop: 1 }}>
+                              {isSelected ? "Click to close" : "Click to expand"}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div style={{
+                        width: "100%",
+                        height: `${Math.max(h, 0.4)}%`,
+                        background: barBg,
+                        borderRadius: "5px 5px 0 0",
+                        transition: "height 0.4s ease, background 0.15s",
+                        outline: isSelected ? "2px solid #9A3412" : "none",
+                        outlineOffset: 1,
+                      }} />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            {/* X-axis labels */}
+            <div style={{ display: "flex", gap: period === "30d" ? 4 : period === "1y" ? 7 : 10, paddingTop: 8 }}>
+              {chartData.map((bar, i) => {
+                const isSelected = period === "1y" && selectedMonth === bar.monthKey;
+                return (
+                  <div
+                    key={i}
+                    onClick={() => { if (period === "1y") setSelectedMonth(isSelected ? null : bar.monthKey); }}
+                    style={{
+                      flex: 1, textAlign: "center",
+                      fontSize: period === "30d" ? 9 : 11,
+                      color: isSelected ? "#9A3412" : bar.isCurrentPeriod ? "#EA580C" : "#c0c0d0",
+                      fontWeight: (isSelected || bar.isCurrentPeriod) ? 700 : 400,
+                      overflow: "hidden",
+                      cursor: period === "1y" ? "pointer" : "default",
+                    }}
+                  >
+                    {bar.label}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          )}
+        </div>
+      </div>
+
+      {/* Payment methods + Top services */}
+      <div className="dash-grid-bottom">
+        {/* Payment Methods */}
+        <div style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", padding: "26px 30px" }}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: "#1a1a2e", marginBottom: 4 }}>Payment Methods</div>
+          <div style={{ fontSize: 12, color: "#a0a0b8", marginBottom: 22 }}>Revenue by channel</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {methodBreakdown.map(m => (
+              <div key={m.method}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: METHOD_COLORS[m.method] ?? "#888", flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>{METHOD_LABELS[m.method]}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 11, color: "#a0a0b8", fontWeight: 500 }}>{m.pct.toFixed(0)}%</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#EA580C" }}>{fmt(m.amount)}</span>
+                  </div>
+                </div>
+                <div style={{ height: 6, background: "#f0f0f8", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${m.pct}%`, background: METHOD_COLORS[m.method] ?? "#888", borderRadius: 4, transition: "width 0.6s ease" }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Top Services */}
+        <div style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", padding: "26px 30px" }}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: "#1a1a2e", marginBottom: 4 }}>Top Services</div>
+          <div style={{ fontSize: 12, color: "#a0a0b8", marginBottom: 22 }}>Most profitable this period</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {topServices.length === 0 ? (
+              <div style={{ fontSize: 13, color: "#c0c0d0", textAlign: "center", padding: "24px 0" }}>No data for this period</div>
+            ) : topServices.map((s, i) => {
+              const pct = topServices[0].revenue > 0 ? (s.revenue / topServices[0].revenue) * 100 : 0;
+              const barColors = ["#EA580C", "#F97316", "#FB923C", "#fdba74", "#FFEDD5", "#FFF7ED"];
+              return (
+                <div key={s.name}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#c0c0d0", width: 16, textAlign: "center" }}>{i + 1}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>{s.name}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 11, color: "#a0a0b8" }}>{s.count}×</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#EA580C" }}>{fmt(s.revenue)}</span>
+                    </div>
+                  </div>
+                  <div style={{ height: 5, background: "#f0f0f8", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${pct}%`, background: barColors[i] ?? "#FED7AA", borderRadius: 3, transition: "width 0.6s ease" }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Daily / Monthly breakdown table */}
+      <div className="table-scroll-wrap" style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", overflow: "hidden" }}>
+        {/* Table header */}
+        <div style={{ padding: "18px 24px 14px", borderBottom: "1px solid #f0f0f8", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            {selectedMonth ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button
+                  onClick={() => setSelectedMonth(null)}
+                  style={{ display: "flex", alignItems: "center", gap: 5, background: "#f0f0f8", border: "none", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#6b6b8a" }}
+                >
+                  <ChevronLeft size={14} /> All months
+                </button>
+                <div style={{ fontWeight: 700, fontSize: 15, color: "#1a1a2e" }}>{selectedMonthLabel}</div>
+                <span style={{ fontSize: 11, background: "#FFF7ED", border: "1px solid #FFEDD5", color: "#9A3412", padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>
+                  Daily detail
+                </span>
+              </div>
+            ) : (
+              <div style={{ fontWeight: 700, fontSize: 15, color: "#1a1a2e" }}>
+                {period === "1y" ? "Daily Breakdown" : "Daily Breakdown"}
+              </div>
+            )}
+            <div style={{ fontSize: 12, color: "#a0a0b8", marginTop: 4 }}>
+              {selectedMonth
+                ? `${drillRows?.length ?? 0} days · ${fmt(drillTotal)} total`
+                : period === "1y" ? "Last 31 days shown — click a chart bar to drill into a month" : `Last ${Math.min(cfg.days, 31)} days`}
+            </div>
+          </div>
+
+          {/* Drill mini stats */}
+          {selectedMonth && drillRows && (
+            <div style={{ display: "flex", gap: 20 }}>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 11, color: "#a0a0b8", fontWeight: 600 }}>APPOINTMENTS</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#3b82f6" }}>{drillCount}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 11, color: "#a0a0b8", fontWeight: 600 }}>AVG TICKET</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmt(drillAvg)}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 11, color: "#a0a0b8", fontWeight: 600 }}>TOTAL</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#EA580C" }}>{fmt(drillTotal)}</div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="table-scroll-inner"><div className="rev-table-inner">
+        {/* Column headers */}
+        <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 100px 1.2fr 1.2fr", padding: "10px 24px", background: "#fafafa", borderBottom: "1px solid #f0f0f8" }}>
+          {["DATE", "DAY", "APPTS", "REVENUE", "AVG TICKET"].map(h => (
+            <div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#b0b0c8", letterSpacing: "0.08em" }}>{h}</div>
+          ))}
+        </div>
+
+        {/* Rows */}
+        {tableRows.length === 0 ? (
+          <div style={{ padding: "32px 24px", textAlign: "center", fontSize: 13, color: "#c0c0d0" }}>
+            No data for this period
+          </div>
+        ) : tableRows.map((row, i) => {
+          const isToday = row.date === today;
+          const avg = row.count ? row.revenue / row.count : 0;
+          return (
+            <div
+              key={row.date}
+              style={{
+                display: "grid", gridTemplateColumns: "1.6fr 1fr 100px 1.2fr 1.2fr",
+                padding: "11px 24px",
+                borderBottom: i === tableRows.length - 1 ? "none" : "1px solid #f8f8fc",
+                alignItems: "center",
+                background: isToday ? "#fdf8ff" : "transparent",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: isToday ? 700 : 500, color: isToday ? "#EA580C" : "#1a1a2e" }}>{row.date}</span>
+                {isToday && <span style={{ fontSize: 10, background: "linear-gradient(135deg, #9A3412, #F97316)", color: "#fff", padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>Today</span>}
+              </div>
+              <div style={{ fontSize: 13, color: "#6b6b8a" }}>{row.dow}</div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: "#1a1a2e" }}>{row.count}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: row.revenue > 0 ? "#EA580C" : "#c0c0d0" }}>{fmt(row.revenue)}</div>
+              <div style={{ fontSize: 13, color: "#6b6b8a" }}>{avg ? fmt(avg) : "—"}</div>
+            </div>
+          );
+        })}
+
+        {/* Footer totals */}
+        <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 100px 1.2fr 1.2fr", padding: "13px 24px", background: "#fafafa", borderTop: "1px solid #f0f0f8" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#1a1a2e" }}>
+            {selectedMonth ? selectedMonthLabel : `Total (${cfg.label})`}
+          </div>
+          <div />
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#EA580C" }}>{tableCount}</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#EA580C" }}>{fmt(tableTotal)}</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#6b6b8a" }}>{tableAvg ? fmt(tableAvg) : "—"}</div>
+        </div>
+        </div></div>{/* /rev-table-inner /table-scroll-inner */}
+      </div>{/* /table-scroll-wrap */}
+      </>
+      )}{/* /tab === "overview" */}
+
+      {tab === "net" && (
+        <NetProfitView
+          period={cfg.label} rangeStart={rangeStart} filterEnd={filterEnd}
+          totalRevenue={totalRevenue} totalExpenses={totalExpenses} netProfit={netProfit}
+          netMarginPct={netMarginPct} expenseByCategory={expenseByCategory}
+          revenueByChannel={revenueByChannel} expensesByChannel={expensesByChannel}
+          netProfitByChannel={netProfitByChannel}
+        />
+      )}
+
+      </div>{/* /desktop-only */}
+    </div>
+  );
+}
+
+// ── Net Profit tab ───────────────────────────────────────────────────────────
+function NetProfitView({
+  period, rangeStart, filterEnd, totalRevenue, totalExpenses, netProfit, netMarginPct, expenseByCategory,
+  revenueByChannel, expensesByChannel, netProfitByChannel,
+}: {
+  period: string; rangeStart: string; filterEnd: string;
+  totalRevenue: number; totalExpenses: number; netProfit: number; netMarginPct: number;
+  expenseByCategory: { category: string; amount: number; pct: number }[];
+  revenueByChannel: { cash: number; online: number };
+  expensesByChannel: { cash: number; online: number };
+  netProfitByChannel: { cash: number; online: number };
+}) {
+  const channels = [
+    { key: "cash",   label: "Cash",   color: "#059669", revenue: revenueByChannel.cash,   expenses: expensesByChannel.cash,   net: netProfitByChannel.cash   },
+    { key: "online", label: "Online", color: "#2563eb", revenue: revenueByChannel.online, expenses: expensesByChannel.online, net: netProfitByChannel.online },
+  ];
+  return (
+    <>
+      <div className="stats-grid-3">
+        {[
+          { label: "Total Revenue",  value: fmt(totalRevenue),  icon: TrendingUp,   color: "var(--accent)", bg: "rgba(234, 88, 12, 0.08)" },
+          { label: "Total Expenses", value: fmt(totalExpenses), icon: TrendingDown, color: "#dc2626", bg: "#fef2f2" },
+          { label: "Net Profit",     value: fmt(netProfit),   icon: Wallet,       color: netProfit >= 0 ? "#059669" : "#dc2626", bg: netProfit >= 0 ? "#f0fdf4" : "#fef2f2" },
+        ].map(({ label, value, icon: Icon, color, bg }) => (
+          <div key={label} style={{ background: "#fff", borderRadius: 16, border: "1px solid rgba(226,223,235,0.8)", padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, boxShadow: "0 4px 12px rgba(0,0,0,0.02)", flex: 1 }}>
+            <div style={{ width: 46, height: 46, borderRadius: 12, background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color }}>
+              <Icon size={24} color={color} />
+            </div>
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 850, color, lineHeight: 1.1 }}>{value}</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="dash-grid-bottom">
+        {/* P&L summary */}
+        <div style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", padding: "26px 30px" }}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: "#1a1a2e", marginBottom: 4 }}>Net Profit Summary</div>
+          <div style={{ fontSize: 12, color: "#a0a0b8", marginBottom: 22 }}>{rangeStart} → {filterEnd} · {period}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, color: "#6b6b8a" }}>Revenue</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#1a1a2e" }}>{fmt(totalRevenue)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, color: "#6b6b8a" }}>− Expenses (all categories)</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#dc2626" }}>−{fmt(totalExpenses)}</span>
+            </div>
+            <div style={{ height: 1, background: "#f0f0f8" }} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#1a1a2e" }}>= Net Profit</span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: netProfit >= 0 ? "#059669" : "#dc2626" }}>{fmt(netProfit)}</span>
+            </div>
+            <div style={{ fontSize: 12, color: "#a0a0b8" }}>{netMarginPct.toFixed(1)}% net margin</div>
+
+            <div style={{ height: 1, background: "#f0f0f8", marginTop: 8 }} />
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Net profit by payment channel
+            </div>
+            {channels.map(c => (
+              <div key={c.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: c.color, flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>{c.label}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#a0a0b8", marginTop: 3, marginLeft: 19 }}>
+                    {fmt(c.revenue)} revenue − {fmt(c.expenses)} expenses
+                  </div>
+                </div>
+                <span style={{ fontSize: 15, fontWeight: 800, color: c.net >= 0 ? c.color : "#dc2626", whiteSpace: "nowrap" }}>
+                  {fmt(c.net)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Expenses by category */}
+        <div style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", padding: "26px 30px" }}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: "#1a1a2e", marginBottom: 4 }}>Expenses by Category</div>
+          <div style={{ fontSize: 12, color: "#a0a0b8", marginBottom: 22 }}>Paid expenses this period</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {expenseByCategory.length === 0 ? (
+              <div style={{ fontSize: 13, color: "#c0c0d0", textAlign: "center", padding: "24px 0" }}>
+                No expenses logged for this period — add them on the Cash Flow page.
+              </div>
+            ) : expenseByCategory.map(e => (
+              <div key={e.category}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: EXPENSE_COLORS[e.category] ?? "#888", flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>{EXPENSE_LABELS[e.category] ?? e.category}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 11, color: "#a0a0b8", fontWeight: 500 }}>{e.pct.toFixed(0)}%</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#dc2626" }}>{fmt(e.amount)}</span>
+                  </div>
+                </div>
+                <div style={{ height: 6, background: "#f0f0f8", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${e.pct}%`, background: EXPENSE_COLORS[e.category] ?? "#888", borderRadius: 4, transition: "width 0.6s ease" }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}

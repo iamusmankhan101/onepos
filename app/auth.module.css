@@ -1,0 +1,556 @@
+.authPage {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 0;
+  background: #fff;
+  color: #19192b;
+}
+
+.authPage::before {
+  content: none;
+}
+
+.authShell {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 100%;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  align-items: stretch;
+  background: #fff;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.brandPanel {
+  position: relative;
+  height: 100vh;
+  min-height: 0;
+  border-radius: 0;
+  padding: 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  color: #fff;
+  /* Brand gradient rather than a photograph — the panel has to read the same
+     for any kind of business, and it costs no image request. The grid is a
+     faint till-receipt texture, not a visible pattern. */
+  background-color: #3d1403;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 46px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 46px),
+    linear-gradient(180deg, rgba(120, 45, 12, 0.55), rgba(24, 12, 6, 0.86)),
+    linear-gradient(120deg, #C2410C 0%, #EA580C 42%, #7C2D12 100%);
+  background-size: auto, auto, cover, cover;
+  background-position: center;
+}
+
+.brandPanel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 16% 23%, rgba(255, 150, 50, 0.42), transparent 28%),
+    radial-gradient(circle at 82% 18%, rgba(255, 214, 188, 0.58), transparent 34%),
+    linear-gradient(180deg, transparent 0%, rgba(54, 26, 14, 0.64) 100%);
+  pointer-events: none;
+}
+
+.brandContent,
+.brandTop,
+.brandBottom {
+  position: relative;
+  z-index: 1;
+}
+
+.brandTop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  margin-bottom: 28px;
+}
+
+.brandMark {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.18);
+  display: grid;
+  place-items: center;
+  box-shadow: none;
+  backdrop-filter: blur(12px);
+}
+
+.eyebrow {
+  color: #fed7aa;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  margin-bottom: 12px;
+}
+
+.headline {
+  max-width: 390px;
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.supportingText {
+  max-width: 380px;
+  margin: 14px 0 0;
+  color: #e9e2da;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.brandStats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 22px;
+}
+
+.statPill {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
+  color: #f6f2ff;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  backdrop-filter: blur(10px);
+}
+
+.brandBottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+}
+
+.miniCard {
+  width: min(260px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 11px 12px;
+  backdrop-filter: blur(16px);
+}
+
+.miniCardTitle {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.miniCardText {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 10px;
+}
+
+.formPanel {
+  height: 100vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 56px;
+  background: #fbfbfe;
+}
+
+.formCard {
+  width: 100%;
+  max-width: 380px;
+  margin: auto;
+  background: #ffffff;
+  border: 1px solid rgba(228, 228, 231, 0.8);
+  border-radius: 20px;
+  padding: 38px;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.04), 
+              0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.formCard:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.06), 
+              0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.formCardWide {
+  max-width: 440px;
+}
+
+.formHeader {
+  margin-bottom: 24px;
+}
+
+.formHeaderWithIcon {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.formIcon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #EA580C 0%, #C2410C 100%);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 16px rgba(234, 88, 12, 0.15);
+}
+
+.formTitle {
+  margin: 0;
+  color: #0f172a;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.formSubtitle {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.fieldGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.fullField {
+  grid-column: 1 / -1;
+}
+
+.field {
+  display: block;
+  margin-bottom: 16px;
+}
+
+.label {
+  display: block;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 7px;
+}
+
+.inputWrap {
+  position: relative;
+}
+
+.inputIcon {
+  position: absolute;
+  left: 15px;
+  top: 13px;
+  color: #94a3b8;
+  transition: color 0.2s ease;
+}
+
+.input {
+  width: 100%;
+  height: 42px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 0 16px 0 44px;
+  font-size: 13px;
+  color: #0f172a;
+  outline: none;
+  background: #f8fafc;
+  font-weight: 500;
+  transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input:hover {
+  border-color: #cbd5e1;
+  background-color: #f1f5f9;
+}
+
+.input:focus {
+  border-color: #ea580c;
+  background-color: #ffffff;
+  box-shadow: 0 0 0 4px rgba(234, 88, 12, 0.08);
+}
+
+.input:focus + .inputIcon {
+  color: #ea580c;
+}
+
+.passwordInput {
+  padding-right: 48px;
+}
+
+.iconButton {
+  position: absolute;
+  right: 8px;
+  top: 7px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.iconButton:hover {
+  color: #ea580c;
+  background-color: rgba(234, 88, 12, 0.06);
+}
+
+.error {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+
+.signupError {
+  margin-top: 16px;
+  margin-bottom: 0;
+}
+
+.primaryButton {
+  width: 100%;
+  height: 42px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.2);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease;
+}
+
+.primaryButton:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(234, 88, 12, 0.28);
+  filter: brightness(1.05);
+}
+
+.primaryButton:active {
+  transform: translateY(1px);
+  box-shadow: 0 2px 6px rgba(234, 88, 12, 0.2);
+}
+
+.footerText {
+  margin: 22px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  text-align: center;
+  font-weight: 500;
+}
+
+.footerLink {
+  color: #ea580c;
+  font-weight: 700;
+  text-decoration: none;
+  position: relative;
+  transition: color 0.2s ease;
+}
+
+.footerLink:hover {
+  color: #9a3412;
+}
+
+.footerLink::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  transform: scaleX(0);
+  height: 1.5px;
+  bottom: -2px;
+  left: 0;
+  background-color: #9a3412;
+  transform-origin: bottom right;
+  transition: transform 0.25s ease-out;
+}
+
+.footerLink:hover::after {
+  transform: scaleX(1);
+  transform-origin: bottom left;
+}
+
+/* ── Tablet ──────────────────────────────────────────────────── */
+@media (max-width: 980px) {
+  .authPage {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 0;
+    width: 100%;
+  }
+
+  .authShell {
+    grid-template-columns: 1fr;
+    width: 100%;
+    max-width: 100%;
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  .brandPanel {
+    width: 100%;
+    height: 380px;
+    padding: 28px 32px;
+  }
+
+  .brandBottom {
+    display: none;
+  }
+
+  .formPanel {
+    width: 100%;
+    min-height: auto;
+    padding: 36px 32px 48px;
+  }
+}
+
+/* ── Mobile ──────────────────────────────────────────────────── */
+@media (max-width: 620px) {
+  .authPage {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 0;
+    margin: 0;
+    width: 100vw;
+  }
+
+  .authShell {
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    max-width: 100vw;
+    min-height: 100vh;
+    margin: 0;
+  }
+
+  /* Compact hero — enough to show branding, not dominate the screen */
+  .brandPanel {
+    width: 100%;
+    height: 240px;
+    min-height: 0;
+    padding: 20px 20px 40px;
+    justify-content: flex-start;
+    gap: 10px;
+  }
+
+  .eyebrow {
+    font-size: 10px;
+    margin-bottom: 6px;
+  }
+
+  .headline {
+    font-size: 20px;
+    line-height: 1.15;
+  }
+
+  .supportingText {
+    display: none;
+  }
+
+  .brandStats {
+    margin-top: 10px;
+    gap: 6px;
+  }
+
+  .statPill {
+    font-size: 9px;
+    padding: 5px 9px;
+  }
+
+  /* Form panel sits directly below the hero */
+  .formPanel {
+    width: 100%;
+    min-height: 0;
+    flex: 1;
+    padding: 24px 20px 40px;
+    align-items: flex-start;
+  }
+
+  .formCard {
+    max-width: 100%;
+    background: transparent;
+    border: none;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .formTitle {
+    font-size: 20px;
+    margin-top: 10px !important;
+  }
+
+  .formSubtitle {
+    font-size: 12px;
+  }
+
+  /* Bigger touch targets */
+  .input {
+    height: 44px;
+    font-size: 14px;
+  }
+
+  .inputIcon {
+    top: 13px;
+  }
+
+  .iconButton {
+    top: 8px;
+  }
+
+  .primaryButton {
+    height: 46px;
+    font-size: 14px;
+    border-radius: 10px;
+  }
+
+  .footerText {
+    font-size: 13px;
+  }
+
+  /* Two-column field grids collapse to one */
+  .fieldGrid {
+    grid-template-columns: 1fr;
+  }
+}
