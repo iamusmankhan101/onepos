@@ -528,11 +528,11 @@ export default function POSPage() {
   // There is no WhatsApp provider account behind this POS: every receipt is a
   // wa.me link opened in a new tab, which WhatsApp Web (or the phone app) turns
   // into the client's chat with this message already typed.
-  function buildThankYouMessage(invoice: Invoice, client: Client): string {
+  function buildThankYouMessage(invoice: Invoice, customerName: string): string {
     const thankYouTpl = (settingsStore.whatsapp as { posThankYou?: string }).posThankYou;
     const thankYou = thankYouTpl
-      ? fillTemplate(thankYouTpl, { name: client.name, business_name: business.name })
-      : `Thank you so much for visiting ${business.name} today, ${client.name}!`;
+      ? fillTemplate(thankYouTpl, { name: customerName, business_name: business.name })
+      : `Thank you so much for visiting ${business.name} today, ${customerName}!`;
     const itemLines = invoice.items.map(it => `• ${it.description}${it.qty > 1 ? ` x${it.qty}` : ""}`).join("\n");
     const dateLabel = new Date(invoice.date + "T00:00:00").toLocaleDateString("en-PK", { day: "numeric", month: "long", year: "numeric" });
     const rawMessage = [
@@ -549,9 +549,13 @@ export default function POSPage() {
     return sanitizeForLink(rawMessage);
   }
 
+  /**
+   * Hand the receipt to WhatsApp. A walk-in has no number on file and nothing
+   * to send to, so the receipt is simply skipped — no prompt, no error.
+   */
   function openWhatsAppThankYou(invoice: Invoice, client: Client | null) {
-    if (!client?.phone) { setWaStatus("idle"); return; }
-    const opened = openWhatsAppChat(client.phone, buildThankYouMessage(invoice, client));
+    if (!client?.phone?.trim()) { setWaStatus("idle"); return; }
+    const opened = openWhatsAppChat(client.phone, buildThankYouMessage(invoice, client.name));
     setWaStatus(opened ? "opened" : "blocked");
   }
 
@@ -562,7 +566,7 @@ export default function POSPage() {
   // button below, never to the automatic post-checkout attempt.
   async function sharePdfToWhatsApp(invoice: Invoice, client: Client | null) {
     if (!client?.phone) return;
-    const message = buildThankYouMessage(invoice, client);
+    const message = buildThankYouMessage(invoice, client.name);
     const normalizedPhone = normalizePhone(client.phone);
     setWaPdfStatus("working");
 
