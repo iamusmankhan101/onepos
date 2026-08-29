@@ -21,6 +21,31 @@ interface StoredUser extends AuthUser {
 const USERS_KEY = "pointly_auth_users";
 const SESSION_KEY = "pointly_auth_session";
 
+/**
+ * This app stored under an `onepos_` prefix before the rename. Copy anything
+ * still sitting under the old prefix so a browser that was signed in across
+ * the rename keeps its session and cached data rather than appearing logged
+ * out with an empty catalogue.
+ *
+ * Runs at module load — every store imports this file, so it lands before any
+ * of them read. Safe to delete once no pre-rename browsers are in use.
+ */
+function migrateLegacyStorage() {
+  if (typeof window === "undefined" || typeof window.localStorage === "undefined") return;
+  try {
+    const legacy = Object.keys(localStorage).filter((key) => key.startsWith("onepos_"));
+    for (const key of legacy) {
+      const renamed = `pointly_${key.slice("onepos_".length)}`;
+      const value = localStorage.getItem(key);
+      if (value !== null && localStorage.getItem(renamed) === null) {
+        localStorage.setItem(renamed, value);
+      }
+      localStorage.removeItem(key);
+    }
+  } catch { /* storage blocked — nothing to migrate */ }
+}
+migrateLegacyStorage();
+
 const demoUser: StoredUser = {
   id: "demo-owner",
   ownerName: "Demo Owner",

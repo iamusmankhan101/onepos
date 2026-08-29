@@ -58,6 +58,14 @@ export function verifySessionToken(token: string): string | null {
 
 export const COOKIE_NAME = "pointly_session";
 
+/**
+ * The cookie this app used before the rename. Still read (never written) so a
+ * tab that was open across the rename keeps working instead of 401-ing on
+ * every background save. Safe to delete once no old sessions are in flight —
+ * they expire on their own.
+ */
+export const LEGACY_COOKIE_NAME = "onepos_session";
+
 /** SHA-256 of the token — safe to store in DB (token itself stays secret). */
 export function tokenId(token: string): string {
   return createHash("sha256").update(token).digest("hex");

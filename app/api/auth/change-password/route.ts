@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getUserById, hashPassword } from "@/lib/auth-db";
-import { verifySessionToken, COOKIE_NAME } from "@/lib/session";
+import { verifySessionToken, COOKIE_NAME, LEGACY_COOKIE_NAME } from "@/lib/session";
 import { pbkdf2Sync, timingSafeEqual } from "crypto";
 import { rateLimit, rateLimitClear } from "@/lib/rate-limit";
 
@@ -19,7 +19,7 @@ function verifyPassword(plain: string, stored: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  const token = req.cookies.get(COOKIE_NAME)?.value;
+  const token = req.cookies.get(COOKIE_NAME)?.value ?? req.cookies.get(LEGACY_COOKIE_NAME)?.value;
   if (!token) {
     return Response.json({ ok: false, error: "Not authenticated." }, { status: 401 });
   }

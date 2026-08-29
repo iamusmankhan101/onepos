@@ -10,6 +10,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const COOKIE_NAME  = "pointly_session";
+// Pre-rename name. Read only, and swapped for the new one on the way out —
+// see the upgrade below. Delete once old sessions have expired.
+const LEGACY_COOKIE_NAME = "onepos_session";
 const SESSION_SECRET_ENV = process.env.SESSION_SECRET;
 // Only used outside production (or if SESSION_SECRET is unset locally). In
 // production, a missing SESSION_SECRET must fail closed — falling back to a
@@ -108,8 +111,13 @@ export async function middleware(req: NextRequest) {
 
   // ── Session check (crypto-only — no DB round-trip in Edge middleware) ─────
   // DB-level revocation is enforced in the API routes and signout handler.
-  const token  = req.cookies.get(COOKIE_NAME)?.value ?? "";
+  const currentToken = req.cookies.get(COOKIE_NAME)?.value ?? "";
+  const legacyToken  = req.cookies.get(LEGACY_COOKIE_NAME)?.value ?? "";
+  const token  = currentToken || legacyToken;
   const userId = token ? await verifySessionToken(token) : null;
+  // A session that arrived under the old name is re-issued under the new one,
+  // so a tab open across the rename doesn't get logged out mid-shift.
+  const upgradeCookie = Boolean(!currentToken && legacyToken && userId);
 
   // ── Protect dashboard routes ──────────────────────────────────────────────
   if (DASHBOARD.test(pathname) && !userId) {
@@ -152,6 +160,16 @@ export async function middleware(req: NextRequest) {
 
   const res = NextResponse.next({ request: { headers: reqHeaders } });
   res.headers.set("Content-Security-Policy", csp);
+  if (upgradeCookie) {
+    res.cookies.set(COOKIE_NAME, legacyToken, {
+      httpOnly: true,
+      secure:   isProd,
+      sameSite: "lax",
+      path:     "/",
+      maxAge:   7 * 24 * 60 * 60,
+    });
+    res.cookies.delete(LEGACY_COOKIE_NAME);
+  }
   return res;
 }
 

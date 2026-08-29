@@ -268,9 +268,25 @@ export function recordDeletions(entity: Entity, ids: string[]): Promise<boolean>
  * has gone missing or reverted after a refresh in the past. New save
  * functions should use this too rather than a bare fire-and-forget fetch.
  */
+/**
+ * Fired when the server rejects a save because the session is gone. The
+ * dashboard layout listens and sends the tab to sign-in — without this, an
+ * open tab keeps retrying every write and 401-ing into the console.
+ */
+export const SESSION_EXPIRED_EVENT = "pointly_session_expired";
+
+function reportExpiredSession() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+}
+
 async function retryFetch(url: string, options: RequestInit, label: string, tries = 3): Promise<boolean> {
   try {
     const r = await fetch(url, options);
+    // Retrying a 401 just repeats it — the session is not coming back on its own.
+    if (r.status === 401) {
+      reportExpiredSession();
+      return false;
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return true;
   } catch (err) {

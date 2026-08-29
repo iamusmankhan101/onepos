@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { COOKIE_NAME, verifySessionToken } from "@/lib/session";
+import { COOKIE_NAME, LEGACY_COOKIE_NAME, verifySessionToken } from "@/lib/session";
 import { getStaffUsersForOwner, getUserById, upsertStaffUser } from "@/lib/auth-db";
 
 const STAFF_PERMISSIONS = ["dashboard", "calendar", "appointments", "clients", "pos", "invoices"];
@@ -11,7 +11,7 @@ const ALL_PERMISSION_KEYS = new Set([
 ]);
 
 async function getAuthorizedActor(req: NextRequest) {
-  const token = req.cookies.get(COOKIE_NAME)?.value;
+  const token = req.cookies.get(COOKIE_NAME)?.value ?? req.cookies.get(LEGACY_COOKIE_NAME)?.value;
   const actorId = token ? verifySessionToken(token) : null;
   if (!actorId) return { error: Response.json({ ok: false, error: "Not authenticated." }, { status: 401 }) };
 

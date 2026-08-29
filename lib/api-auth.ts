@@ -9,7 +9,7 @@
  */
 
 import { NextRequest } from "next/server";
-import { COOKIE_NAME, verifySessionToken } from "./session";
+import { COOKIE_NAME, LEGACY_COOKIE_NAME, verifySessionToken } from "./session";
 import { getUserById } from "./auth-db";
 
 export interface ResolvedActor {
@@ -38,7 +38,7 @@ export async function resolveActor(
   req: NextRequest,
   requestedLocationId = "main",
 ): Promise<ResolvedActor | null> {
-  const token = req.cookies.get(COOKIE_NAME)?.value;
+  const token = req.cookies.get(COOKIE_NAME)?.value ?? req.cookies.get(LEGACY_COOKIE_NAME)?.value;
   const actorId = token ? verifySessionToken(token) : null;
   const actor = actorId ? await getUserById(actorId) : null;
   if (!actor) return null;
@@ -72,7 +72,7 @@ export async function resolveActor(
  * body/query as an explicit admin action, not the caller's own scope.
  */
 export async function requireAdmin(req: NextRequest): Promise<boolean> {
-  const token = req.cookies.get(COOKIE_NAME)?.value;
+  const token = req.cookies.get(COOKIE_NAME)?.value ?? req.cookies.get(LEGACY_COOKIE_NAME)?.value;
   const actorId = token ? verifySessionToken(token) : null;
   const actor = actorId ? await getUserById(actorId) : null;
   return actor?.role === "admin";

@@ -7,7 +7,7 @@ import { ShoppingCart, ReceiptText, BarChart3, UserCog, Users, WifiOff, X } from
 import Sidebar from "@/components/sidebar";
 import { getCurrentUser, checkServerSession, signOut } from "@/lib/auth";
 import { applyAppearanceSettings, SETTINGS_CHANGED_EVENT, reloadSettings } from "@/lib/settings-store";
-import { syncFromDB, syncLocalDataToDB } from "@/lib/turso-sync";
+import { syncFromDB, syncLocalDataToDB, SESSION_EXPIRED_EVENT } from "@/lib/turso-sync";
 import { getStoredStaff, getStoredServices } from "@/lib/storage";
 import { getActiveSection, setActiveSection, getSectionOptions } from "@/lib/sections";
 import { setActiveLocationFilter } from "@/lib/locations";
@@ -159,6 +159,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const interval = window.setInterval(verify, 30 * 60 * 1000);
     return () => { cancelled = true; window.clearInterval(interval); };
   }, [isReady, router]);
+
+  // A save rejected as unauthenticated means the session died under an open
+  // tab. Rather than let every subsequent write 401 into the console, clear
+  // the local session and send them to sign in.
+  useEffect(() => {
+    async function onExpired() {
+      await signOut();
+      router.replace("/sign-in?expired=1");
+    }
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, [router]);
 
   // Appearance (brand accent CSS variables)
   useEffect(() => {
