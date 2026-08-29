@@ -96,13 +96,34 @@ export function saveInvoices(list: Invoice[]): Promise<boolean> {
   return Promise.resolve(false);
 }
 
-function nextInvoiceNumber(): string {
+/**
+ * The counter behind an invoice number lives in this browser's localStorage, so
+ * on its own two terminals signed into the same business hand out the *same*
+ * number — each one only ever sees its own tally. Every invoice either terminal
+ * has issued is synced into the list below, so the highest number already in it
+ * is the real high-water mark; taking whichever of the two is greater keeps the
+ * sequence unique across devices instead of restarting it on each one.
+ *
+ * Two checkouts rung up on separate terminals in the same instant (before
+ * either sync lands) can still collide — the id, not the number, is what keeps
+ * those two invoices distinct records.
+ */
+function nextInvoiceNumber(existing: Invoice[]): string {
   if (typeof window === "undefined") return "SI-0001";
   const counterKey = locationUserKey(BASE_COUNTER);
-  const n = parseInt(localStorage.getItem(counterKey) || "0", 10) + 1;
-  localStorage.setItem(counterKey, String(n));
   const year = new Date().getFullYear();
-  return `SI-${year}-${String(n).padStart(4, "0")}`;
+  const prefix = `SI-${year}-`;
+
+  const highestIssued = existing.reduce((max, invoice) => {
+    if (typeof invoice?.number !== "string" || !invoice.number.startsWith(prefix)) return max;
+    const seq = parseInt(invoice.number.slice(prefix.length), 10);
+    return Number.isNaN(seq) ? max : Math.max(max, seq);
+  }, 0);
+
+  const counter = parseInt(localStorage.getItem(counterKey) || "0", 10);
+  const n = Math.max(Number.isNaN(counter) ? 0 : counter, highestIssued) + 1;
+  localStorage.setItem(counterKey, String(n));
+  return `${prefix}${String(n).padStart(4, "0")}`;
 }
 
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
@@ -118,13 +139,14 @@ function nextInvoiceNumber(): string {
 export async function createInvoice(
   draft: Omit<Invoice, "id" | "number" | "createdAt">
 ): Promise<{ invoice: Invoice; dbSaved: boolean }> {
+  const existing = getInvoices();
   const invoice: Invoice = {
     ...draft,
     id: crypto.randomUUID(),
-    number: nextInvoiceNumber(),
+    number: nextInvoiceNumber(existing),
     createdAt: new Date().toISOString(),
   };
-  const list = [invoice, ...getInvoices()];
+  const list = [invoice, ...existing];
   const dbSaved = await saveInvoices(list);
   return { invoice, dbSaved };
 }

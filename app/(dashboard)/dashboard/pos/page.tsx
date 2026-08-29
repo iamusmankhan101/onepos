@@ -477,17 +477,14 @@ export default function POSPage() {
           totalSpend:  selectedClient.totalSpend + total,
           lastVisitDate: today,
         };
-        console.log("[POS loyalty] client:", selectedClient.name, "| total:", total, "| loyalty enabled:", loyaltySettings.enabled, "| ppr:", loyaltySettings.pointsPerRupee, "| pts before:", selectedClient.loyaltyPoints ?? 0);
         if (loyaltySettings.enabled) {
           if (loyaltyDiscount > 0 && cappedLoyaltyRedeem > 0) {
             updatedClient = redeemPoints(updatedClient, cappedLoyaltyRedeem, `Redeemed at POS · ${invoice.number}`);
           }
           updatedClient = awardPoints(updatedClient, total, loyaltySettings, invoice.id);
         }
-        console.log("[POS loyalty] pts after awardPoints:", updatedClient.loyaltyPoints ?? 0);
         // Read fresh from localStorage so we never map over stale React state
         const freshClients = getStoredClients();
-        console.log("[POS loyalty] freshClients count:", freshClients.length, "| found client in LS:", freshClients.some(c => c.id === selectedClient.id));
         const found = freshClients.some(c => c.id === selectedClient.id);
         const updatedClients = found
           ? freshClients.map(c => c.id === selectedClient.id ? updatedClient : c)
@@ -495,9 +492,6 @@ export default function POSPage() {
         setClients(updatedClients);
         setSelectedClient(updatedClient); // keep selectedClient fresh in the current session
         saveClients(updatedClients);
-        console.log("[POS loyalty] saved. pts in saved client:", updatedClients.find(c => c.id === selectedClient.id)?.loyaltyPoints ?? 0);
-      } else {
-        console.log("[POS loyalty] SKIPPED — selectedClient?.id is falsy:", selectedClient?.id);
       }
 
       setLastInvoice(invoice);
