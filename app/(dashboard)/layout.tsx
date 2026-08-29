@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ShoppingCart, ReceiptText, BarChart3, UserCog, Users, ScanLine, WifiOff, X } from "lucide-react";
+import { ShoppingCart, ReceiptText, BarChart3, UserCog, Users, WifiOff, X } from "lucide-react";
 import Sidebar from "@/components/sidebar";
 import { getCurrentUser, checkServerSession, signOut } from "@/lib/auth";
 import { applyAppearanceSettings, SETTINGS_CHANGED_EVENT, reloadSettings } from "@/lib/settings-store";
@@ -275,7 +275,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Center logo badge — opens the sidebar */}
           <button onClick={() => setSidebarOpen(true)} className="bottom-nav-logo-badge" aria-label="Open menu">
-            <ScanLine size={24} color="#fff" strokeWidth={2.2} />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo-light.png" alt="Pointly" style={{ width: 34, height: "auto", display: "block" }} />
           </button>
 
           {rightTabs.map((tab) => {

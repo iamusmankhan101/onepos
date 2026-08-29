@@ -53,8 +53,8 @@ export default function SignInPage() {
           }
           return;
         }
-        localStorage.setItem("onepos_auth_session", data.user!.id);
-        localStorage.setItem(`onepos_user_cache_${data.user!.id}`, JSON.stringify(data.user));
+        localStorage.setItem("pointly_auth_session", data.user!.id);
+        localStorage.setItem(`pointly_user_cache_${data.user!.id}`, JSON.stringify(data.user));
         // Hard navigation, not router.replace: the dashboard is gated by an
         // httpOnly cookie checked in middleware.ts, and Next's client router
         // cache can still be holding the pre-login "redirected to /sign-in"
@@ -75,7 +75,7 @@ export default function SignInPage() {
       <div className={styles.authShell}>
         <section className={styles.brandPanel}>
           <div className={styles.brandTop}>
-            <Wordmark />
+            <Wordmark height={46} />
           </div>
 
           <div className={styles.brandContent}>
@@ -170,7 +170,7 @@ export default function SignInPage() {
             </button>
 
             <p className={styles.footerText}>
-              New to OnePOS? <Link href="/sign-up" className={styles.footerLink}>Create an account</Link>
+              New to Pointly? <Link href="/sign-up" className={styles.footerLink}>Create an account</Link>
             </p>
           </div>
         </section>

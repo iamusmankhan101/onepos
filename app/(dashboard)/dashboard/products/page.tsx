@@ -694,7 +694,7 @@ function ReminderModal({ alertItems, onClose }: { alertItems: InventoryItem[]; o
   const businessName = settingsStore.business.name as string;
 
   const message = [
-    `*Restock list — ${businessName || "OnePOS"}*`,
+    `*Restock list — ${businessName || "Pointly"}*`,
     `Date: ${new Date().toLocaleDateString("en-PK", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}`,
     ``,
     `The following items need restocking:`,

@@ -18,7 +18,7 @@ type Entity = typeof ENTITIES[number];
  * Pages that hold entity lists in React state listen for it (see
  * subscribeToStoredData in lib/storage.ts) and re-read.
  */
-export const DATA_SYNCED_EVENT = "onepos_data_synced";
+export const DATA_SYNCED_EVENT = "pointly_data_synced";
 
 /**
  * On app load: pull all data from Turso into the user-scoped localStorage slots.
@@ -46,7 +46,7 @@ export async function syncFromDB(): Promise<void> {
           // instead of waiting for the next add/edit to trigger a save. Awaited so a
           // later syncFromDB() can't race ahead and see the still-empty DB row.
           try {
-            const lsRaw = localStorage.getItem(locationUserKey(`onepos_${entity}`, locationId));
+            const lsRaw = localStorage.getItem(locationUserKey(`pointly_${entity}`, locationId));
             const local = lsRaw ? JSON.parse(lsRaw) as unknown[] : [];
             if (Array.isArray(local) && local.length > 0) {
               await fetch("/api/db", {
@@ -168,10 +168,10 @@ export async function syncFromDB(): Promise<void> {
         // this check, a just-saved edit (business name, logo, etc.) gets silently
         // overwritten by the stale row this GET just fetched, which is exactly
         // what "settings revert after refresh" looks like from the outside.
-        const localSavedAt = localStorage.getItem(userKey("onepos_settings_saved_at"));
+        const localSavedAt = localStorage.getItem(userKey("pointly_settings_saved_at"));
         const localIsNewer = !!localSavedAt && !!updatedAt && localSavedAt > updatedAt;
         if (!localIsNewer) {
-          localStorage.setItem(userKey("onepos_settings"), JSON.stringify(data));
+          localStorage.setItem(userKey("pointly_settings"), JSON.stringify(data));
         }
       }
     }
@@ -186,7 +186,7 @@ export async function syncFromDB(): Promise<void> {
     if (res.ok) {
       const { data: incoming } = await res.json() as { data: Record<string, unknown>[] };
       if (Array.isArray(incoming)) {
-        const lsRaw = localStorage.getItem(locationUserKey("onepos_loyalty_history", locationId));
+        const lsRaw = localStorage.getItem(locationUserKey("pointly_loyalty_history", locationId));
         const localList: Record<string, unknown>[] = [];
         if (lsRaw) {
           try { localList.push(...(JSON.parse(lsRaw) as Record<string, unknown>[])); } catch { /* ignore */ }
@@ -198,7 +198,7 @@ export async function syncFromDB(): Promise<void> {
         const merged = incoming.map(dbRecord => localById[dbRecord.id as string] ?? dbRecord);
         const union = [...merged, ...localOnly];
         if (union.length > 0) {
-          localStorage.setItem(locationUserKey("onepos_loyalty_history", locationId), JSON.stringify(union));
+          localStorage.setItem(locationUserKey("pointly_loyalty_history", locationId), JSON.stringify(union));
         }
         if (localOnly.length > 0) {
           fetch("/api/loyalty", {
@@ -234,7 +234,7 @@ function applyDeletions(locationId: string): void {
     const ids = new Set(tombstones.filter((t) => t.entity === entity).map((t) => t.id));
     if (ids.size === 0) continue;
 
-    const key = locationUserKey(`onepos_${entity}`, locationId);
+    const key = locationUserKey(`pointly_${entity}`, locationId);
     const raw = localStorage.getItem(key);
     if (!raw) continue;
     try {
@@ -298,7 +298,7 @@ export async function syncLocalDataToDB(): Promise<boolean> {
   const results = await Promise.all(
     ENTITIES.map(async (entity) => {
       try {
-        const raw = localStorage.getItem(locationUserKey(`onepos_${entity}`, locationId));
+        const raw = localStorage.getItem(locationUserKey(`pointly_${entity}`, locationId));
         if (!raw) return true;
         const data = JSON.parse(raw) as unknown;
         if (!Array.isArray(data)) return true;

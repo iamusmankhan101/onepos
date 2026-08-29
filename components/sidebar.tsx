@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
-  UserCog, BarChart3, Banknote, Settings, ReceiptText, ShoppingCart, Package,
+  UserCog, BarChart3, Banknote, Settings, ReceiptText, ShoppingCart, Package, Users,
   X, LogOut, ChevronDown,
 } from "lucide-react";
 import { AuthUser, getCurrentUser, signOut } from "@/lib/auth";
@@ -20,6 +20,7 @@ const NAV_GROUPS: {
     items: [
       { href: "/dashboard/pos",      icon: ShoppingCart, label: "POS"      },
       { href: "/dashboard/products", icon: Package,      label: "Products" },
+      { href: "/dashboard/clients",  icon: Users,        label: "Clients"  },
       { href: "/dashboard/invoices", icon: ReceiptText,  label: "Invoices" },
     ],
   },
@@ -41,7 +42,7 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
   const pathname = usePathname();
   const router   = useRouter();
   const [user,      setUser]      = useState<AuthUser | null>(null);
-  const [businessName, setBusinessName] = useState("OnePOS");
+  const [businessName, setBusinessName] = useState("Pointly");
   const [businessLogo, setBusinessLogo] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
@@ -50,7 +51,7 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
     function sync() {
       reloadSettings();
       setUser(getCurrentUser());
-      setBusinessName(settingsStore.business.name || getCurrentUser()?.businessName || "OnePOS");
+      setBusinessName(settingsStore.business.name || getCurrentUser()?.businessName || "Pointly");
       setBusinessLogo(settingsStore.business.logo || "");
     }
     const t = window.setTimeout(sync, 0);
@@ -218,7 +219,7 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
               <X size={15} />
             </button>
             <span className="sidebar-logo" style={{ userSelect: "none", pointerEvents: "none" }}>
-              <Wordmark size={19} />
+              <Wordmark height={26} />
             </span>
           </div>
 

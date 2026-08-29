@@ -25,12 +25,13 @@ const SECTIONS = [
 const PERMISSION_OPTIONS = [
   { key: "pos",       label: "POS"       },
   { key: "products",  label: "Products"  },
+  { key: "clients",   label: "Clients"   },
   { key: "invoices",  label: "Invoices"  },
   { key: "revenue",   label: "Revenue"   },
   { key: "cash-flow", label: "Cash Flow" },
   { key: "staff",     label: "Staff"     },
 ];
-const DEFAULT_STAFF_PERMISSIONS = ["pos", "products", "invoices"];
+const DEFAULT_STAFF_PERMISSIONS = ["pos", "products", "clients", "invoices"];
 
 const inp: CSSProperties = {
   width: "100%", padding: "10px 14px", borderRadius: 12,

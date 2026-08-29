@@ -30,7 +30,7 @@ export interface Expense {
   section?: string;
 }
 
-const KEY = "onepos_expenses";
+const KEY = "pointly_expenses";
 
 export function getExpenses(): Expense[] {
   if (typeof window === "undefined") return [];

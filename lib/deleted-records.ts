@@ -26,7 +26,7 @@ export interface DeletedRecord {
 
 export const DELETED_RECORDS_ENTITY = "deleted_records";
 
-const BASE_KEY = `onepos_${DELETED_RECORDS_ENTITY}`;
+const BASE_KEY = `pointly_${DELETED_RECORDS_ENTITY}`;
 
 // Tombstones are tiny (~80 bytes) but they sync on every page load, so keep the
 // list bounded. Newest are kept — an id old enough to fall off the end has long

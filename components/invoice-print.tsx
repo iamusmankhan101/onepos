@@ -288,7 +288,7 @@ export default function InvoicePrint({
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ fontSize: 10, color: "#aaa" }}>Powered by</span>
-                  <Wordmark tone="dark" size={15} />
+                  <Wordmark tone="dark" height={16} />
                 </div>
               </div>
 

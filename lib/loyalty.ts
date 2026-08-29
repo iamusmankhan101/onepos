@@ -2,7 +2,7 @@ import { saveLoyaltyHistoryToDB } from "./turso-sync";
 import type { Client, LoyaltyTransaction } from "./types";
 import { locationUserKey } from "./locations";
 
-const HISTORY_KEY = "onepos_loyalty_history";
+const HISTORY_KEY = "pointly_loyalty_history";
 
 export type LoyaltyTier = "none" | "bronze" | "silver" | "gold" | "platinum";
 

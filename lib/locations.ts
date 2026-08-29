@@ -158,8 +158,8 @@ export function removeBusinessLocation(locationId: string): { removed: BusinessL
  * Wipes every localStorage key that belongs to one branch — appointments,
  * clients, staff, services, inventory, business invoices, expenses, attendance,
  * payouts, cash flow, loyalty history, WhatsApp queues/logs, schema version.
- * Main Branch uses plain `onepos_<entity>_<owner>` keys; every other branch
- * lives under `onepos_<entity>__location_<id>_<owner>`. Account-level keys
+ * Main Branch uses plain `pointly_<entity>_<owner>` keys; every other branch
+ * lives under `pointly_<entity>__location_<id>_<owner>`. Account-level keys
  * (settings, auth, plan, subscription invoices, payment requests) are never
  * touched — settings in particular carry the location list itself.
  */
@@ -172,7 +172,7 @@ export function clearLocationLocalData(locationId: string) {
   const doomed: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (!key || !key.startsWith("onepos_")) continue;
+    if (!key || !key.startsWith("pointly_")) continue;
     if (locationId !== "main") {
       // Branch keys always embed `__location_<id>_` (id slugs are [a-z0-9-]).
       if (key.includes(`__location_${locationId}_`)) doomed.push(key);
@@ -180,7 +180,7 @@ export function clearLocationLocalData(locationId: string) {
     }
     if (key.includes("__location_")) continue; // another branch's data
     if (!key.endsWith(`_${dataOwnerId}`)) continue; // not this business's key
-    if (/^onepos_(settings|auth|user_cache|active_plan|payment_requests|invoices)/.test(key)) continue;
+    if (/^pointly_(settings|auth|user_cache|active_plan|payment_requests|invoices)/.test(key)) continue;
     doomed.push(key);
   }
   for (const key of doomed) localStorage.removeItem(key);

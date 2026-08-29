@@ -7,7 +7,7 @@ export interface ManualCashIncome {
   createdAt: string;
 }
 
-const KEY = "onepos_cash_flow_income";
+const KEY = "pointly_cash_flow_income";
 
 export function getManualCashIncome(): ManualCashIncome[] {
   if (typeof window === "undefined") return [];

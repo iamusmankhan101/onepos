@@ -262,12 +262,7 @@ td.muted { color: #9ca3af; font-size: 11px; }
   display: flex; align-items: center; justify-content: space-between;
 }
 .footer-brand { display: flex; align-items: center; gap: 10px; }
-.footer-logo {
-  width: 28px; height: 28px; border-radius: 8px;
-  background: linear-gradient(135deg,#9a3412,#f97316);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 13px; color: #fff; font-weight: 900;
-}
+.footer-logo { height: 22px; width: auto; display: block; }
 .footer-business { font-size: 13px; font-weight: 700; color: #9a3412; }
 .footer-powered { font-size: 10px; color: #fdba74; margin-top: 1px; }
 .footer-right { text-align: right; font-size: 11px; color: #9ca3af; line-height: 1.7; }
@@ -290,6 +285,11 @@ function openPrint(html: string, title: string) {
 }
 
 // ── CLIENT PDF ─────────────────────────────────────────────────────────────────
+
+/** Absolute URL for the logo — a print window resolves relative paths against about:blank. */
+function logoUrl() {
+  return typeof window === "undefined" ? "/logo-dark.png" : `${window.location.origin}/logo-dark.png`;
+}
 
 export function exportClientPdf(
   client: Client,
@@ -497,10 +497,10 @@ export function exportClientPdf(
       <!-- FOOTER -->
       <div class="footer">
         <div class="footer-brand">
-          <div class="footer-logo">W</div>
+          <img class="footer-logo" src="${logoUrl()}" alt="Pointly" />
           <div>
             <div class="footer-business">${businessName}</div>
-            <div class="footer-powered">Powered by OnePOS</div>
+            <div class="footer-powered">Powered by Pointly</div>
           </div>
         </div>
         <div class="footer-right">
@@ -757,10 +757,10 @@ export function exportStaffPdf(
       <!-- FOOTER -->
       <div class="footer">
         <div class="footer-brand">
-          <div class="footer-logo">W</div>
+          <img class="footer-logo" src="${logoUrl()}" alt="Pointly" />
           <div>
             <div class="footer-business">${businessName}</div>
-            <div class="footer-powered">Powered by OnePOS</div>
+            <div class="footer-powered">Powered by Pointly</div>
           </div>
         </div>
         <div class="footer-right">

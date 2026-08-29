@@ -1,58 +1,25 @@
-import { ScanLine } from "lucide-react";
-
 /**
- * The OnePOS wordmark, drawn rather than shipped as an image so it stays sharp
- * at any size and picks up the surrounding text colour.
+ * The Pointly logo.
  *
- * `tone="light"` is for the dark hero panel on the auth pages; `tone="dark"`
- * is for a white background.
+ * The supplied artwork (public/logo.png) is white on transparency, so it only
+ * reads on a dark surface. `tone="dark"` swaps in the inverted copy for white
+ * backgrounds — printed invoices, PDF reports. Both variants are trimmed of
+ * the transparent padding the original carried, so `height` is the real
+ * rendered height and the width follows the artwork's own ratio.
  */
 export default function Wordmark({
   tone = "light",
-  size = 26,
+  height = 34,
 }: {
   tone?: "light" | "dark";
-  size?: number;
+  height?: number;
 }) {
-  const isLight = tone === "light";
-  const tile = Math.round(size * 1.45);
-
   return (
-    <span
-      aria-label="OnePOS"
-      style={{ display: "inline-flex", alignItems: "center", gap: Math.round(size * 0.42) }}
-    >
-      <span
-        aria-hidden
-        style={{
-          width: tile,
-          height: tile,
-          borderRadius: Math.round(tile * 0.3),
-          display: "grid",
-          placeItems: "center",
-          flexShrink: 0,
-          background: isLight
-            ? "rgba(255,255,255,0.16)"
-            : "linear-gradient(135deg,#9A3412,#F97316)",
-          border: isLight ? "1px solid rgba(255,255,255,0.28)" : "none",
-          boxShadow: isLight ? "none" : "0 4px 14px rgba(234,88,12,0.35)",
-          backdropFilter: isLight ? "blur(12px)" : undefined,
-        }}
-      >
-        <ScanLine size={Math.round(tile * 0.55)} color="#fff" strokeWidth={2.2} />
-      </span>
-      <span
-        style={{
-          fontSize: size,
-          fontWeight: 800,
-          letterSpacing: "-0.02em",
-          lineHeight: 1,
-          color: isLight ? "#fff" : "#1a1a2e",
-          whiteSpace: "nowrap",
-        }}
-      >
-        One<span style={{ color: isLight ? "#fdba74" : "#EA580C" }}>POS</span>
-      </span>
-    </span>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={tone === "light" ? "/logo-light.png" : "/logo-dark.png"}
+      alt="Pointly"
+      style={{ height, width: "auto", display: "block", userSelect: "none" }}
+    />
   );
 }

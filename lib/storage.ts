@@ -8,12 +8,12 @@ const SCHEMA_VERSION = "v6";
 
 // All keys are scoped per user so different business accounts never share data
 const K = {
-  appointments:  "onepos_appointments",
-  clients:       "onepos_clients",
-  staff:         "onepos_staff",
-  services:      "onepos_services",
-  inventory:     "onepos_inventory",
-  schemaVersion: "onepos_schema_version",
+  appointments:  "pointly_appointments",
+  clients:       "pointly_clients",
+  staff:         "pointly_staff",
+  services:      "pointly_services",
+  inventory:     "pointly_inventory",
+  schemaVersion: "pointly_schema_version",
 };
 
 function checkSchema() {
@@ -176,8 +176,8 @@ export function subscribeToStoredData(onChange: () => void): () => void {
 
   const onStorage = (event: StorageEvent) => {
     // Only the entity arrays matter; ignore the sync bookkeeping keys.
-    if (event.key && !event.key.startsWith("onepos_")) return;
-    if (event.key && event.key.includes("onepos_sync_arrived_")) return;
+    if (event.key && !event.key.startsWith("pointly_")) return;
+    if (event.key && event.key.includes("pointly_sync_arrived_")) return;
     onChange();
   };
 

@@ -3,9 +3,9 @@
 import { userKey, getCurrentUser } from "./auth";
 import { saveSettingsToDB } from "./turso-sync";
 
-const STORAGE_KEY = "onepos_settings";
-const SAVED_AT_KEY = "onepos_settings_saved_at";
-export const SETTINGS_CHANGED_EVENT = "onepos_settings_changed";
+const STORAGE_KEY = "pointly_settings";
+const SAVED_AT_KEY = "pointly_settings_saved_at";
+export const SETTINGS_CHANGED_EVENT = "pointly_settings_changed";
 
 const defaults = {
   replicate: {

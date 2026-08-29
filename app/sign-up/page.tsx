@@ -64,8 +64,8 @@ export default function SignUpPage() {
         return;
       }
 
-      localStorage.setItem("onepos_auth_session", signinData.user.id);
-      localStorage.setItem(`onepos_user_cache_${signinData.user.id}`, JSON.stringify(signinData.user));
+      localStorage.setItem("pointly_auth_session", signinData.user.id);
+      localStorage.setItem(`pointly_user_cache_${signinData.user.id}`, JSON.stringify(signinData.user));
       // Full document load so middleware re-runs against the cookie just set —
       // see the same note on the sign-in page.
       window.location.href = "/dashboard/pos";
@@ -82,7 +82,7 @@ export default function SignUpPage() {
         {/* Brand panel */}
         <section className={styles.brandPanel}>
           <div className={styles.brandTop}>
-            <Wordmark />
+            <Wordmark height={46} />
           </div>
           <div className={styles.brandContent}>
             <div className={styles.eyebrow}>Get started</div>

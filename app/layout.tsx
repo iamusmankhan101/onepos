@@ -11,8 +11,8 @@ const montserrat = Montserrat({
 
 export const metadata: Metadata = {
   title: {
-    default: "OnePOS — Point of Sale",
-    template: "%s | OnePOS",
+    default: "Pointly — Point of Sale",
+    template: "%s | Pointly",
   },
   description: "Point of sale, invoices, revenue and staff — with WhatsApp receipts",
   // Icons come from the app/icon.png and app/apple-icon.png file conventions.

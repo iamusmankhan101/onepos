@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Search, Scissors, Package, Plus, Minus, Trash2, Phone,
@@ -188,6 +189,18 @@ export default function POSPage() {
   const [newDob,          setNewDob]            = useState("");
   const [selectedStaffId, setSelectedStaffId]  = useState("");
   const [saleNotes,       setSaleNotes]         = useState("");
+
+  // Pre-select the customer from ?client= — this is what the "New Sale" button
+  // on the Clients page opens. Its own effect (rather than the mount effect
+  // above) so it can read state declared here.
+  useEffect(() => {
+    const clientId = new URLSearchParams(window.location.search).get("client");
+    if (!clientId) return;
+    queueMicrotask(() => {
+      const client = getStoredClients().find(c => c.id === clientId);
+      if (client) setSelectedClient(client);
+    });
+  }, []);
 
   // ── Catalog ───────────────────────────────────────────────────────────────
   const [catalogTab,    setCatalogTab]    = useState<CatalogTab>("all");
@@ -729,8 +742,22 @@ export default function POSPage() {
               <User size={14} color="#EA580C" />
             </div>
             <span style={{ fontSize: 13, fontWeight: 800, color: "#1d1d2f" }}>Customer</span>
-            {selectedClient && (
-              <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, background: "#fff7ed", color: "#EA580C", borderRadius: 20, padding: "2px 8px" }}>Selected</span>
+            {selectedClient ? (
+              <Link
+                href={`/dashboard/clients/${selectedClient.id}`}
+                title="Open this customer's profile"
+                style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, background: "#fff7ed", color: "#EA580C", borderRadius: 20, padding: "2px 8px", textDecoration: "none" }}
+              >
+                Selected · Profile
+              </Link>
+            ) : (
+              <Link
+                href="/dashboard/clients"
+                title="Manage customers"
+                style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: "#9999b0", textDecoration: "none" }}
+              >
+                All clients
+              </Link>
             )}
           </div>
 

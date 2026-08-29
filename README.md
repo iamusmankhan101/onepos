@@ -1,4 +1,4 @@
-# OnePOS
+# Pointly
 
 A trimmed build of [saloncore-werzio](https://github.com/iamusmankhan101/saloncore-werzio-) that keeps
 only the point-of-sale side of the product:
@@ -18,12 +18,12 @@ campaigns, attendance, payouts, virtual try-on, online booking, feedback, the ma
 platform-admin console, subscription billing, the WhatsApp provider integrations and all their cron
 jobs — has been removed, along with the libraries and API routes that only served them.
 
-The product is **OnePOS** and the interface is worded for any kind of business. The upstream
+The product is **Pointly** and the interface is worded for any kind of business. The upstream
 "Salon Central" / "Werzio" vocabulary is gone from the code as well as the screens:
 
 | Was | Now |
 | --- | --- |
-| `werzio_session` cookie, `werzio_*` localStorage keys | `onepos_session`, `onepos_*` |
+| `werzio_session` cookie, `werzio_*` localStorage keys | `pointly_session`, `pointly_*` |
 | `salon_data`, `salon_data_backups`, `salon_backup_bundles` tables | `business_data`, `business_data_backups`, `business_backup_bundles` |
 | `salon_name`, `salon_owner_id` columns | `business_name`, `business_owner_id` |
 | `salon_invoices` sync entity | `invoices` |
@@ -51,8 +51,13 @@ Surface tints run the same scale (`#FFF7ED`, `#FFEDD5`, `#FED7AA`, `#FDBA74`). C
 changing those two files plus the literals that inline the scale. Categorical colours (chart series, role
 badges, service categories, status pills) are deliberately not brand-coloured.
 
-The wordmark is drawn, not an image — [`components/wordmark.tsx`](components/wordmark.tsx), used on the
-auth pages, in the sidebar and on printed invoices. App icons live at `app/icon.png` / `app/apple-icon.png`.
+The logo is the supplied artwork in `public/logo.png` — white on transparency. Two variants are
+derived from it and are what the app actually references: `logo-light.png` (trimmed, for dark
+surfaces) and `logo-dark.png` (inverted, for white surfaces such as printed invoices and PDF
+reports), plus `logo-dark-sm.png`, a 360px copy embedded into generated invoice PDFs so a receipt
+shared over WhatsApp stays small. [`components/wordmark.tsx`](components/wordmark.tsx) picks the
+right one from its `tone` prop. App icons at `app/icon.png` / `app/apple-icon.png` are the logo on
+the brand tile. Regenerate all of them from a new `public/logo.png` if the artwork changes.
 
 ## WhatsApp receipts
 

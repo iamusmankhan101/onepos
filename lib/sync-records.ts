@@ -44,11 +44,11 @@ type Rec = Record<string, unknown>;
 const UNSEEN_ARRIVAL_MS = 30 * 60 * 1000;
 
 function recentKey(entity: string): string {
-  return `onepos_sync_arrived_${entity}`;
+  return `pointly_sync_arrived_${entity}`;
 }
 
 export function entityStorageKey(entity: string, locationId?: string): string {
-  return locationUserKey(`onepos_${entity}`, locationId);
+  return locationUserKey(`pointly_${entity}`, locationId);
 }
 
 export function recordId(record: unknown): string {

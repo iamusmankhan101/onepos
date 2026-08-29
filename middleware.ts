@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-const COOKIE_NAME  = "onepos_session";
+const COOKIE_NAME  = "pointly_session";
 const SESSION_SECRET_ENV = process.env.SESSION_SECRET;
 // Only used outside production (or if SESSION_SECRET is unset locally). In
 // production, a missing SESSION_SECRET must fail closed — falling back to a

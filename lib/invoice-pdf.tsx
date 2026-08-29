@@ -1,4 +1,6 @@
 import { Document, Page, StyleSheet, Text, View, Image, renderToBuffer } from "@react-pdf/renderer";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Invoice } from "@/lib/invoices";
 
 const METHOD_LABELS: Record<string, string> = {
@@ -48,7 +50,24 @@ const styles = StyleSheet.create({
   footer: { position: "absolute", bottom: 40, left: 48, right: 48, borderTopWidth: 1, borderTopColor: "#e0e0e0", paddingTop: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   footerText: { fontSize: 9, color: "#555555" },
   footerBrand: { fontSize: 9, color: "#9898b0" },
+  footerLogo: { height: 11, objectFit: "contain" },
 });
+
+/**
+ * The Pointly mark for the footer, read off disk once. A downscaled copy: it
+ * renders 11pt tall and gets embedded in every invoice, which are shared over
+ * WhatsApp. @react-pdf renders on the server, where the public/ file may not
+ * be part of the deployment bundle — hence the fallback to a plain text mark
+ * rather than a hard failure.
+ */
+const footerLogo: string | null = (() => {
+  try {
+    const file = readFileSync(join(process.cwd(), "public", "logo-dark-sm.png"));
+    return `data:image/png;base64,${file.toString("base64")}`;
+  } catch {
+    return null;
+  }
+})();
 
 function money(value: number) {
   return `PKR ${Math.round(value).toLocaleString("en-PK")}`;
@@ -65,7 +84,7 @@ function InvoiceDocument({ invoice, business }: {
   business: { name: string; phone?: string; email?: string; address?: string; logo?: string };
 }) {
   const isPaid   = invoice.status === "paid";
-  const businessName = business.name || "OnePOS";
+  const businessName = business.name || "Pointly";
   const initials  = businessName.split(" ").filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("");
   const methodLabel = METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "—";
 
@@ -190,7 +209,9 @@ function InvoiceDocument({ invoice, business }: {
         {/* ── FOOTER ── */}
         <View style={styles.footer} fixed>
           <Text style={styles.footerText}>Thank you for visiting {businessName}!</Text>
-          <Text style={styles.footerBrand}>Powered by OnePOS</Text>
+          {footerLogo
+            ? <Image src={footerLogo} style={styles.footerLogo} />
+            : <Text style={styles.footerBrand}>Powered by Pointly</Text>}
         </View>
 
       </Page>

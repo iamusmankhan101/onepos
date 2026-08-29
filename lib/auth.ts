@@ -18,18 +18,18 @@ interface StoredUser extends AuthUser {
   emailVerified: boolean;
 }
 
-const USERS_KEY = "onepos_auth_users";
-const SESSION_KEY = "onepos_auth_session";
+const USERS_KEY = "pointly_auth_users";
+const SESSION_KEY = "pointly_auth_session";
 
 const demoUser: StoredUser = {
   id: "demo-owner",
   ownerName: "Demo Owner",
   businessName: "My Business",
-  email: "owner@onepos.app",
+  email: "owner@pointly.app",
   phone: "+92 300 1234567",
   role: "owner",
   createdAt: "2026-03-19",
-  password: "OnePOS123",
+  password: "Pointly123",
   emailVerified: true,
 };
 
@@ -86,7 +86,7 @@ export function getCurrentUser(): AuthUser | null {
   if (!sessionId) return null;
 
   // First check if user data is cached in localStorage
-  const cachedUser = localStorage.getItem(`onepos_user_cache_${sessionId}`);
+  const cachedUser = localStorage.getItem(`pointly_user_cache_${sessionId}`);
   if (cachedUser) {
     try {
       return JSON.parse(cachedUser);
@@ -160,7 +160,7 @@ export function markEmailVerified(email: string): AuthUser {
   localStorage.setItem(SESSION_KEY, users[idx].id);
   
   // Migrate any plan that was set before login (during sign-up)
-  const basePlanKey = "onepos_active_plan";
+  const basePlanKey = "pointly_active_plan";
   const tempPlan = localStorage.getItem(basePlanKey);
   if (tempPlan) {
     // Move it to the user-scoped key
@@ -193,7 +193,7 @@ export function updateCurrentUser(input: Partial<Pick<AuthUser, "ownerName" | "b
     localStorage.setItem(USERS_KEY, JSON.stringify(updatedUsers));
     const updated = updatedUsers.find((user) => user.id === current.id)!;
     // Refresh cache so getCurrentUser() picks up the changes immediately
-    localStorage.setItem(`onepos_user_cache_${current.id}`, JSON.stringify(withoutPassword(updated)));
+    localStorage.setItem(`pointly_user_cache_${current.id}`, JSON.stringify(withoutPassword(updated)));
     return withoutPassword(updated);
   } else {
     // Cloud/Turso user: not in local list — update the session cache directly
@@ -203,7 +203,7 @@ export function updateCurrentUser(input: Partial<Pick<AuthUser, "ownerName" | "b
       businessName: input.businessName?.trim() || current.businessName,
       phone:     input.phone?.trim()     || current.phone,
     };
-    localStorage.setItem(`onepos_user_cache_${current.id}`, JSON.stringify(updatedUser));
+    localStorage.setItem(`pointly_user_cache_${current.id}`, JSON.stringify(updatedUser));
     return updatedUser;
   }
 }
@@ -246,7 +246,7 @@ export async function signOut() {
   if (!canUseStorage()) return;
   const sessionId = localStorage.getItem(SESSION_KEY);
   localStorage.removeItem(SESSION_KEY);
-  if (sessionId) localStorage.removeItem(`onepos_user_cache_${sessionId}`);
+  if (sessionId) localStorage.removeItem(`pointly_user_cache_${sessionId}`);
   try {
     await fetch("/api/auth/signout", {
       method: "POST",
@@ -261,7 +261,7 @@ export async function signOut() {
 
 /**
  * Returns a user-scoped localStorage key.
- * e.g. userKey("onepos_appointments") → "onepos_appointments_user_1234567890"
+ * e.g. userKey("pointly_appointments") → "pointly_appointments_user_1234567890"
  * Falls back to the base key if no user is logged in (SSR / unauthenticated).
  */
 export function userKey(base: string): string {

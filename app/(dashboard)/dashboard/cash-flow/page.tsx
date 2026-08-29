@@ -774,7 +774,7 @@ export default function CashFlowPage() {
       XLSX.utils.book_append_sheet(workbook, cashFlowSheet, "Cash Flow");
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryRows), "Summary");
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(expenseRows), "Expenses");
-      XLSX.writeFile(workbook, `onepos-cash-flow-${rangeStart || "report"}-${filterEnd || "report"}.xlsx`);
+      XLSX.writeFile(workbook, `pointly-cash-flow-${rangeStart || "report"}-${filterEnd || "report"}.xlsx`);
       setFileMessage({ type: "success", text: "Excel report exported successfully." });
     } catch {
       setFileMessage({ type: "error", text: "Unable to export the Excel report." });
@@ -801,11 +801,7 @@ export default function CashFlowPage() {
     body{font-family:'Montserrat',sans-serif;background:#fff;color:#1a1a2e;font-size:13px}
     .page{max-width:820px;margin:0 auto;padding:40px 48px}
     .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;padding-bottom:24px;border-bottom:2px solid #f0f0f8}
-    .logo-wm { display:flex; align-items:center; gap:9px; }
-    .logo-tile { width:30px; height:30px; border-radius:9px; background:linear-gradient(135deg,#9A3412,#F97316); display:flex; align-items:center; justify-content:center; }
-    .logo-tile span { display:block; width:15px; height:2px; background:#fff; box-shadow:0 -5px 0 #fff, 0 5px 0 #fff; }
-    .logo-word { font-size:22px; font-weight:800; letter-spacing:-0.02em; color:#1a1a2e; }
-    .logo-word em { font-style:normal; color:#EA580C; }
+    .logo-wm img { height:34px; width:auto; display:block; }
     .report-meta{text-align:right}
     .report-title{font-size:16px;font-weight:800;color:#EA580C}
     .report-sub{font-size:12px;color:#6b6b8a;margin-top:4px}
@@ -837,7 +833,7 @@ export default function CashFlowPage() {
 <div class="page">
   <div class="header">
     <div>
-      <div class="logo-wm"><span class="logo-tile"><span></span></span><span class="logo-word">One<em>POS</em></span></div>
+      <div class="logo-wm"><img src="${window.location.origin}/logo-dark.png" alt="Pointly" /></div>
       <div style="font-size:12px;color:#a0a0b8;margin-top:6px">Point of Sale</div>
     </div>
     <div class="report-meta">
@@ -947,7 +943,7 @@ export default function CashFlowPage() {
   </div>
 
   <div class="footer">
-    <div class="footer-txt">OnePOS · Point of Sale</div>
+    <div class="footer-txt">Pointly · Point of Sale</div>
     <div class="footer-txt">Confidential · For internal use only</div>
   </div>
 </div>

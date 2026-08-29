@@ -48,8 +48,8 @@ export interface Invoice {
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 
-const BASE_KEY     = "onepos_invoices";
-const BASE_COUNTER = "onepos_invoice_counter";
+const BASE_KEY     = "pointly_invoices";
+const BASE_COUNTER = "pointly_invoice_counter";
 
 export function localDateKey(date = new Date()): string {
   const year = date.getFullYear();

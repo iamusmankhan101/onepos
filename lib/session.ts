@@ -56,7 +56,7 @@ export function verifySessionToken(token: string): string | null {
 
 // ─── Cookie config ────────────────────────────────────────────────────────────
 
-export const COOKIE_NAME = "onepos_session";
+export const COOKIE_NAME = "pointly_session";
 
 /** SHA-256 of the token — safe to store in DB (token itself stays secret). */
 export function tokenId(token: string): string {

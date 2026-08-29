@@ -512,13 +512,13 @@ export async function validateCredentials(
     throw new Error("Your account has been created and is waiting for admin approval.");
   }
   if (user.approvalStatus === "rejected") {
-    throw new Error("Your account request was not approved. Please contact OnePOS support.");
+    throw new Error("Your account request was not approved. Please contact Pointly support.");
   }
   if (user.accountFrozen) {
     const reason = user.freezeReason
       ? ` Reason given: ${user.freezeReason}.`
       : "";
-    throw new Error(`Your account has been frozen by OnePOS.${reason} Please contact support to resolve this.`);
+    throw new Error(`Your account has been frozen by Pointly.${reason} Please contact support to resolve this.`);
   }
   // Upgrade legacy plaintext password to hashed format on first successful login
   if (!user.password.startsWith("pbkdf2:")) {
