@@ -5,6 +5,7 @@ only the point-of-sale side of the product:
 
 | Module | Route | What it does |
 | --- | --- | --- |
+| **Products** | `/dashboard/products` | The POS catalogue — add/edit products, categories, stock levels, cost and selling price, barcodes, Excel/CSV import & export, restock list |
 | **POS** | `/dashboard/pos` | Catalogue (services + products), barcode scanning, cart, discounts, loyalty redeem, split payment methods, credit sales, receipt printing, WhatsApp receipt |
 | **Invoices** | `/dashboard/invoices` | Every sale as an invoice — search, filter, edit, mark paid, print, PDF |
 | **Revenue** | `/dashboard/revenue` | Revenue, expenses, net profit, channel split, month drill-down, PDF report |

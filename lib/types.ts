@@ -170,8 +170,9 @@ export interface DailyRevenue {
   tips: number;
 }
 
-export type InventoryCategory = "hair-color" | "skin-care" | "nail" | "tools" | "consumables" | "retail";
-export type InventoryUnit = "ml" | "g" | "pcs" | "box" | "bottle" | "tube";
+export type InventoryCategory =
+  | "general" | "food" | "drinks" | "apparel" | "electronics" | "supplies" | "tools" | "other";
+export type InventoryUnit = "pcs" | "pack" | "box" | "kg" | "g" | "l" | "ml" | "bottle";
 
 export interface InventoryItem {
   id: string;
@@ -189,6 +190,13 @@ export interface InventoryItem {
   priceRangeMin?: number;
   priceRangeMax?: number;
   barcode?: string;
+  /**
+   * Product photo as a data URL, downscaled and re-encoded on upload (see
+   * readImageAsDataUrl on the Products page). It rides along with the rest of
+   * the catalogue into localStorage and the synced JSON blob, so it is kept
+   * small deliberately — there is no separate file store behind it.
+   */
+  image?: string;
   supplier?: string;
   lastRestocked?: string;
   notes?: string;

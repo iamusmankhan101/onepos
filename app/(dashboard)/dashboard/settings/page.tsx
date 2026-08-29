@@ -24,12 +24,13 @@ const SECTIONS = [
 // staff login (it is what /dashboard itself resolves to), so it isn't listed.
 const PERMISSION_OPTIONS = [
   { key: "pos",       label: "POS"       },
+  { key: "products",  label: "Products"  },
   { key: "invoices",  label: "Invoices"  },
   { key: "revenue",   label: "Revenue"   },
   { key: "cash-flow", label: "Cash Flow" },
   { key: "staff",     label: "Staff"     },
 ];
-const DEFAULT_STAFF_PERMISSIONS = ["pos", "invoices"];
+const DEFAULT_STAFF_PERMISSIONS = ["pos", "products", "invoices"];
 
 const inp: CSSProperties = {
   width: "100%", padding: "10px 14px", borderRadius: 12,

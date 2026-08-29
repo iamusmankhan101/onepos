@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
-  UserCog, BarChart3, Banknote, Settings, ReceiptText, ShoppingCart,
+  UserCog, BarChart3, Banknote, Settings, ReceiptText, ShoppingCart, Package,
   X, LogOut, ChevronDown,
 } from "lucide-react";
 import { AuthUser, getCurrentUser, signOut } from "@/lib/auth";
@@ -19,6 +19,7 @@ const NAV_GROUPS: {
     label: "Sales",
     items: [
       { href: "/dashboard/pos",      icon: ShoppingCart, label: "POS"      },
+      { href: "/dashboard/products", icon: Package,      label: "Products" },
       { href: "/dashboard/invoices", icon: ReceiptText,  label: "Invoices" },
     ],
   },

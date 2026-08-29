@@ -42,6 +42,7 @@ interface CatalogItem {
   stock?: number;
   unit?: string;
   barcode?: string;
+  image?: string;
   variablePrice?: boolean;
   priceRangeMin?: number;
   priceRangeMax?: number;
@@ -71,14 +72,18 @@ const PAY_METHODS: { value: PaymentMethod; label: string; icon: React.ElementTyp
   { value: "bank",      label: "Bank",      icon: CreditCard, color: "#0369a1", bg: "#f0f9ff" },
 ];
 
+// Mirrors CATEGORY_CONFIG on the Products page, plus whatever categories the
+// service catalogue uses. Anything unrecognised falls back to `other`.
 const CATEGORY_COLORS: Record<string, { fg: string; bg: string }> = {
-  hair:    { fg: "#EA580C", bg: "#fff7ed" },
-  skin:    { fg: "#0284c7", bg: "#f0f9ff" },
-  nails:   { fg: "#ec4899", bg: "#fdf2f8" },
-  bridal:  { fg: "#d97706", bg: "#fffbeb" },
-  piercing: { fg: "#c2410c", bg: "#fff7ed" },
-  product: { fg: "#d97706", bg: "#fffbeb" },
-  other:   { fg: "#6b7280", bg: "#f9fafb" },
+  general:     { fg: "#EA580C", bg: "#ffedd5" },
+  food:        { fg: "#059669", bg: "#ecfdf5" },
+  drinks:      { fg: "#0369a1", bg: "#e0f2fe" },
+  apparel:     { fg: "#db2777", bg: "#fdf2f8" },
+  electronics: { fg: "#4f46e5", bg: "#eef2ff" },
+  supplies:    { fg: "#d97706", bg: "#fffbeb" },
+  tools:       { fg: "#0f766e", bg: "#f0fdfa" },
+  product:     { fg: "#d97706", bg: "#fffbeb" },
+  other:       { fg: "#6b7280", bg: "#f9fafb" },
 };
 
 function catColor(category: string, type: "service" | "product") {
@@ -238,7 +243,7 @@ export default function POSPage() {
       .filter(i => inSection(i, catalogSectionFilter))
       .map(i => ({
         id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`, price: i.retailPrice ?? 0,
-        category: i.category, section: i.section, stock: i.currentStock, unit: i.unit, barcode: i.barcode,
+        category: i.category, section: i.section, stock: i.currentStock, unit: i.unit, barcode: i.barcode, image: i.image,
         variablePrice: i.variablePrice, priceRangeMin: i.priceRangeMin, priceRangeMax: i.priceRangeMax,
       }));
     return [...svc, ...prod];
@@ -313,6 +318,7 @@ export default function POSPage() {
       stock: product.currentStock,
       unit: product.unit,
       barcode: product.barcode,
+      image: product.image,
     });
     setScanFeedback({ ok: true, message: `${product.name} added to cart.` });
     setBarcodeInput("");
@@ -1045,9 +1051,12 @@ export default function POSPage() {
                           </div>
                         )}
 
-                        {/* Icon */}
-                        <div style={{ width: 36, height: 36, borderRadius: 10, background: bg, border: `1px solid ${fg}20`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
-                          {item.type === "service" ? <Scissors size={16} color={fg} /> : <Package size={16} color={fg} />}
+                        {/* Photo, falling back to the category icon */}
+                        <div style={{ width: 36, height: 36, borderRadius: 10, background: bg, border: `1px solid ${fg}20`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10, overflow: "hidden" }}>
+                          {item.image
+                            // eslint-disable-next-line @next/next/no-img-element
+                            ? <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            : item.type === "service" ? <Scissors size={16} color={fg} /> : <Package size={16} color={fg} />}
                         </div>
 
                         {/* Name */}
