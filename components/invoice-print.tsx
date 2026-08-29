@@ -7,10 +7,14 @@ import type { Invoice } from "@/lib/invoices";
 import { settingsStore } from "@/lib/settings-store";
 import Wordmark from "@/components/wordmark";
 import { fmtCurrency as fmt } from "@/lib/format";
+import { code39 } from "@/lib/barcode";
+
+/** The dashed separators a till receipt is divided by. */
+const DASH: React.CSSProperties = { borderBottom: "1px dashed #000", margin: "10px 0" };
 
 function fmtDate(d: string): string {
   return new Date(d + "T00:00:00").toLocaleDateString("en-PK", {
-    year: "numeric", month: "long", day: "numeric",
+    year: "numeric", month: "short", day: "numeric",
   });
 }
 
@@ -29,8 +33,9 @@ const PRINT_STYLES = `
     }
     .sip-overlay  { background: transparent !important; padding: 0 !important; overflow: visible !important; }
     .sip-no-print { display: none !important; }
-    .sip-sheet    { border-radius: 0 !important; box-shadow: none !important; max-width: 100% !important; width: 100% !important; margin: 0 !important; }
-    @page { size: A4 portrait; margin: 18mm 16mm; }
+    .sip-sheet    { border-radius: 0 !important; box-shadow: none !important; width: 72mm !important; margin: 0 !important; }
+    /* A till roll: 80mm wide, cut where the receipt ends. */
+    @page { size: 80mm auto; margin: 4mm; }
   }
 `;
 
@@ -60,6 +65,8 @@ export default function InvoicePrint({
   const logo     = (settingsStore.business as { logo?: string }).logo || "";
   const initials = businessName.split(" ").filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("");
   const printer  = settingsStore.printer as { enabled: boolean; ip: string; port: number };
+  const itemCount = invoice.items.reduce((sum, item) => sum + item.qty, 0);
+  const barcode   = code39(invoice.number);
 
   async function thermalPrint() {
     if (!printer.ip) {
@@ -102,7 +109,7 @@ export default function InvoicePrint({
         onClick={onClose}
         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 300, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 16px", overflowY: "auto" }}
       >
-        <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 760, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", gap: 12 }}>
 
           {/* Toolbar */}
           <div className="sip-no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -146,153 +153,108 @@ export default function InvoicePrint({
             </div>
           </div>
 
-          {/* Invoice Sheet */}
-          <div className="sip-sheet" style={{ background: "#fff", borderRadius: 4, boxShadow: "0 24px 80px rgba(0,0,0,0.3)", fontFamily: "'Helvetica Neue', Arial, sans-serif" }}>
-            <div style={{ padding: "48px 52px" }}>
+          {/* Receipt — sized to an 80mm till roll */}
+          <div className="sip-sheet" style={{ background: "#fff", width: 302, margin: "0 auto", padding: "18px 14px 20px", boxShadow: "0 24px 80px rgba(0,0,0,0.3)", fontFamily: "'Helvetica Neue', Arial, sans-serif", color: "#000" }}>
 
-              {/* ── HEADER: Company left, Logo right ── */}
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 48 }}>
-                <div>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: "#111", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>{businessName}</div>
-                  <div style={{ fontSize: 12, color: "#555", lineHeight: 2 }}>
-                    {businessAddress && <div>{businessAddress}</div>}
-                    {businessEmail   && <div>{businessEmail}</div>}
-                    {businessPhone   && <div>{businessPhone}</div>}
-                  </div>
-                </div>
-
-                {/* Logo */}
-                {logo ? (
-                  <img src={logo} alt={businessName} style={{ height: 90, maxWidth: 160, objectFit: "contain" }} />
-                ) : (
-                  <div style={{ width: 90, height: 90, borderRadius: "50%", background: "#111", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <span style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: "-1px" }}>{initials}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* ── BILL TO / INVOICE ── */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40, marginBottom: 40 }}>
-                {/* Bill To */}
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: "#111", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Bill To</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#111", marginBottom: 4 }}>{invoice.clientName}</div>
-                  <div style={{ fontSize: 12, color: "#555", lineHeight: 1.9 }}>
-                    {invoice.clientPhone && <div>{invoice.clientPhone}</div>}
-                    {invoice.clientEmail && <div>{invoice.clientEmail}</div>}
-                  </div>
-                </div>
-
-                {/* Invoice details */}
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: "#111", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Invoice</div>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <tbody>
-                      {[
-                        ["Invoice No:", invoice.number],
-                        ["Issue Date:", fmtDate(invoice.date)],
-                        ...(invoice.staffName ? [["Stylist:", invoice.staffName]] : []),
-                        ["Payment:", METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "—"],
-                        ["Status:", isPaid ? "PAID" : "UNPAID"],
-                      ].map(([label, value]) => (
-                        <tr key={label}>
-                          <td style={{ padding: "3px 0", color: "#555", width: "45%" }}>{label}</td>
-                          <td style={{ padding: "3px 0", color: "#111", fontWeight: 600, textAlign: "right" }}>{value}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* ── ITEMS TABLE ── */}
-              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 28 }}>
-                <thead>
-                  <tr style={{ background: "#f0f0f0", borderTop: "1px solid #ccc", borderBottom: "1px solid #ccc" }}>
-                    {["Description", "Qty", "Unit Price", "Amount"].map((h, i) => (
-                      <th key={h} style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: "#111", textTransform: "capitalize", letterSpacing: "0.03em", textAlign: i === 0 ? "left" : "right", whiteSpace: "nowrap" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoice.items.map((item) => (
-                    <tr key={item.id} style={{ borderBottom: "1px solid #e8e8e8" }}>
-                      <td style={{ padding: "11px 12px", fontSize: 12, color: "#111" }}>{item.description}</td>
-                      <td style={{ padding: "11px 12px", fontSize: 12, color: "#555", textAlign: "right" }}>{item.qty}</td>
-                      <td style={{ padding: "11px 12px", fontSize: 12, color: "#555", textAlign: "right" }}>{fmt(item.unitPrice)}</td>
-                      <td style={{ padding: "11px 12px", fontSize: 12, color: "#111", fontWeight: 600, textAlign: "right" }}>{fmt(item.total)}</td>
-                    </tr>
-                  ))}
-                  {invoice.items.length === 0 && (
-                    <tr><td colSpan={4} style={{ padding: 20, textAlign: "center", fontSize: 12, color: "#aaa" }}>No items</td></tr>
-                  )}
-                </tbody>
-              </table>
-
-              {/* ── TOTALS ── */}
-              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 40 }}>
-                <div style={{ width: 280 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13, color: "#555", borderBottom: "1px solid #e8e8e8" }}>
-                    <span style={{ fontWeight: 600 }}>Subtotal</span><span style={{ fontWeight: 700, color: "#111" }}>{fmt(invoice.subtotal)}</span>
-                  </div>
-                  {invoice.taxAmount > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13, color: "#555", borderBottom: "1px solid #e8e8e8" }}>
-                      <span>Tax</span><span>{fmt(invoice.taxAmount)}</span>
-                    </div>
-                  )}
-                  {invoice.discountAmount > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13, color: "#555", borderBottom: "1px solid #e8e8e8" }}>
-                      <span>Discount</span><span>−{fmt(invoice.discountAmount)}</span>
-                    </div>
-                  )}
-                  {(invoice.discount2Amount ?? 0) > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13, color: "#555", borderBottom: "1px solid #e8e8e8" }}>
-                      <span>Discount 2</span><span>−{fmt(invoice.discount2Amount!)}</span>
-                    </div>
-                  )}
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", fontSize: 14, borderTop: "2px solid #111", marginTop: 4 }}>
-                    <span style={{ fontWeight: 800, color: "#111" }}>Total</span>
-                    <span style={{ fontWeight: 900, color: "#111" }}>{fmt(invoice.total)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── PAYMENT STATUS ── */}
-              {isPaid && invoice.paymentMethod && (
-                <div style={{ marginBottom: 32 }}>
-                  <div style={{ fontSize: 12, color: "#059669", fontWeight: 700 }}>✓ Paid via {METHOD_LABELS[invoice.paymentMethod] ?? invoice.paymentMethod}</div>
-                </div>
-              )}
-
-              {/* ── NOTES ── */}
-              {invoice.notes && (
-                <div style={{ marginBottom: 32 }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: "#111", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Notes</div>
-                  <div style={{ fontSize: 12, color: "#555", lineHeight: 1.8 }}>{invoice.notes}</div>
-                </div>
-              )}
-
-              {/* ── TERMS ── */}
-              <div style={{ marginBottom: 36 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: "#111", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Terms</div>
-                <div style={{ fontSize: 12, color: "#555", lineHeight: 1.8 }}>
-                  Payment is due upon receipt. Thank you for your business!<br />
-                  For queries, contact us at {businessEmail || businessPhone}.
-                </div>
-              </div>
-
-              {/* ── FOOTER ── */}
-              <div style={{ borderTop: "1px solid #e0e0e0", paddingTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ fontSize: 12, color: "#555" }}>
-                  Thank you for visiting <strong style={{ color: "#111" }}>{businessName}</strong>!
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 10, color: "#aaa" }}>Powered by</span>
-                  <Wordmark tone="dark" height={16} />
-                </div>
-              </div>
-
+            {/* ── SHOP ── */}
+            <div style={{ textAlign: "center" }}>
+              {logo
+                // eslint-disable-next-line @next/next/no-img-element
+                ? <img src={logo} alt={businessName} style={{ maxHeight: 54, maxWidth: 150, objectFit: "contain", margin: "0 auto 6px" }} />
+                : <div style={{ width: 46, height: 46, borderRadius: "50%", background: "#111", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, fontWeight: 900, margin: "0 auto 8px" }}>{initials}</div>}
+              <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase" }}>{businessName}</div>
+              {businessAddress && <div style={{ fontSize: 10, color: "#333", marginTop: 3 }}>{businessAddress}</div>}
+              {businessPhone   && <div style={{ fontSize: 10, color: "#333", marginTop: 2 }}>{businessPhone}</div>}
+              {businessEmail   && <div style={{ fontSize: 10, color: "#333", marginTop: 2 }}>{businessEmail}</div>}
             </div>
+
+            <div style={DASH} />
+            <div style={{ fontSize: 12, fontWeight: 800, textAlign: "center", letterSpacing: "0.16em" }}>SALES RECEIPT</div>
+            <div style={{ borderBottom: "1px solid #ddd", margin: "8px 0" }} />
+
+            {/* ── SALE DETAILS ── */}
+            {([
+              ["Receipt No", invoice.number],
+              ["Date", fmtDate(invoice.date)],
+              ["Customer", invoice.clientName],
+              ...(invoice.staffName ? [["Served by", invoice.staffName]] : []),
+              ["Payment", isPaid ? (METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "—") : "UNPAID"],
+            ] as [string, string][]).map(([label, value]) => (
+              <div key={label} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 10, marginTop: 3 }}>
+                <span style={{ color: "#555" }}>{label}</span>
+                <span style={{ fontWeight: 700, textAlign: "right" }}>{value}</span>
+              </div>
+            ))}
+
+            <div style={DASH} />
+
+            {/* ── ITEMS ── */}
+            <div style={{ display: "flex", fontSize: 9, fontWeight: 800, color: "#555", letterSpacing: "0.06em" }}>
+              <span style={{ width: 30 }}>QTY</span>
+              <span style={{ flex: 1 }}>ITEM</span>
+              <span style={{ width: 76, textAlign: "right" }}>AMOUNT</span>
+            </div>
+            {invoice.items.map((item) => (
+              <div key={item.id} style={{ display: "flex", fontSize: 11, marginTop: 6 }}>
+                <span style={{ width: 30 }}>{item.qty}x</span>
+                <span style={{ flex: 1, paddingRight: 6 }}>
+                  {item.description}
+                  {item.qty > 1 && <div style={{ fontSize: 9, color: "#666", marginTop: 1 }}>@ {fmt(item.unitPrice)}</div>}
+                </span>
+                <span style={{ width: 76, textAlign: "right" }}>{fmt(item.total)}</span>
+              </div>
+            ))}
+            {invoice.items.length === 0 && (
+              <div style={{ fontSize: 11, color: "#999", textAlign: "center", padding: "10px 0" }}>No items</div>
+            )}
+
+            <div style={DASH} />
+
+            {/* ── TOTALS ── */}
+            {([
+              [`Subtotal (${itemCount} item${itemCount === 1 ? "" : "s"})`, fmt(invoice.subtotal)],
+              ...(invoice.discountAmount > 0 ? [["Discount", `-${fmt(invoice.discountAmount)}`]] : []),
+              ...((invoice.discount2Amount ?? 0) > 0 ? [["Discount 2", `-${fmt(invoice.discount2Amount!)}`]] : []),
+              ...(invoice.taxAmount > 0 ? [["Tax", fmt(invoice.taxAmount)]] : []),
+            ] as [string, string][]).map(([label, value]) => (
+              <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
+                <span>{label}</span><span style={{ fontWeight: 700 }}>{value}</span>
+              </div>
+            ))}
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderTop: "1.5px solid #000", marginTop: 8, paddingTop: 8 }}>
+              <span style={{ fontSize: 15, fontWeight: 900 }}>TOTAL</span>
+              <span style={{ fontSize: 15, fontWeight: 900 }}>{fmt(invoice.total)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
+              <span>{isPaid ? (METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "Paid") : "Balance due"}</span>
+              <span style={{ fontWeight: 700 }}>{fmt(invoice.total)}</span>
+            </div>
+
+            {invoice.notes && (
+              <div style={{ fontSize: 10, color: "#444", textAlign: "center", marginTop: 8, lineHeight: 1.5 }}>{invoice.notes}</div>
+            )}
+
+            <div style={{ borderBottom: "1px solid #ddd", margin: "12px 0 10px" }} />
+            <div style={{ fontSize: 12, fontWeight: 800, textAlign: "center", letterSpacing: "0.2em" }}>THANK YOU</div>
+            <div style={{ fontSize: 10, color: "#444", textAlign: "center", marginTop: 4 }}>Please keep this receipt for exchanges.</div>
+
+            {/* ── BARCODE ── */}
+            {barcode.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ display: "flex", alignItems: "stretch", height: 38, width: "100%" }}>
+                  {barcode.map((element, i) => (
+                    <div key={i} style={{ flexGrow: element.units, background: element.bar ? "#000" : "transparent" }} />
+                  ))}
+                </div>
+                <div style={{ fontSize: 9, letterSpacing: "0.18em", textAlign: "center", color: "#333", marginTop: 3 }}>{invoice.number}</div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
+              <Wordmark tone="dark" height={13} />
+            </div>
+
           </div>
         </div>
       </div>
