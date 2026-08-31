@@ -30,6 +30,19 @@ function verifyPassword(plain: string, stored: string): boolean {
   return plain === stored;
 }
 
+/**
+ * A real pbkdf2 hash of a value nobody can supply, built once and reused.
+ * When no user matches an email we still verify against this, so an unknown
+ * address burns the same ~120k iterations as a known one. Without it the null
+ * branch returns immediately and the response time alone tells an attacker
+ * which emails are registered.
+ */
+let decoyHashCache: string | null = null;
+function decoyHash(): string {
+  if (!decoyHashCache) decoyHashCache = hashPassword(randomBytes(32).toString("hex"));
+  return decoyHashCache;
+}
+
 export { hashPassword };
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 
@@ -479,8 +492,11 @@ export async function findOrCreateGoogleUser(profile: {
   const unusablePassword = hashPassword(randomBytes(32).toString("hex"));
 
   await db.execute({
+    // 'approved', matching /api/auth/signup: this build has no platform-admin
+    // console to approve from, so 'pending' would lock the account out forever
+    // (validateCredentials rejects pending accounts with a 403).
     sql: `INSERT INTO users (id, email, password, owner_name, business_name, phone, role, email_verified, approval_status, created_at, google_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'approved', ?, ?)`,
     args: [
       id,
       profile.email.trim().toLowerCase(),
@@ -504,9 +520,11 @@ export async function validateCredentials(
   password: string
 ): Promise<AuthUser> {
   const user = await getUserByEmail(email);
-  // Always run the verify step even when user is null to prevent timing-based
-  // user-enumeration (attacker measuring response time to detect valid emails)
-  const valid = user ? verifyPassword(password, user.password) : false;
+  // Always run a full verify, even when user is null, to prevent timing-based
+  // user-enumeration (attacker measuring response time to detect valid emails).
+  // The decoy never matches, so the result is always false — it is computed
+  // purely so the unknown-email path costs the same as the known-email one.
+  const valid = verifyPassword(password, user ? user.password : decoyHash());
   if (!user || !valid) throw new Error("Invalid email or password.");
   if (user.approvalStatus === "pending") {
     throw new Error("Your account has been created and is waiting for admin approval.");
