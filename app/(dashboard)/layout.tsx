@@ -125,7 +125,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         // could point reads/writes at a branch the server won't scope them to.
         if (user.locationId) setActiveLocationFilter(user.locationId);
       }
-      if (user.role !== "owner" && OWNER_ONLY.includes(key)) {
+      if (user.role !== "owner" && user.role !== "admin" && OWNER_ONLY.includes(key)) {
         router.replace("/dashboard/pos");
         return;
       }

@@ -21,6 +21,10 @@ const SESSION_SECRET = SESSION_SECRET_ENV ?? "dev-only-insecure-secret-change-be
 const SECRET_MISCONFIGURED_IN_PROD = process.env.NODE_ENV === "production" && !SESSION_SECRET_ENV;
 
 const DASHBOARD = /^\/dashboard(\/|$)/;
+// The platform-admin console. Only the session is checked here — proving the
+// session carries role "admin" needs a DB read, which the Edge runtime can't
+// do, so that check lives in app/admin/layout.tsx and in every /api/admin route.
+const ADMIN = /^\/admin(\/|$)/;
 const AUTH_PAGES = new Set(["/sign-in", "/sign-up"]);
 
 // ─── Edge-compatible token verification ──────────────────────────────────────
@@ -119,8 +123,8 @@ export async function middleware(req: NextRequest) {
   // so a tab open across the rename doesn't get logged out mid-shift.
   const upgradeCookie = Boolean(!currentToken && legacyToken && userId);
 
-  // ── Protect dashboard routes ──────────────────────────────────────────────
-  if (DASHBOARD.test(pathname) && !userId) {
+  // ── Protect dashboard and admin routes ────────────────────────────────────
+  if ((DASHBOARD.test(pathname) || ADMIN.test(pathname)) && !userId) {
     const dest = req.nextUrl.clone();
     dest.pathname = "/sign-in";
     dest.search   = "";

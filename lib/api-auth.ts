@@ -10,7 +10,7 @@
 
 import { NextRequest } from "next/server";
 import { COOKIE_NAME, LEGACY_COOKIE_NAME, verifySessionToken } from "./session";
-import { getUserById } from "./auth-db";
+import { getUserById, type AuthUser } from "./auth-db";
 
 export interface ResolvedActor {
   /** The business-owner id that scopes the data (staff resolve to their owner's id). */
@@ -65,15 +65,22 @@ export async function resolveActor(
 
 /**
  * For platform-admin-only endpoints that act on an arbitrary target user
- * (e.g. approving another business's payment, changing their plan) — verifies
- * the caller's own session has role "admin". Returns null otherwise, in
- * which case the route must respond 401/403. Unlike resolveActor, this does
- * NOT resolve a data-owner id — the target user id comes from the request
- * body/query as an explicit admin action, not the caller's own scope.
+ * (freezing another business's account, approving a signup, resetting a
+ * password) — verifies the caller's own session has role "admin" and returns
+ * that admin, so the route can attribute the action in the audit log. Returns
+ * null for everyone else, in which case the route must respond 401/403.
+ *
+ * Unlike resolveActor, this does NOT resolve a data-owner id — the target user
+ * id comes from the request body/query as an explicit admin action, not the
+ * caller's own scope.
  */
-export async function requireAdmin(req: NextRequest): Promise<boolean> {
+export async function requireAdmin(req: NextRequest): Promise<AuthUser | null> {
   const token = req.cookies.get(COOKIE_NAME)?.value ?? req.cookies.get(LEGACY_COOKIE_NAME)?.value;
   const actorId = token ? verifySessionToken(token) : null;
   const actor = actorId ? await getUserById(actorId) : null;
-  return actor?.role === "admin";
+  if (!actor || actor.role !== "admin") return null;
+
+  const { password: _password, ...withoutPassword } = actor;
+  void _password;
+  return withoutPassword;
 }

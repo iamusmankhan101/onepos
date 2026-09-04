@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   UserCog, BarChart3, Banknote, Settings, ReceiptText, ShoppingCart, Package, Users,
-  X, LogOut, ChevronDown,
+  X, LogOut, ChevronDown, Shield,
 } from "lucide-react";
 import { AuthUser, getCurrentUser, signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
@@ -36,6 +36,10 @@ const NAV_GROUPS: {
 
 const SETTINGS_NAV = [
   { href: "/dashboard/settings", icon: Settings, label: "Settings" },
+];
+
+const ADMIN_NAV = [
+  { href: "/admin", icon: Shield, label: "Admin Console" },
 ];
 
 export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
@@ -76,6 +80,7 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
   const initials = (user?.ownerName || businessName || "W")
     .split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
   const isStaffUser = user?.role === "staff";
+  const isPlatformAdmin = user?.role === "admin";
 
   const canAccess = (href: string) => {
     if (!isStaffUser) return true;
@@ -319,6 +324,15 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
             <>
               <div className="sb-section" style={{ paddingTop: 12 }}>Business</div>
               {SETTINGS_NAV.map((item) => <NavItem key={item.href} {...item} />)}
+            </>
+          )}
+
+          {/* Platform admins run every business from the console, not from
+              this sidebar — this is the way back to it. */}
+          {isPlatformAdmin && (
+            <>
+              <div className="sb-section" style={{ paddingTop: 12 }}>Platform</div>
+              {ADMIN_NAV.map((item) => <NavItem key={item.href} {...item} />)}
             </>
           )}
         </nav>

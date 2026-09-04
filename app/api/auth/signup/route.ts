@@ -49,9 +49,11 @@ export async function POST(req: NextRequest) {
       phone: phone || "",
       role: "owner",
       emailVerified: true,
-      // Self-serve: this build has no platform-admin console to approve from,
-      // so a new business owner is usable the moment the account exists.
-      approvalStatus: "approved",
+      // Every new business waits for a platform admin to approve it in
+      // /admin. validateCredentials() refuses a pending account, so the
+      // sign-up page must not try to sign them straight in — it shows the
+      // "waiting for approval" panel instead.
+      approvalStatus: "pending",
     });
 
     return Response.json({

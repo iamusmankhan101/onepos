@@ -492,11 +492,11 @@ export async function findOrCreateGoogleUser(profile: {
   const unusablePassword = hashPassword(randomBytes(32).toString("hex"));
 
   await db.execute({
-    // 'approved', matching /api/auth/signup: this build has no platform-admin
-    // console to approve from, so 'pending' would lock the account out forever
-    // (validateCredentials rejects pending accounts with a 403).
+    // 'pending', matching /api/auth/signup: a business created through Google
+    // waits for a platform admin to approve it in /admin, the same as one
+    // created with a password.
     sql: `INSERT INTO users (id, email, password, owner_name, business_name, phone, role, email_verified, approval_status, created_at, google_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'approved', ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)`,
     args: [
       id,
       profile.email.trim().toLowerCase(),

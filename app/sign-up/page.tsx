@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowRight, Building2, LockKeyhole, Mail, Phone, User } from "lucide-react";
+import { ArrowRight, Building2, Clock, LockKeyhole, Mail, Phone, User } from "lucide-react";
 import Wordmark from "@/components/wordmark";
 import styles from "../auth.module.css";
 
@@ -20,6 +20,9 @@ export default function SignUpPage() {
   const [form, setForm] = useState({ ownerName: "", businessName: "", email: "", phone: "", password: "" });
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  // Set once the account exists but is waiting on a platform admin — there is
+  // nothing to sign in to yet, so the form is replaced rather than reset.
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
 
   function setField(field: keyof typeof form, value: string) {
     setForm((c) => ({ ...c, [field]: value }));
@@ -43,15 +46,25 @@ export default function SignUpPage() {
           phone:     form.phone,
         }),
       });
-      const signupData = await signupRes.json() as { ok: boolean; error?: string };
+      const signupData = await signupRes.json() as {
+        ok: boolean; error?: string; user?: { approvalStatus?: string };
+      };
       if (!signupData.ok) {
         setSending(false);
         setError(signupData.error || "Could not create the account. Please try again.");
         return;
       }
 
-      // Sign straight in — the account is usable immediately, and this is what
-      // sets the httpOnly session cookie the dashboard is gated on.
+      // A new business starts as "pending" and a sign-in attempt would just
+      // 403. Say so plainly instead of bouncing them to a login they can't use.
+      if (signupData.user?.approvalStatus && signupData.user.approvalStatus !== "approved") {
+        setSending(false);
+        setAwaitingApproval(true);
+        return;
+      }
+
+      // Otherwise sign straight in — this is what sets the httpOnly session
+      // cookie the dashboard is gated on.
       const signinRes = await fetch("/api/auth/signin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -98,17 +111,38 @@ export default function SignUpPage() {
             <div>Built for owners, managers, and the people on the counter.</div>
             <div className={styles.miniCard}>
               <div className={styles.miniCardTitle}>Quick setup</div>
-              <div className={styles.miniCardText}>Your workspace is ready as soon as you sign up.</div>
+              <div className={styles.miniCardText}>Sign up in a minute — you start selling as soon as your account is approved.</div>
             </div>
           </div>
         </section>
 
         {/* Form panel */}
         <section className={styles.formPanel}>
+          {awaitingApproval ? (
+            <div className={styles.formCard}>
+              <div style={{
+                width: 46, height: 46, borderRadius: 14, display: "grid", placeItems: "center",
+                background: "#fff7ed", color: "#c2410c", marginBottom: 14,
+              }}>
+                <Clock size={22} />
+              </div>
+              <div className={styles.formHeader}>
+                <h1 className={styles.formTitle}>Account created — pending approval</h1>
+                <p className={styles.formSubtitle}>
+                  Your workspace for <strong>{form.businessName || form.ownerName}</strong> is set up and waiting for a
+                  Pointly admin to approve it. You&apos;ll be able to sign in with <strong>{form.email}</strong> as soon
+                  as that&apos;s done.
+                </p>
+              </div>
+              <Link href="/sign-in" className={styles.primaryButton} style={{ textDecoration: "none", justifyContent: "center" }}>
+                Go to sign in <ArrowRight size={14} />
+              </Link>
+            </div>
+          ) : (
           <form onSubmit={handleSubmit} className={styles.formCard}>
             <div className={styles.formHeader}>
               <h1 className={styles.formTitle} style={{ marginTop: 14 }}>Create your account</h1>
-              <p className={styles.formSubtitle}>Fill in your business details — you&apos;ll land straight in the POS.</p>
+              <p className={styles.formSubtitle}>Fill in your business details — a Pointly admin approves new accounts before the first sign-in.</p>
             </div>
 
             <div className={styles.fieldGrid}>
@@ -140,6 +174,7 @@ export default function SignUpPage() {
               Already have an account? <Link href="/sign-in" className={styles.footerLink}>Sign in</Link>
             </p>
           </form>
+          )}
         </section>
       </div>
     </main>

@@ -19,7 +19,8 @@ export default function SignInPage() {
   const [portal, setPortal] = useState<"admin" | "staff">("admin");
 
   useEffect(() => {
-    if (getCurrentUser()) router.replace("/dashboard");
+    const signedIn = getCurrentUser();
+    if (signedIn) router.replace(signedIn.role === "admin" ? "/admin" : "/dashboard");
 
     queueMicrotask(() => {
       const params = new URLSearchParams(window.location.search);
@@ -39,7 +40,7 @@ export default function SignInPage() {
       body: JSON.stringify({ email, password, portal }),
     })
       .then(async res => {
-        const data = await res.json() as { ok: boolean; error?: string; retryAfter?: number; user?: { id: string } & Record<string, unknown> };
+        const data = await res.json() as { ok: boolean; error?: string; retryAfter?: number; user?: { id: string; role?: string } & Record<string, unknown> };
         if (!data.ok) {
           if (res.status === 429) {
             setRateLocked(true);
@@ -62,7 +63,10 @@ export default function SignInPage() {
         // silently reuse that stale result; a full document load (same as a
         // manual refresh, which is why that "fixes" it) re-runs middleware
         // against the cookie that was just set.
-        window.location.href = "/dashboard";
+        //
+        // A platform admin goes straight to the console: /dashboard is one
+        // business's till, which is not what they signed in to run.
+        window.location.href = data.user!.role === "admin" ? "/admin" : "/dashboard";
       })
       .catch(err => {
         console.error("[sign-in] Error:", err);
