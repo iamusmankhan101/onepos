@@ -120,6 +120,59 @@ function useSyncedSettings<T>(read: () => T) {
   return [value, edit, markSaved] as const;
 }
 
+/**
+ * Runs one settings form's save and reports what actually happened.
+ *
+ * Every section here used to call saveSettings() without awaiting it and flash
+ * "Changes saved successfully" unconditionally. saveSettings() returns the
+ * Turso write's outcome, and retryFetch() *resolves false* rather than
+ * throwing when the device is offline or the session has died — so a save that
+ * reached nothing but this browser looked identical to one that landed
+ * everywhere. That is how a business profile sits un-synced for days.
+ *
+ * On failure the form is left dirty on purpose: what was typed stays on screen
+ * to be saved again, and useSyncedSettings will not overwrite it in the
+ * meantime. The write is also retried on its own by syncLocalDataToDB().
+ */
+function useSettingsSave(markSaved: () => void) {
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const commit = useCallback(async (writeToStore: () => void) => {
+    writeToStore();
+    setError("");
+    setSaving(true);
+    const synced = await saveSettings();
+    setSaving(false);
+    if (!synced) {
+      setError(
+        typeof navigator !== "undefined" && !navigator.onLine
+          ? "You're offline, so this is saved on this device only. It will be sent to your account automatically once you're back online — leave this app open until the red banner at the top clears."
+          : "Saved on this device, but it couldn't reach your account. It will be retried automatically; if the banner at the top doesn't clear, sign out and back in.",
+      );
+      return;
+    }
+    markSaved();
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
+  }, [markSaved]);
+
+  return { commit, saved, error, saving };
+}
+
+/** Green on a confirmed save, red when it only reached this device. */
+function SaveStatus({ saved, error }: { saved: boolean; error: string }) {
+  if (error) {
+    return (
+      <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, fontSize: 13, color: "#991b1b", fontWeight: 500, lineHeight: 1.6 }}>
+        {error}
+      </div>
+    );
+  }
+  return saved ? <SavedBanner /> : null;
+}
+
 function SaveBar({ onSave, busy }: { onSave: () => void; busy?: boolean }) {
   return (
     <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 16, borderTop: "1px solid #f0f0f5", marginTop: 16 }}>
@@ -159,9 +212,7 @@ function readBusinessProfile(): BusinessProfileForm {
 
 function BusinessProfile() {
   const [form, setForm, markSaved] = useSyncedSettings(readBusinessProfile);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const { commit, saved, error: saveError, saving } = useSettingsSave(markSaved);
   const [logoError, setLogoError] = useState("");
   const set = (k: keyof BusinessProfileForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -178,35 +229,14 @@ function BusinessProfile() {
     reader.onerror = () => setLogoError("Could not read that file.");
     reader.readAsDataURL(file);
   }
-  const save = async () => {
+  const save = () => commit(() => {
     const { branchName, ...business } = form;
     Object.assign(settingsStore.business, business);
     updateActiveLocationDetails({ name: branchName, address: business.address, city: business.city });
-    setSaveError("");
-    setSaving(true);
-    // saveSettings() writes localStorage synchronously and returns the Turso
-    // write's outcome. Awaiting it is the whole point here: a POST that failed
-    // used to look exactly like one that succeeded, right up until the next
-    // sync pulled the old row back over the top of it. The form stays dirty on
-    // failure so what was typed survives on screen for a second attempt.
-    const synced = await saveSettings();
-    setSaving(false);
-    if (!synced) {
-      setSaveError("Saved on this device, but it could not reach your account. Check your connection and press Save Changes again — otherwise these values will be replaced the next time this device syncs.");
-      return;
-    }
-    markSaved();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
-  };
+  });
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {saved && <SavedBanner />}
-      {saveError && (
-        <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, fontSize: 13, color: "#991b1b", fontWeight: 500, lineHeight: 1.6 }}>
-          {saveError}
-        </div>
-      )}
+      <SaveStatus saved={saved} error={saveError} />
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "#fff7ed", color: "#c2410c", fontSize: 12, fontWeight: 700 }}>
         Editing location: {form.branchName}
       </div>
@@ -259,13 +289,13 @@ function BusinessProfile() {
 
 function BusinessHours() {
   const [hours, setHours, markSaved] = useSyncedSettings(() => (settingsStore.hours as any[]).map((h: any) => ({ ...h })));
-  const [saved, setSaved] = useState(false);
+  const { commit, saved, error, saving } = useSettingsSave(markSaved);
   const toggle = (i: number) => setHours((h: any[]) => h.map((r: any, idx: number) => idx === i ? { ...r, open: !r.open } : r));
   const setTime = (i: number, k: "from" | "to", v: string) => setHours((h: any[]) => h.map((r: any, idx: number) => idx === i ? { ...r, [k]: v } : r));
-  const save = () => { hours.forEach((h: any, i: number) => Object.assign(settingsStore.hours[i], h)); markSaved(); saveSettings(); setSaved(true); setTimeout(() => setSaved(false), 3000); };
+  const save = () => commit(() => hours.forEach((h: any, i: number) => Object.assign(settingsStore.hours[i], h)));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {saved && <SavedBanner />}
+      <SaveStatus saved={saved} error={error} />
       {hours.map((row: any, i: number) => (
         <div key={row.day} style={{ display: "flex", alignItems: "center", gap: 16, padding: "12px 16px", background: "#f9f9fb", borderRadius: 10 }}>
           <div style={{ width: 100, fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>{row.day}</div>
@@ -281,7 +311,7 @@ function BusinessHours() {
           )}
         </div>
       ))}
-      <SaveBar onSave={save} />
+      <SaveBar onSave={save} busy={saving} />
     </div>
   );
 }
@@ -336,22 +366,18 @@ function WhatsAppSection() {
   const [template, setTemplate, markSaved] = useSyncedSettings(
     () => (settingsStore.whatsapp as { posThankYou?: string }).posThankYou || "",
   );
-  const [saved, setSaved] = useState(false);
+  const { commit, saved, error, saving } = useSettingsSave(markSaved);
 
-  const save = () => {
+  const save = () => commit(() => {
     (settingsStore.whatsapp as { posThankYou?: string }).posThankYou = template;
-    markSaved();
-    saveSettings();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
-  };
+  });
 
   const businessName = (settingsStore.business as { name: string }).name;
   const preview = sanitizeForLink(fillTemplate(template, { name: "Ayesha", business_name: businessName }));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {saved && <SavedBanner />}
+      <SaveStatus saved={saved} error={error} />
 
       <div style={{ padding: "14px 16px", background: "#f0fdf4", borderRadius: 10, border: "1px solid #6ee7b7", display: "flex", alignItems: "center", gap: 12 }}>
         <div style={{ width: 36, height: 36, borderRadius: 10, background: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -382,7 +408,7 @@ function WhatsAppSection() {
         </div>
       </div>
 
-      <SaveBar onSave={save} />
+      <SaveBar onSave={save} busy={saving} />
     </div>
   );
 }
@@ -392,17 +418,11 @@ function ThermalPrinterSection() {
     const p = settingsStore.printer as { enabled: boolean; ip: string; port: number };
     return { enabled: p.enabled, ip: p.ip, port: p.port || 9100 };
   });
-  const [saved, setSaved]     = useState(false);
+  const { commit, saved, error, saving } = useSettingsSave(markSaved);
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState("");
 
-  function save() {
-    Object.assign(settingsStore.printer, form);
-    markSaved();
-    saveSettings();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
-  }
+  const save = () => commit(() => { Object.assign(settingsStore.printer, form); });
 
   async function testPrint() {
     if (!form.ip) { setTestMsg("Enter a printer IP first."); return; }
@@ -440,7 +460,7 @@ function ThermalPrinterSection() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {saved && <SavedBanner />}
+      <SaveStatus saved={saved} error={error} />
 
       {/* Status banner */}
       <div style={{ padding: "14px 16px", background: connected ? "#f0fdf4" : "#faf8ff", borderRadius: 10, border: `1px solid ${connected ? "#6ee7b7" : "#ffedd5"}`, display: "flex", alignItems: "center", gap: 12 }}>
@@ -514,7 +534,7 @@ function ThermalPrinterSection() {
         }}>
           {testing ? "Printing…" : "Test Print"}
         </button>
-        <SaveBar onSave={save} />
+        <SaveBar onSave={save} busy={saving} />
       </div>
     </div>
   );

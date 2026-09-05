@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ShoppingCart, ReceiptText, BarChart3, UserCog, Users, WifiOff, X, Building2 } from "lucide-react";
+import { ShoppingCart, ReceiptText, BarChart3, UserCog, Users, WifiOff, AlertTriangle, X, Building2 } from "lucide-react";
 import Sidebar from "@/components/sidebar";
 import { getCurrentUser, checkServerSession, signOut, ACCOUNT_REFRESHED_EVENT } from "@/lib/auth";
-import { applyAppearanceSettings, SETTINGS_CHANGED_EVENT, reloadSettings } from "@/lib/settings-store";
-import { syncFromDB, syncLocalDataToDB, SESSION_EXPIRED_EVENT } from "@/lib/turso-sync";
+import { applyAppearanceSettings, SETTINGS_CHANGED_EVENT, reloadSettings, settingsNeedSync } from "@/lib/settings-store";
+import { syncFromDB, syncLocalDataToDB, SESSION_EXPIRED_EVENT, SETTINGS_SYNC_STATE_EVENT } from "@/lib/turso-sync";
 import { getStoredStaff, getStoredServices } from "@/lib/storage";
 import { getActiveSection, setActiveSection, getSectionOptions } from "@/lib/sections";
 import { canManageBranches, getActiveLocationFilter, getBusinessLocations, setActiveLocationFilter, type BusinessLocation } from "@/lib/locations";
@@ -188,6 +188,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [sidebarOpen, setSidebarOpen]   = useState(false);
   const [offline, setOffline]           = useState(false);
   const [offlineDismissed, setOfflineDismissed] = useState(false);
+  const [unsyncedSettings, setUnsyncedSettings] = useState(false);
   const [sectionRenderKey, setSectionRenderKey] = useState(getActiveSection());
 
   // Remount the page subtree when the section changes so every list re-reads
@@ -298,6 +299,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     });
   }, [isReady]);
 
+  // Settings this device saved but never got confirmed into Turso. Deliberately
+  // not dismissible: the whole failure this guards against is one nobody
+  // noticed. It clears itself the moment a write lands, which the retry in
+  // syncLocalDataToDB() attempts on every load and on every reconnect.
+  useEffect(() => {
+    function refresh() { setUnsyncedSettings(settingsNeedSync()); }
+    const timer = window.setTimeout(refresh, 0);
+    window.addEventListener(SETTINGS_SYNC_STATE_EVENT, refresh);
+    window.addEventListener(SETTINGS_CHANGED_EVENT, refresh);
+    window.addEventListener("online", refresh);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener(SETTINGS_SYNC_STATE_EVENT, refresh);
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, refresh);
+      window.removeEventListener("online", refresh);
+    };
+  }, []);
+
+  // Back online with a write still owed — retry it straight away rather than
+  // waiting for the next page load.
+  useEffect(() => {
+    function retry() { syncLocalDataToDB().then(() => setUnsyncedSettings(settingsNeedSync())); }
+    window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
+  }, []);
+
   // Offline banner — a checkout still completes offline (it is written to
   // localStorage first), but it won't reach the other devices until sync.
   useEffect(() => {
@@ -372,6 +399,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               <X size={15} />
             </button>
+          </div>
+        )}
+
+        {unsyncedSettings && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 12,
+            padding: "11px 20px",
+            background: "linear-gradient(90deg,#7f1d1d,#991b1b)",
+            borderRadius: offline && !offlineDismissed ? 0 : "20px 0 0 0",
+          }}>
+            <AlertTriangle size={16} color="#fecaca" style={{ flexShrink: 0 }} />
+            <div style={{ flex: 1, fontSize: 13, color: "#fee2e2", fontWeight: 600 }}>
+              Your business settings are saved on this device but haven&apos;t reached your account yet. They will be
+              re-sent automatically once the connection is back — until then, other devices still show the old values.
+            </div>
           </div>
         )}
 

@@ -169,8 +169,28 @@ export async function syncFromDB(): Promise<void> {
         // overwritten by the stale row this GET just fetched, which is exactly
         // what "settings revert after refresh" looks like from the outside.
         const localSavedAt = localStorage.getItem(userKey("pointly_settings_saved_at"));
+        let localSyncedAt = localStorage.getItem(userKey("pointly_settings_synced_at"));
+
+        // Backfill for every device that saved before synced_at existed. Such a
+        // device has a saved_at and no synced_at, which is indistinguishable
+        // from "this edit never landed" — without this it would be told it owes
+        // Turso a write and would push its own possibly-stale copy up over a
+        // newer one. A server row at least as recent as this device's last save
+        // is proof that save did land, so record it.
+        if (!localSyncedAt && localSavedAt && updatedAt && updatedAt >= localSavedAt) {
+          localSyncedAt = localSavedAt;
+          localStorage.setItem(userKey("pointly_settings_synced_at"), localSavedAt);
+        }
+
+        // An edit this device never managed to push must survive regardless of
+        // what the timestamps say. The comparison below is between two
+        // different machines' clocks, so it cannot be trusted on its own — a
+        // device whose clock runs slow would hand its own unsent edit straight
+        // back to the stale server row. "Still owed" is a local fact and needs
+        // no clock at all: saved here, never confirmed by a write.
+        const localUnsynced = !!localSavedAt && (!localSyncedAt || localSavedAt > localSyncedAt);
         const localIsNewer = !!localSavedAt && !!updatedAt && localSavedAt > updatedAt;
-        if (!localIsNewer) {
+        if (!localIsNewer && !localUnsynced) {
           localStorage.setItem(userKey("pointly_settings"), JSON.stringify(data));
         }
       }
@@ -275,6 +295,9 @@ export function recordDeletions(entity: Entity, ids: string[]): Promise<boolean>
  */
 export const SESSION_EXPIRED_EVENT = "pointly_session_expired";
 
+/** Fired after every settings write attempt, so the UI can reflect the outcome. */
+export const SETTINGS_SYNC_STATE_EVENT = "pointly_settings_sync_state";
+
 function reportExpiredSession() {
   if (typeof window !== "undefined") window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
 }
@@ -332,7 +355,43 @@ export async function syncLocalDataToDB(): Promise<boolean> {
     }),
   );
 
-  return results.every(Boolean);
+  const settingsPushed = await pushPendingSettings();
+
+  return results.every(Boolean) && settingsPushed;
+}
+
+/**
+ * Re-sends a settings edit that was saved on this device but never confirmed
+ * by Turso — the device was offline, or the POST failed after its retries.
+ *
+ * ENTITIES above covers every list (clients, invoices, ...), so those recover
+ * on their own: the next page load pushes whatever localStorage holds. Settings
+ * are one object rather than a list and were never part of that sweep, which
+ * left them the one kind of data with no second chance — a profile saved
+ * offline stayed offline forever, looking saved on the device that typed it
+ * and absent everywhere else. This closes that gap.
+ */
+async function pushPendingSettings(): Promise<boolean> {
+  // Key names are spelled out rather than imported: lib/settings-store.ts
+  // already imports saveSettingsToDB from this module, so importing its
+  // constants back would close a cycle. Keep the two spellings in step.
+  const savedAt = localStorage.getItem(userKey("pointly_settings_saved_at"));
+  if (!savedAt) return true; // nothing has ever been saved on this device
+  const syncedAt = localStorage.getItem(userKey("pointly_settings_synced_at"));
+  if (syncedAt && syncedAt >= savedAt) return true; // already landed
+
+  const raw = localStorage.getItem(userKey("pointly_settings"));
+  if (!raw) return true;
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    console.warn("[pushPendingSettings] unreadable local settings, skipped:", err);
+    return true; // nothing useful to push; don't report a failure we can't fix
+  }
+  if (!data || typeof data !== "object") return true;
+
+  return saveSettingsToDB(data as object);
 }
 
 /**
@@ -409,8 +468,22 @@ export async function persistEntity(entity: Entity, list: unknown[], options: Pe
 export function saveSettingsToDB(data: object): Promise<boolean> {
   const user = getCurrentUser();
   if (!user) return Promise.resolve(false);
+  // Read before the write: persist() stamps saved_at synchronously, so this is
+  // the stamp of the very edit being sent.
+  const savedAt = localStorage.getItem(userKey("pointly_settings_saved_at"));
   const body = JSON.stringify({ userId: user.businessOwnerId || user.id, data });
-  return retryFetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body }, "saveSettingsToDB");
+  return retryFetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body }, "saveSettingsToDB")
+    .then((ok) => {
+      // Stamped only on a confirmed write. Everything that decides whether
+      // this device still owes Turso an edit — pushPendingSettings() above,
+      // the overwrite guard in syncFromDB(), the unsynced banner in the
+      // dashboard layout — reads the gap between this and saved_at.
+      if (ok && savedAt) localStorage.setItem(userKey("pointly_settings_synced_at"), savedAt);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(SETTINGS_SYNC_STATE_EVENT, { detail: { ok } }));
+      }
+      return ok;
+    });
 }
 
 /**

@@ -5,6 +5,9 @@ import { saveSettingsToDB } from "./turso-sync";
 
 const STORAGE_KEY = "pointly_settings";
 const SAVED_AT_KEY = "pointly_settings_saved_at";
+// Stamped by saveSettingsToDB() with the saved_at of the edit it confirmed.
+// saved_at ahead of this means Turso is still owed a write.
+const SYNCED_AT_KEY = "pointly_settings_synced_at";
 export const SETTINGS_CHANGED_EVENT = "pointly_settings_changed";
 
 const defaults = {
@@ -252,6 +255,24 @@ export function reloadSettings() {
  * Profile form) can await the result and warn on failure instead of the
  * change silently reverting on the next refresh.
  */
+/**
+ * Whether this device is holding settings that never reached Turso — saved
+ * locally, but with no confirmed write behind them (offline, dead session, or
+ * a POST that failed all its retries).
+ *
+ * This is what makes a silent failure visible instead of leaving a business
+ * looking correctly configured on the one device that typed the values and
+ * blank on every other. syncLocalDataToDB() retries the write on the next
+ * load; the dashboard layout warns for as long as it hasn't landed.
+ */
+export function settingsNeedSync(): boolean {
+  if (typeof window === "undefined") return false;
+  const savedAt = localStorage.getItem(userKey(SAVED_AT_KEY));
+  if (!savedAt) return false;
+  const syncedAt = localStorage.getItem(userKey(SYNCED_AT_KEY));
+  return !syncedAt || savedAt > syncedAt;
+}
+
 export function saveSettings(): Promise<boolean> {
   persist();
   const dbSaved = saveSettingsToDB(settingsStore);
