@@ -26,6 +26,10 @@ export type StaffRole =
   | "trainee"
   | "hair"
   | "aesthetic";
+// Staff also accept arbitrary custom role names entered by the user — see
+// lib/staff-roles.ts. This is the job title shown around the app, not the
+// login role in lib/auth.ts that decides what someone may open.
+export type StaffRoleValue = StaffRole | (string & {});
 
 export type ServiceCategory = "hair" | "skin" | "nails" | "bridal" | "piercing" | "other";
 // Services also accept arbitrary custom category names entered by the user.
@@ -38,7 +42,7 @@ export interface Staff {
   name: string;
   phone: string;
   photo?: string;
-  role: StaffRole;
+  role: StaffRoleValue;
   /** Which business section this staff member belongs to (e.g. "Men's", "Women's"), for businesses that run both from one branch. Free text, cosmetic only. */
   section?: string;
   specialties: string[];

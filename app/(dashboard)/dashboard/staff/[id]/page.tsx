@@ -8,21 +8,13 @@ import {
   BarChart2, ChevronRight, Briefcase,
 } from "lucide-react";
 import { getStoredStaff, getStoredAppointments, getStoredServices, saveStaff, saveServices } from "@/lib/storage";
-import type { Staff, Appointment, Service, StaffRole, StaffPayType } from "@/lib/types";
+import type { Staff, Appointment, Service, StaffPayType } from "@/lib/types";
 import { fmtCurrency as fmt } from "@/lib/format";
 import { Check, X, Plus, FileDown } from "lucide-react";
 import { exportStaffPdf } from "@/lib/export-pdf";
 import { settingsStore } from "@/lib/settings-store";
 import { getActiveSection, inSection } from "@/lib/sections";
-
-const ROLE_COLORS: Record<string, { color: string; bg: string }> = {
-  owner:            { color: "#EA580C", bg: "#FFEDD5" },
-  manager:          { color: "#0369a1", bg: "#e0f2fe" },
-  "senior-stylist": { color: "#059669", bg: "#ecfdf5" },
-  "junior-stylist": { color: "#d97706", bg: "#fffbeb" },
-  receptionist:     { color: "#db2777", bg: "#fdf2f8" },
-  trainee:          { color: "#6b7280", bg: "#f9fafb" },
-};
+import { CUSTOM_ROLE_OPTION, getRoleOptions, roleLabel, roleStyle, toRoleId } from "@/lib/staff-roles";
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
   completed:    { label: "Completed",   color: "#059669", bg: "#ecfdf5" },
@@ -81,8 +73,15 @@ function EditModal({
     servicesList.filter((s) => s.assignedStaffIds.includes(staff.id)).map((s) => s.id),
   );
   const [done, setDone] = useState(false);
+  // Seeded from storage rather than a prop: this modal is only ever mounted
+  // from the loaded detail page, and the whole team is what says which custom
+  // roles exist (see lib/staff-roles.ts).
+  const [roleOptions] = useState<string[]>(() => getRoleOptions(getStoredStaff()));
+  const [customRole, setCustomRole] = useState("");
+  const addingCustomRole = form.role === CUSTOM_ROLE_OPTION;
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
-  const canSubmit = form.name && form.phone && form.role;
+  const resolvedRole = addingCustomRole ? toRoleId(customRole) : form.role;
+  const canSubmit = Boolean(form.name && form.phone && resolvedRole);
 
   const toggleService = (id: string) =>
     setSelectedServiceIds((prev) =>
@@ -96,7 +95,7 @@ function EditModal({
       ...staff,
       name: form.name,
       phone: form.phone,
-      role: form.role as StaffRole,
+      role: resolvedRole,
       specialties: selectedServices.map((s) => s.name),
       payType: form.payType as StaffPayType,
       commissionRate: (form.payType === "commission" || form.payType === "both") && form.commissionRate ? Number(form.commissionRate) : undefined,
@@ -137,10 +136,15 @@ function EditModal({
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Role</label>
-            <select style={{ ...inp, background: "#fff" }} value={form.role} onChange={(e) => set("role", e.target.value)}>
+            <select style={{ ...inp, background: "#fff", textTransform: "capitalize" }} value={form.role} onChange={(e) => set("role", e.target.value)}>
               <option value="">Select role…</option>
-              {Object.keys(ROLE_COLORS).map((r) => <option key={r} value={r}>{r.replace(/-/g, " ")}</option>)}
+              {roleOptions.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+              <option value={CUSTOM_ROLE_OPTION}>+ Add a custom role…</option>
             </select>
+            {addingCustomRole && (
+              <input style={{ ...inp, borderColor: "#fed7aa", marginTop: 2 }} autoFocus value={customRole}
+                onChange={(e) => setCustomRole(e.target.value)} placeholder="e.g. Barber, Nail Technician" />
+            )}
           </div>
 
           <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff7ed", color: "#c2410c", fontSize: 12, lineHeight: 1.55, fontWeight: 650 }}>
@@ -405,7 +409,7 @@ export default function StaffProfilePage() {
     </div>
   );
 
-  const role     = ROLE_COLORS[staff.role] ?? { color: "#6b7280", bg: "#f9fafb" };
+  const role     = roleStyle(staff.role);
   const maxRev   = Math.max(stats.revWeek, stats.revMonth, stats.revLastMonth, 1);
   const maxSvc   = stats.topServices[0]?.count ?? 1;
 
@@ -437,7 +441,7 @@ export default function StaffProfilePage() {
                 <div style={{ fontSize: 24, fontWeight: 900, color: "#1a1a2e", letterSpacing: "-0.01em" }}>{staff.name}</div>
                 <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 8 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: role.color, background: role.bg, padding: "4px 12px", borderRadius: 20, textTransform: "capitalize" }}>
-                    {staff.role.replace(/-/g, " ")}
+                    {roleLabel(staff.role)}
                   </span>
                   <span style={{ fontSize: 12, fontWeight: 700, color: staff.isActive ? "#059669" : "#dc2626", background: staff.isActive ? "#ecfdf5" : "#fef2f2", padding: "4px 12px", borderRadius: 20 }}>
                     {staff.isActive ? "● Active" : "● Inactive"}

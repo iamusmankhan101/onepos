@@ -3,22 +3,12 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getStoredStaff, saveStaff, getStoredServices, saveServices, getStoredAppointments, subscribeToStoredData } from "@/lib/storage";
-import type { Staff, Service, StaffRole, StaffPayType, Appointment } from "@/lib/types";
+import type { Staff, Service, StaffPayType, Appointment } from "@/lib/types";
 import { X, Plus, Check, ChevronRight, Trash2, UserCog, Pencil, Lock, Upload, Download, FileSpreadsheet, ChevronDown } from "lucide-react";
 import { getSectionOptions, getActiveSection, inSection, defaultSectionForNewRecord } from "@/lib/sections";
+import { CUSTOM_ROLE_OPTION, getRoleOptions, normalizeRole, roleLabel, roleStyle, ROLE_SEED, toRoleId } from "@/lib/staff-roles";
 import PageTitle from "@/components/page-title";
 import MobilePageHeader from "@/components/mobile-page-header";
-
-const ROLE_COLORS: Record<string, { color: string; bg: string }> = {
-  owner:           { color: "#EA580C", bg: "#FFEDD5" },
-  manager:         { color: "#0369a1", bg: "#e0f2fe" },
-  "senior-stylist":{ color: "#059669", bg: "#ecfdf5" },
-  "junior-stylist":{ color: "#d97706", bg: "#fffbeb" },
-  receptionist:    { color: "#db2777", bg: "#fdf2f8" },
-  trainee:         { color: "#6b7280", bg: "#f9fafb" },
-  hair:            { color: "#0369a1", bg: "#e0f2fe" },
-  aesthetic:       { color: "#be185d", bg: "#fdf2f8" },
-};
 
 import { fmtCurrency as fmt } from "@/lib/format";
 
@@ -34,7 +24,6 @@ const STAFF_EXPORT_COLS = [
   "Commission Rate", "Base Salary", "Paid Leaves / Month", "Specialties", "Assigned Services", "Color",
 ];
 
-const STAFF_ROLES = Object.keys(ROLE_COLORS) as StaffRole[];
 const STAFF_PAY_TYPES: StaffPayType[] = ["commission", "salary", "both"];
 
 type StaffImportRecord = { staff: Staff; assignedServiceNames: string[]; mode: "add" | "update" };
@@ -48,11 +37,6 @@ function parseActive(value: unknown): boolean {
   const raw = String(value ?? "").trim().toLowerCase();
   if (!raw) return true;
   return !["false", "no", "inactive", "0"].includes(raw);
-}
-
-function normalizeRole(value: unknown): StaffRole {
-  const role = String(value ?? "").trim().toLowerCase().replace(/\s+/g, "-") as StaffRole;
-  return STAFF_ROLES.includes(role) ? role : "junior-stylist";
 }
 
 function normalizePayType(value: unknown): StaffPayType {
@@ -115,6 +99,12 @@ function StaffFormModal({ onClose, onSave, staff, servicesList, staffList }: { o
     paidLeavesPerMonth: staff?.paidLeavesPerMonth != null ? String(staff.paidLeavesPerMonth) : "",
   });
   const sectionOptions = getSectionOptions(staffList);
+  // Built-in roles plus whatever this team has already invented. An existing
+  // custom role is therefore already in the list when editing someone who
+  // holds it, so the picker shows their real role rather than falling blank.
+  const roleOptions = getRoleOptions(staffList);
+  const [customRole, setCustomRole] = useState("");
+  const addingCustomRole = form.role === CUSTOM_ROLE_OPTION;
 
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(() => {
     if (staff) {
@@ -124,7 +114,8 @@ function StaffFormModal({ onClose, onSave, staff, servicesList, staffList }: { o
   });
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
-  const canSubmit = form.name && form.phone && form.role;
+  const resolvedRole = addingCustomRole ? toRoleId(customRole) : form.role;
+  const canSubmit = Boolean(form.name && form.phone && resolvedRole);
 
   const toggleService = (id: string) => {
     const current = [...selectedServiceIds];
@@ -150,7 +141,7 @@ function StaffFormModal({ onClose, onSave, staff, servicesList, staffList }: { o
       name: form.name,
       phone: form.phone,
       email: staff?.email ?? "",
-      role: form.role as StaffRole,
+      role: resolvedRole,
       section: form.section || undefined,
       specialties: specialtiesArray,
       color,
@@ -199,10 +190,21 @@ function StaffFormModal({ onClose, onSave, staff, servicesList, staffList }: { o
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Role</label>
-            <select value={form.role} onChange={(e) => set("role", e.target.value)} style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid #e8e8f0", fontSize: 13, color: "#1a1a2e", outline: "none", background: "#fff" }}>
+            <select value={form.role} onChange={(e) => set("role", e.target.value)} style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid #e8e8f0", fontSize: 13, color: "#1a1a2e", outline: "none", background: "#fff", textTransform: "capitalize" }}>
               <option value="">Select a role…</option>
-              {Object.keys(ROLE_COLORS).map((r) => <option key={r} value={r}>{r.replace(/-/g, " ")}</option>)}
+              {roleOptions.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+              <option value={CUSTOM_ROLE_OPTION}>+ Add a custom role…</option>
             </select>
+            {addingCustomRole && (
+              <input type="text" autoFocus value={customRole} onChange={(e) => setCustomRole(e.target.value)} placeholder="e.g. Barber, Nail Technician"
+                style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid #fed7aa", fontSize: 13, color: "#1a1a2e", outline: "none", marginTop: 2 }} />
+            )}
+            {addingCustomRole && (
+              <div style={{ fontSize: 11, color: "#9898b0", lineHeight: 1.5 }}>
+                Saved with this staff member and offered in this list from then on. It is a job title only — what someone can
+                open is set in Settings → Staff Access.
+              </div>
+            )}
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -445,7 +447,7 @@ function StaffImportModal({ existing, servicesList, onClose, onImport }: {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 16px", fontSize: 11 }}>
                 {[
-                  ["Name", "Required"], ["Phone", "Required"], ["Role", STAFF_ROLES.join(" / ")], ["Pay Type", "commission / salary / both"],
+                  ["Name", "Required"], ["Phone", "Required"], ["Role", `${ROLE_SEED.join(" / ")} — or your own`], ["Pay Type", "commission / salary / both"],
                   ["Assigned Services", "Comma-separated service names"], ["Specialties", "Comma-separated"], ["Active", "Yes / No"], ["Section", "Optional"],
                 ].map(([col, hint]) => <div key={col}><strong>{col}</strong>: {hint}</div>)}
               </div>
@@ -464,7 +466,7 @@ function StaffImportModal({ existing, servicesList, onClose, onImport }: {
                 <div key={record.staff.id} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderBottom: "1px solid #f8f8fc" }}>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 800, color: "#1a1a2e" }}>{record.staff.name}</div>
-                    <div style={{ fontSize: 11, color: "#9898b0" }}>{record.staff.phone} · {record.staff.role}</div>
+                    <div style={{ fontSize: 11, color: "#9898b0" }}>{record.staff.phone} · {roleLabel(record.staff.role)}</div>
                   </div>
                   <span style={{ alignSelf: "center", fontSize: 10, fontWeight: 800, borderRadius: 999, padding: "3px 8px", background: record.mode === "add" ? "#ecfdf5" : "#eff6ff", color: record.mode === "add" ? "#059669" : "#2563eb" }}>{record.mode === "add" ? "Add" : "Update"}</span>
                 </div>
@@ -743,7 +745,7 @@ export default function StaffPage() {
       <div className="cards-grid-auto">
         {visibleStaff.map((s) => {
           const stats = getStaffStats(s.id, appointmentsList);
-          const role  = ROLE_COLORS[s.role] ?? { color: "#6b7280", bg: "#f9fafb" };
+          const role  = roleStyle(s.role);
           return (
             <div
               key={s.id}
@@ -759,7 +761,7 @@ export default function StaffPage() {
                   <div>
                     <div style={{ fontWeight: 800, fontSize: 15, color: "#1a1a2e", letterSpacing: "-0.01em" }}>{s.name}</div>
                     <span style={{ display: "inline-block", fontSize: 10, fontWeight: 800, color: role.color, background: role.bg, padding: "2px 8px", borderRadius: 20, textTransform: "capitalize", marginTop: 4 }}>
-                      {s.role.replace(/-/g, " ")}
+                      {roleLabel(s.role)}
                     </span>
                   </div>
                 </div>
