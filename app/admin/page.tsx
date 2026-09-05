@@ -476,7 +476,7 @@ export default function AdminConsolePage() {
         background: "#0d0d14", padding: "12px 20px", display: "flex", alignItems: "center",
         gap: 14, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 60,
       }}>
-        <Wordmark height={24} />
+        <Wordmark variant="mark" height={24} />
         <div style={{
           display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 20,
           background: "rgba(124,58,237,0.16)", border: "1px solid rgba(167,139,250,0.35)",

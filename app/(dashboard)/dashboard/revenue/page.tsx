@@ -622,7 +622,7 @@ export default function RevenuePage() {
     body { font-family: 'Montserrat', sans-serif; background: #fff; color: #1a1a2e; font-size: 13px; }
     .page { max-width: 820px; margin: 0 auto; padding: 40px 48px; }
     .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #f0f0f8; }
-    .logo-wm img { height:34px; width:auto; display:block; }
+    .logo-wm img { height:42px; width:auto; display:block; }
     .logo-sub  { font-size: 12px; color: #a0a0b8; margin-top: 6px; }
     .report-meta { text-align: right; }
     .report-title { font-size: 16px; font-weight: 800; color: #EA580C; }

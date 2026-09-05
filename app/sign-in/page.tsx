@@ -79,7 +79,7 @@ export default function SignInPage() {
       <div className={styles.authShell}>
         <section className={styles.brandPanel}>
           <div className={styles.brandTop}>
-            <Wordmark height={46} />
+            <Wordmark height={56} />
           </div>
 
           <div className={styles.brandContent}>

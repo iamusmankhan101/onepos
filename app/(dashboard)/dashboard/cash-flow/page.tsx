@@ -801,7 +801,7 @@ export default function CashFlowPage() {
     body{font-family:'Montserrat',sans-serif;background:#fff;color:#1a1a2e;font-size:13px}
     .page{max-width:820px;margin:0 auto;padding:40px 48px}
     .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;padding-bottom:24px;border-bottom:2px solid #f0f0f8}
-    .logo-wm img { height:34px; width:auto; display:block; }
+    .logo-wm img { height:42px; width:auto; display:block; }
     .report-meta{text-align:right}
     .report-title{font-size:16px;font-weight:800;color:#EA580C}
     .report-sub{font-size:12px;color:#6b6b8a;margin-top:4px}

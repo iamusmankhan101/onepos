@@ -288,7 +288,7 @@ function openPrint(html: string, title: string) {
 
 /** Absolute URL for the logo — a print window resolves relative paths against about:blank. */
 function logoUrl() {
-  return typeof window === "undefined" ? "/logo-dark.png" : `${window.location.origin}/logo-dark.png`;
+  return typeof window === "undefined" ? "/logo-dark-mark.png" : `${window.location.origin}/logo-dark-mark.png`;
 }
 
 export function exportClientPdf(

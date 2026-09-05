@@ -252,7 +252,7 @@ export default function InvoicePrint({
             )}
 
             <div style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
-              <Wordmark tone="dark" height={13} />
+              <Wordmark tone="dark" variant="mark" height={13} />
             </div>
 
           </div>

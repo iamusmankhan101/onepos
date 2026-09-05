@@ -224,7 +224,7 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
               <X size={15} />
             </button>
             <span className="sidebar-logo" style={{ userSelect: "none", pointerEvents: "none" }}>
-              <Wordmark height={26} />
+              <Wordmark variant="mark" height={26} />
             </span>
           </div>
 

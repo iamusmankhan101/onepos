@@ -95,7 +95,7 @@ export default function SignUpPage() {
         {/* Brand panel */}
         <section className={styles.brandPanel}>
           <div className={styles.brandTop}>
-            <Wordmark height={46} />
+            <Wordmark height={56} />
           </div>
           <div className={styles.brandContent}>
             <div className={styles.eyebrow}>Get started</div>

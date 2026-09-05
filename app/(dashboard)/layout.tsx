@@ -288,7 +288,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {/* Center logo badge — opens the sidebar */}
           <button onClick={() => setSidebarOpen(true)} className="bottom-nav-logo-badge" aria-label="Open menu">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo-light.png" alt="Pointly" style={{ width: 34, height: "auto", display: "block" }} />
+            <img src="/logo-light-mark.png" alt="Pointly" style={{ width: 34, height: "auto", display: "block" }} />
           </button>
 
           {rightTabs.map((tab) => {
