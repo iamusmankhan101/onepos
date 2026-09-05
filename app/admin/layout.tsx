@@ -26,7 +26,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const userId = token ? verifySessionToken(token) : null;
   const user = userId ? await getUserById(userId) : null;
 
-  if (!user) redirect("/sign-in");
+  // A cookie that failed to verify (or points at a deleted account) means the
+  // session ran out rather than "never signed in" — say so on the sign-in page.
+  if (!user) redirect(token ? "/sign-in?expired=1" : "/sign-in");
   if (user.role !== "admin") redirect("/dashboard");
 
   return <>{children}</>;

@@ -142,22 +142,40 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [router, pathname]);
 
   // Session liveness — getCurrentUser() only reads a local cache and can't tell
-  // the session cookie has died server-side, so a tab left open past expiry
-  // would keep rendering while every background save silently 401s.
+  // the session cookie has died server-side, so a tab left open past the 4-day
+  // expiry would keep rendering while every background save silently 401s.
+  // Checked on mount, every 30 minutes, and whenever the tab is brought back to
+  // the front: a till left open over a long weekend is exactly the case that
+  // expires, and it should say so the moment someone touches it rather than up
+  // to half an hour into the next shift.
   useEffect(() => {
     if (!isReady) return;
     let cancelled = false;
+    let redirecting = false;
 
     async function verify() {
+      if (cancelled || redirecting) return;
       const alive = await checkServerSession();
-      if (cancelled || alive) return;
+      if (cancelled || alive || redirecting) return;
+      redirecting = true;
       await signOut();
       router.replace("/sign-in?expired=1");
     }
 
+    function verifyIfVisible() {
+      if (document.visibilityState === "visible") verify();
+    }
+
     verify();
     const interval = window.setInterval(verify, 30 * 60 * 1000);
-    return () => { cancelled = true; window.clearInterval(interval); };
+    window.addEventListener("focus", verifyIfVisible);
+    document.addEventListener("visibilitychange", verifyIfVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", verifyIfVisible);
+      document.removeEventListener("visibilitychange", verifyIfVisible);
+    };
   }, [isReady, router]);
 
   // A save rejected as unauthenticated means the session died under an open

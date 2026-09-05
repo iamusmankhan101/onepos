@@ -450,6 +450,33 @@ export async function isSessionValid(id: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * True only when a row for this session exists AND is revoked or past its
+ * expiry — a *missing* row counts as live, not dead. Sessions minted before
+ * this table was tracked have no row, and pruneExpiredSessions() deletes rows
+ * once they expire, so treating "no row" as revoked would sign people out for
+ * bookkeeping reasons rather than real ones. The signed token carries its own
+ * 4-day expiry and is checked first everywhere; this adds the one thing the
+ * token can't express — an explicit revocation (signout, or an admin killing
+ * a session) landing on a tab that is still open.
+ */
+export async function isSessionRevoked(id: string): Promise<boolean> {
+  try {
+    await ensureSessionsTable();
+    const res = await db.execute({
+      sql: "SELECT revoked, expires_at FROM sessions WHERE id = ?",
+      args: [id],
+    });
+    if (!res.rows.length) return false;
+    const row = res.rows[0];
+    if ((row.revoked as number) === 1) return true;
+    return new Date(row.expires_at as string) < new Date();
+  } catch {
+    // A database hiccup is not a revocation — never sign a whole shift out over one.
+    return false;
+  }
+}
+
 // ─── Periodic cleanup (call from a cron or on-demand) ────────────────────────
 export async function pruneExpiredSessions(): Promise<void> {
   await ensureSessionsTable();

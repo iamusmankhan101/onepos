@@ -20,6 +20,10 @@ const SESSION_SECRET_ENV = process.env.SESSION_SECRET;
 const SESSION_SECRET = SESSION_SECRET_ENV ?? "dev-only-insecure-secret-change-before-deploy";
 const SECRET_MISCONFIGURED_IN_PROD = process.env.NODE_ENV === "production" && !SESSION_SECRET_ENV;
 
+// Must match SESSION_DURATION_MS in lib/session.ts — this file cannot import
+// it (that module uses Node crypto, unavailable on the Edge runtime).
+const SESSION_MAX_AGE_SECONDS = 4 * 24 * 60 * 60; // 4 days
+
 const DASHBOARD = /^\/dashboard(\/|$)/;
 // The platform-admin console. Only the session is checked here — proving the
 // session carries role "admin" needs a DB read, which the Edge runtime can't
@@ -124,11 +128,20 @@ export async function middleware(req: NextRequest) {
   const upgradeCookie = Boolean(!currentToken && legacyToken && userId);
 
   // ── Protect dashboard and admin routes ────────────────────────────────────
+  // A cookie that was sent but did not verify means the 4-day session ran out
+  // (or was tampered with) rather than "never signed in" — flag it so the
+  // sign-in page can say so instead of silently showing an empty form, and
+  // drop the dead cookie so the browser stops re-sending it on every request.
   if ((DASHBOARD.test(pathname) || ADMIN.test(pathname)) && !userId) {
     const dest = req.nextUrl.clone();
     dest.pathname = "/sign-in";
-    dest.search   = "";
-    return NextResponse.redirect(dest);
+    dest.search   = token ? "?expired=1" : "";
+    const redirect = NextResponse.redirect(dest);
+    if (token) {
+      redirect.cookies.delete(COOKIE_NAME);
+      redirect.cookies.delete(LEGACY_COOKIE_NAME);
+    }
+    return redirect;
   }
 
   // ── Redirect authenticated users away from auth pages ────────────────────
@@ -170,7 +183,7 @@ export async function middleware(req: NextRequest) {
       secure:   isProd,
       sameSite: "lax",
       path:     "/",
-      maxAge:   7 * 24 * 60 * 60,
+      maxAge:   SESSION_MAX_AGE_SECONDS,
     });
     res.cookies.delete(LEGACY_COOKIE_NAME);
   }

@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck, Users } from "lucide-react";
-import { getCurrentUser } from "@/lib/auth";
+import { ArrowRight, Clock, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck, Users } from "lucide-react";
+import { checkServerSession, getCurrentUser, signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
 import styles from "../auth.module.css";
 
@@ -16,23 +16,52 @@ export default function SignInPage() {
   const [error, setError] = useState("");
   const [rateLocked, setRateLocked] = useState(false);
   const [verifiedMessage, setVerifiedMessage] = useState(false);
+  // Shown when the tab arrived here because its session ran out (4-day expiry,
+  // a signout elsewhere, or a revoked login) rather than by choice. It is a
+  // notice, not a failure, so it gets its own banner instead of the red error.
+  const [expiredNotice, setExpiredNotice] = useState(false);
   const [portal, setPortal] = useState<"admin" | "staff">("admin");
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const arrivedExpired = params.get("expired") === "1";
     const signedIn = getCurrentUser();
-    if (signedIn) router.replace(signedIn.role === "admin" ? "/admin" : "/dashboard");
+    let cancelled = false;
 
+    // Banners are set in a microtask, not straight from the effect body, so
+    // they land after this render instead of cascading another one.
     queueMicrotask(() => {
-      const params = new URLSearchParams(window.location.search);
+      if (cancelled) return;
       if (params.get("verified") === "true") setVerifiedMessage(true);
-
-      if (params.get("expired") === "1") setError("Your session expired. Please sign in again to keep your data syncing.");
+      if (!signedIn && arrivedExpired) setExpiredNotice(true);
     });
+
+    // localStorage still remembers a user, but access is granted by the
+    // httpOnly session cookie, and that is what expires. Bouncing to the
+    // dashboard on the strength of the local copy alone sends the tab into a
+    // redirect loop once the cookie is gone: middleware pushes it straight
+    // back here, this effect pushes it back again. So confirm the session is
+    // really alive first, and if it is not, clear the local copy and say so.
+    if (signedIn) {
+      (async () => {
+        const alive = arrivedExpired ? false : await checkServerSession();
+        if (cancelled) return;
+        if (alive) {
+          router.replace(signedIn.role === "admin" ? "/admin" : "/dashboard");
+          return;
+        }
+        await signOut();
+        if (!cancelled) setExpiredNotice(true);
+      })();
+    }
+
+    return () => { cancelled = true; };
   }, [router]);
 
   function handleSubmit() {
     if (rateLocked) return;
     setError("");
+    setExpiredNotice(false);
 
     fetch("/api/auth/signin", {
       method: "POST",
@@ -133,6 +162,17 @@ export default function SignInPage() {
                 </button>
               ))}
             </div>
+
+            {expiredNotice && (
+              <div role="status" style={{ padding: "12px 16px", borderRadius: 10, background: "#fffbeb", border: "1px solid #fde68a", marginBottom: 16 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <Clock size={16} color="#b45309" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div style={{ fontSize: 13, color: "#92400e", fontWeight: 600, lineHeight: 1.45 }}>
+                    Your session has expired. For security, logins last 4 days — please sign in again to keep your sales syncing.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {verifiedMessage && (
               <div style={{ padding: "12px 16px", borderRadius: 10, background: "#ecfdf5", border: "1px solid #a7f3d0", marginBottom: 16 }}>
