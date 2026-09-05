@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
 import { Store, Clock, Shield, Smartphone, ChevronRight, Check, KeyRound, PrinterIcon, Building2, MapPin, Plus, Trash2, Sparkles } from "lucide-react";
-import { settingsStore, saveSettings } from "@/lib/settings-store";
+import { settingsStore, saveSettings, SETTINGS_CHANGED_EVENT } from "@/lib/settings-store";
 import {
   activePlan, addBusinessLocation, canManageBranches, deleteBusinessLocation, getActiveLocationFilter,
   getBusinessLocations, getDefaultLocationId, locationName, MAIN_LOCATION_ID, setActiveLocationFilter,
@@ -72,23 +72,98 @@ function SavedBanner() {
   );
 }
 
-function SaveBar({ onSave }: { onSave: () => void }) {
+/**
+ * Keeps a settings form in step with the store behind it.
+ *
+ * Settings do not finish loading at first paint: the dashboard layout runs
+ * syncFromDB(), then reloadSettings(), then fires SETTINGS_CHANGED_EVENT, all
+ * after this page has already rendered. A form that only snapshots
+ * settingsStore into useState therefore shows the pre-sync localStorage copy —
+ * a blank address/city on a device that has not synced yet — and, far worse,
+ * writes that stale snapshot straight back over the synced values on Save,
+ * pushing the emptied settings to Turso and every other device. That is what
+ * "settings reverted everything I had saved" looks like from the outside.
+ *
+ * So re-read the store whenever it changes, but never on top of edits the user
+ * has already typed: `edit` marks the form dirty and freezes re-hydration
+ * until `markSaved` (called by the form's own save) releases it again.
+ */
+function useSyncedSettings<T>(read: () => T) {
+  const readRef = useRef(read);
+  readRef.current = read;
+  const dirty = useRef(false);
+  const [value, setValue] = useState<T>(read);
+
+  useEffect(() => {
+    function rehydrate() {
+      if (!dirty.current) setValue(readRef.current());
+    }
+    // Deferred a tick for the same reason the rest of this page defers: the
+    // store is only readable after hydration, and the sync can land before
+    // this effect has subscribed.
+    const timer = window.setTimeout(rehydrate, 0);
+    window.addEventListener(SETTINGS_CHANGED_EVENT, rehydrate);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, rehydrate);
+    };
+  }, []);
+
+  const edit: Dispatch<SetStateAction<T>> = useCallback((next) => {
+    dirty.current = true;
+    setValue(next);
+  }, []);
+
+  /** Call once the form has written itself into settingsStore. */
+  const markSaved = useCallback(() => { dirty.current = false; }, []);
+
+  return [value, edit, markSaved] as const;
+}
+
+function SaveBar({ onSave, busy }: { onSave: () => void; busy?: boolean }) {
   return (
     <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 16, borderTop: "1px solid #f0f0f5", marginTop: 16 }}>
-      <button onClick={onSave} style={{ padding: "10px 24px", borderRadius: 12, border: "none", background: "var(--accent-gradient)", fontSize: 13, fontWeight: 750, color: "#fff", cursor: "pointer", transition: "all 0.15s", boxShadow: "0 4px 14px var(--accent-glow)" }} className="hover-scale">
-        Save Changes
+      <button onClick={onSave} disabled={busy} style={{ padding: "10px 24px", borderRadius: 12, border: "none", background: "var(--accent-gradient)", fontSize: 13, fontWeight: 750, color: "#fff", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1, transition: "all 0.15s", boxShadow: "0 4px 14px var(--accent-glow)" }} className={busy ? "" : "hover-scale"}>
+        {busy ? "Saving…" : "Save Changes"}
       </button>
     </div>
   );
 }
 
+interface BusinessSettings {
+  name: string; phone: string; email: string; address: string;
+  city: string; currency: string; timezone: string; logo: string;
+}
+/** Every business field, plus the active branch's name, which is edited alongside them. */
+type BusinessProfileForm = BusinessSettings & { branchName: string };
+
+/**
+ * The Business Profile form's values. Address and city are read off the active
+ * branch first: settingsStore.business.address is only ever a mirror of the
+ * branch (setActiveLocationFilter copies branch -> business on every switch),
+ * so the branch list is the copy that stays correct once a business runs more
+ * than one location. The business-level value is the fallback, which is what
+ * an account that pre-dates branches still has its address stored in.
+ */
+function readBusinessProfile(): BusinessProfileForm {
+  const activeId = getActiveLocationFilter();
+  const branch = getBusinessLocations().find((location) => location.id === activeId);
+  const business = settingsStore.business as BusinessSettings;
+  return {
+    ...business,
+    address: branch?.address || business.address || "",
+    city: branch?.city || business.city || "",
+    branchName: branch?.name || locationName(activeId),
+  };
+}
+
 function BusinessProfile() {
-  const [form, setForm] = useState({ ...settingsStore.business });
+  const [form, setForm, markSaved] = useSyncedSettings(readBusinessProfile);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
   const [logoError, setLogoError] = useState("");
-  const activeLocation = getActiveLocationFilter();
-  const [branchName, setBranchName] = useState(() => locationName(activeLocation));
-  const set = (k: string, v: string) => setForm((f: any) => ({ ...f, [k]: v }));
+  const set = (k: keyof BusinessProfileForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   // Stored inline as a data URL: settings ride along with the rest of the
   // business settings blob to Turso, so there is no separate file host to keep
@@ -103,21 +178,40 @@ function BusinessProfile() {
     reader.onerror = () => setLogoError("Could not read that file.");
     reader.readAsDataURL(file);
   }
-  const save = () => {
-    Object.assign(settingsStore.business, form);
-    updateActiveLocationDetails({ name: branchName, address: form.address, city: form.city });
-    saveSettings();
+  const save = async () => {
+    const { branchName, ...business } = form;
+    Object.assign(settingsStore.business, business);
+    updateActiveLocationDetails({ name: branchName, address: business.address, city: business.city });
+    setSaveError("");
+    setSaving(true);
+    // saveSettings() writes localStorage synchronously and returns the Turso
+    // write's outcome. Awaiting it is the whole point here: a POST that failed
+    // used to look exactly like one that succeeded, right up until the next
+    // sync pulled the old row back over the top of it. The form stays dirty on
+    // failure so what was typed survives on screen for a second attempt.
+    const synced = await saveSettings();
+    setSaving(false);
+    if (!synced) {
+      setSaveError("Saved on this device, but it could not reach your account. Check your connection and press Save Changes again — otherwise these values will be replaced the next time this device syncs.");
+      return;
+    }
+    markSaved();
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {saved && <SavedBanner />}
+      {saveError && (
+        <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, fontSize: 13, color: "#991b1b", fontWeight: 500, lineHeight: 1.6 }}>
+          {saveError}
+        </div>
+      )}
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "#fff7ed", color: "#c2410c", fontSize: 12, fontWeight: 700 }}>
-        Editing location: {branchName || locationName(activeLocation)}
+        Editing location: {form.branchName}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <Field label="Branch Name"><input value={branchName} onChange={(e) => setBranchName(e.target.value)} style={inp} /></Field>
+        <Field label="Branch Name"><input value={form.branchName} onChange={(e) => set("branchName", e.target.value)} style={inp} /></Field>
         <Field label="Business Name"><input value={form.name} onChange={(e) => set("name", e.target.value)} style={inp} /></Field>
         <Field label="Phone"><input value={form.phone} onChange={(e) => set("phone", e.target.value)} style={inp} /></Field>
         <Field label="Email"><input value={form.email} onChange={(e) => set("email", e.target.value)} style={inp} /></Field>
@@ -158,17 +252,17 @@ function BusinessProfile() {
           </select>
         </Field>
       </div>
-      <SaveBar onSave={save} />
+      <SaveBar onSave={save} busy={saving} />
     </div>
   );
 }
 
 function BusinessHours() {
-  const [hours, setHours] = useState(() => (settingsStore.hours as any[]).map((h: any) => ({ ...h })));
+  const [hours, setHours, markSaved] = useSyncedSettings(() => (settingsStore.hours as any[]).map((h: any) => ({ ...h })));
   const [saved, setSaved] = useState(false);
   const toggle = (i: number) => setHours((h: any[]) => h.map((r: any, idx: number) => idx === i ? { ...r, open: !r.open } : r));
   const setTime = (i: number, k: "from" | "to", v: string) => setHours((h: any[]) => h.map((r: any, idx: number) => idx === i ? { ...r, [k]: v } : r));
-  const save = () => { hours.forEach((h: any, i: number) => Object.assign(settingsStore.hours[i], h)); saveSettings(); setSaved(true); setTimeout(() => setSaved(false), 3000); };
+  const save = () => { hours.forEach((h: any, i: number) => Object.assign(settingsStore.hours[i], h)); markSaved(); saveSettings(); setSaved(true); setTimeout(() => setSaved(false), 3000); };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {saved && <SavedBanner />}
@@ -239,13 +333,14 @@ function Security() {
 }
 
 function WhatsAppSection() {
-  const [template, setTemplate] = useState(
+  const [template, setTemplate, markSaved] = useSyncedSettings(
     () => (settingsStore.whatsapp as { posThankYou?: string }).posThankYou || "",
   );
   const [saved, setSaved] = useState(false);
 
   const save = () => {
     (settingsStore.whatsapp as { posThankYou?: string }).posThankYou = template;
+    markSaved();
     saveSettings();
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
@@ -293,14 +388,17 @@ function WhatsAppSection() {
 }
 
 function ThermalPrinterSection() {
-  const p = settingsStore.printer as { enabled: boolean; ip: string; port: number };
-  const [form, setForm] = useState({ enabled: p.enabled, ip: p.ip, port: p.port || 9100 });
+  const [form, setForm, markSaved] = useSyncedSettings(() => {
+    const p = settingsStore.printer as { enabled: boolean; ip: string; port: number };
+    return { enabled: p.enabled, ip: p.ip, port: p.port || 9100 };
+  });
   const [saved, setSaved]     = useState(false);
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState("");
 
   function save() {
     Object.assign(settingsStore.printer, form);
+    markSaved();
     saveSettings();
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
@@ -701,9 +799,13 @@ function BranchesSection() {
     }
     const timer = window.setTimeout(refreshPlan, 0);
     window.addEventListener(ACCOUNT_REFRESHED_EVENT, refreshPlan);
+    // ...and when the Turso sync lands, which is what fills in the branch
+    // list (addresses included) on a device that has just signed in.
+    window.addEventListener(SETTINGS_CHANGED_EVENT, refreshPlan);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener(ACCOUNT_REFRESHED_EVENT, refreshPlan);
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, refreshPlan);
     };
   }, []);
 
