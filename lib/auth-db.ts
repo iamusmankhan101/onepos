@@ -6,6 +6,7 @@
 import { db } from "@/lib/db";
 import type { InValue } from "@libsql/client";
 import { randomBytes, pbkdf2Sync, timingSafeEqual } from "crypto";
+import { normalizePlanId, type PlanId } from "@/lib/plans";
 
 // ─── Password hashing ─────────────────────────────────────────────────────────
 
@@ -75,6 +76,7 @@ async function ensureAuthTablesUncached(): Promise<void> {
   await db.execute("ALTER TABLE users ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved'").catch(() => {});
   await db.execute("ALTER TABLE users ADD COLUMN account_frozen INTEGER NOT NULL DEFAULT 0").catch(() => {});
   await db.execute("ALTER TABLE users ADD COLUMN freeze_reason TEXT").catch(() => {});
+  await db.execute("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'starter'").catch(() => {});
 
   // Create index for faster email lookups
   await db.execute(`
@@ -112,6 +114,11 @@ export interface User {
   approvalStatus: ApprovalStatus;
   accountFrozen: boolean;
   freezeReason: string | null;
+  /**
+   * Subscription tier. Only a business owner's plan is ever consulted — a
+   * staff or manager row inherits its owner's, see getEffectivePlan().
+   */
+  plan: PlanId;
   createdAt: string;
 }
 
@@ -130,6 +137,11 @@ export interface AuthUser {
   approvalStatus: ApprovalStatus;
   accountFrozen: boolean;
   freezeReason: string | null;
+  /**
+   * Subscription tier. Only a business owner's plan is ever consulted — a
+   * staff or manager row inherits its owner's, see getEffectivePlan().
+   */
+  plan: PlanId;
   createdAt: string;
 }
 
@@ -153,6 +165,7 @@ function rowToUser(r: any): User {
     approvalStatus: ((r.approval_status as string | undefined) || "approved") as ApprovalStatus,
     accountFrozen: (r.account_frozen as number) === 1,
     freezeReason: (r.freeze_reason as string) ?? null,
+    plan: normalizePlanId(r.plan),
     createdAt: r.created_at as string,
   };
 }
@@ -321,6 +334,31 @@ export async function updateUserApprovalStatus(id: string, approvalStatus: Appro
  * active sessions are revoked immediately so any already-open dashboard is
  * locked out. Retains an optional human-readable reason (e.g. "unpaid invoice").
  */
+/**
+ * Moves an account onto a subscription tier. Only a business owner's row is
+ * meaningful here — a staff/manager row inherits its owner's plan — so callers
+ * (the /admin console) point this at owners.
+ */
+export async function setUserPlan(id: string, plan: PlanId): Promise<void> {
+  await ensureAuthTables();
+  await db.execute({
+    sql: "UPDATE users SET plan = ? WHERE id = ?",
+    args: [plan, id],
+  });
+}
+
+/**
+ * The tier that actually applies to a login: their own for an owner or admin,
+ * their business owner's for staff and managers. A branch employee must see
+ * the same entitlements as the business they work for, and only the owner's
+ * row is ever moved between tiers.
+ */
+export async function getEffectivePlan(user: Pick<User, "plan" | "businessOwnerId">): Promise<PlanId> {
+  if (!user.businessOwnerId) return normalizePlanId(user.plan);
+  const owner = await getUserById(user.businessOwnerId);
+  return normalizePlanId(owner?.plan);
+}
+
 export async function updateAccountFreeze(
   id: string,
   frozen: boolean,

@@ -19,9 +19,11 @@ import { requireAdmin } from "@/lib/api-auth";
 import {
   getUserById,
   revokeAllSessionsForUser,
+  setUserPlan,
   updateAccountFreeze,
   updateUserApprovalStatus,
 } from "@/lib/auth-db";
+import { normalizePlanId, PLANS } from "@/lib/plans";
 import {
   adminResetPassword,
   deleteUserAccount,
@@ -34,7 +36,7 @@ import {
 
 const ACTIONS = new Set<AdminAction>([
   "freeze", "unfreeze", "approve", "reject", "revoke-sessions",
-  "reset-password", "delete", "grant-admin", "revoke-admin",
+  "reset-password", "delete", "grant-admin", "revoke-admin", "set-plan",
 ]);
 
 /** Actions that must never be pointed at the admin running them. */
@@ -57,7 +59,7 @@ export async function POST(req: NextRequest) {
   const admin = await requireAdmin(req);
   if (!admin) return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
-  let body: { action?: string; userIds?: unknown; reason?: string; password?: string };
+  let body: { action?: string; userIds?: unknown; reason?: string; password?: string; plan?: string };
   try {
     body = await req.json();
   } catch {
@@ -89,6 +91,14 @@ export async function POST(req: NextRequest) {
   if (action === "reset-password" && password.length < 8) {
     return Response.json({ ok: false, error: "Password must be at least 8 characters." }, { status: 400 });
   }
+
+  // A plan change has to name a tier this build actually has — normalizing an
+  // unknown value silently to Starter would quietly downgrade a paying
+  // business on a typo.
+  if (action === "set-plan" && normalizePlanId(body.plan) !== body.plan) {
+    return Response.json({ ok: false, error: "Unknown plan." }, { status: 400 });
+  }
+  const plan = normalizePlanId(body.plan);
 
   const results: { id: string; email?: string; ok: boolean; error?: string }[] = [];
 
@@ -148,6 +158,15 @@ export async function POST(req: NextRequest) {
         case "revoke-admin":
           await setPlatformAdmin(id, false);
           break;
+        case "set-plan": {
+          // Only a business owner carries a plan — staff and manager logins
+          // inherit their owner's, so setting one on them would be a value
+          // nothing ever reads.
+          if (target.businessOwnerId) throw new Error("Team logins follow their business owner's plan.");
+          await setUserPlan(id, plan);
+          detail = `Plan set to ${PLANS[plan].name}.`;
+          break;
+        }
       }
 
       results.push({ id, email: target.email, ok: true });

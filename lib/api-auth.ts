@@ -10,7 +10,8 @@
 
 import { NextRequest } from "next/server";
 import { COOKIE_NAME, LEGACY_COOKIE_NAME, verifySessionToken } from "./session";
-import { getUserById, type AuthUser } from "./auth-db";
+import { getEffectivePlan, getUserById, type AuthUser } from "./auth-db";
+import { supportsMultiBranch, type PlanId } from "./plans";
 
 export interface ResolvedActor {
   /** The business-owner id that scopes the data (staff resolve to their owner's id). */
@@ -19,6 +20,8 @@ export interface ResolvedActor {
   actorId: string;
   locationId: string;
   role: "owner" | "manager" | "staff" | "admin";
+  /** The business's subscription tier — staff inherit their owner's. */
+  plan: PlanId;
 }
 
 /**
@@ -32,6 +35,9 @@ export interface ResolvedActor {
  * exactly like staff — only when a manager has no assigned branch (a
  * cross-branch manager, if that's ever configured) is the client-requested
  * location honored. Only an actual owner/admin can freely browse branches.
+ * Whatever location is arrived at is then run through the plan gate below:
+ * branches are a Pro feature, so a Starter business always resolves to
+ * "main".
  * Returns null when there's no valid session — callers must respond 401.
  */
 export async function resolveActor(
@@ -44,23 +50,45 @@ export async function resolveActor(
   if (!actor) return null;
   if (actor.role !== "admin" && (actor.approvalStatus !== "approved" || actor.accountFrozen)) return null;
 
+  const plan = await getEffectivePlan(actor);
+
+  /**
+   * Branches are a Pro entitlement, so a business that is not on a
+   * multi-branch plan has exactly one data scope no matter what any client
+   * asks for. Every route that reads or writes business data resolves its
+   * location through here, which is what makes the gate real rather than
+   * cosmetic: a hand-crafted request naming another branch, or a login left
+   * pinned to a second branch after the account dropped back to Starter,
+   * both land on Main Branch instead of opening a scope the plan doesn't
+   * include.
+   */
+  const scopedLocation = (locationId: string) => (supportsMultiBranch(plan) ? locationId : "main");
+
   if (actor.role === "staff") {
     return {
       userId: actor.businessOwnerId || actor.id,
       actorId: actor.id,
-      locationId: actor.locationId || "main",
+      locationId: scopedLocation(actor.locationId || "main"),
       role: actor.role,
+      plan,
     };
   }
   if (actor.role === "manager") {
     return {
       userId: actor.businessOwnerId || actor.id,
       actorId: actor.id,
-      locationId: actor.locationId || requestedLocationId,
+      locationId: scopedLocation(actor.locationId || requestedLocationId),
       role: actor.role,
+      plan,
     };
   }
-  return { userId: actor.id, actorId: actor.id, locationId: requestedLocationId, role: actor.role };
+  return {
+    userId: actor.id,
+    actorId: actor.id,
+    locationId: scopedLocation(requestedLocationId),
+    role: actor.role,
+    plan,
+  };
 }
 
 /**

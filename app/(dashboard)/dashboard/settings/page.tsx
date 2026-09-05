@@ -2,10 +2,15 @@
 
 import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Store, Clock, Shield, Smartphone, ChevronRight, Check, KeyRound, PrinterIcon } from "lucide-react";
+import { Store, Clock, Shield, Smartphone, ChevronRight, Check, KeyRound, PrinterIcon, Building2, MapPin, Plus, Trash2, Sparkles } from "lucide-react";
 import { settingsStore, saveSettings } from "@/lib/settings-store";
-import { getActiveLocationFilter, getDefaultLocationId, getBusinessLocations, locationName, updateActiveLocationDetails, type BusinessLocation } from "@/lib/locations";
-import { updateCurrentPassword, type AuthUser } from "@/lib/auth";
+import {
+  activePlan, addBusinessLocation, canManageBranches, deleteBusinessLocation, getActiveLocationFilter,
+  getBusinessLocations, getDefaultLocationId, locationName, MAIN_LOCATION_ID, setActiveLocationFilter,
+  updateActiveLocationDetails, updateBusinessLocation, type BusinessLocation,
+} from "@/lib/locations";
+import { MULTI_BRANCH_PLAN, PLANS, type PlanDefinition } from "@/lib/plans";
+import { ACCOUNT_REFRESHED_EVENT, updateCurrentPassword, type AuthUser } from "@/lib/auth";
 import { getStoredStaff } from "@/lib/storage";
 import type { Staff } from "@/lib/types";
 import { fillTemplate, sanitizeForLink } from "@/lib/whatsapp-link";
@@ -13,6 +18,7 @@ import PageTitle from "@/components/page-title";
 
 const SECTIONS = [
   { id: "business",   label: "Business Profile", icon: Store },
+  { id: "branches", label: "Branches",       icon: Building2 },
   { id: "hours",   label: "Business Hours",  icon: Clock },
   { id: "whatsapp", label: "WhatsApp Receipt", icon: Smartphone },
   { id: "printer", label: "Thermal Printer", icon: PrinterIcon },
@@ -622,6 +628,337 @@ function StaffAccess() {
   );
 }
 
+// ─── Branches (Pro) ───────────────────────────────────────────────────────────
+
+interface BranchDraft { name: string; address: string; city: string }
+
+const EMPTY_BRANCH: BranchDraft = { name: "", address: "", city: "" };
+
+/**
+ * Every branch keeps its own clients, staff, stock, invoices and takings —
+ * switching is a reload rather than a filter, because each branch reads from a
+ * different set of localStorage keys and needs its own pull from the shared
+ * database before anything on screen is true.
+ */
+function BranchUpgradeCard({ plan }: { plan: PlanDefinition }) {
+  return (
+    <div style={{ border: "1px solid #fed7aa", borderRadius: 18, overflow: "hidden" }}>
+      <div style={{ padding: "20px 22px", background: "linear-gradient(135deg, rgba(234,88,12,0.08), rgba(255,255,255,0.9))", display: "flex", alignItems: "flex-start", gap: 14 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 13, display: "grid", placeItems: "center", background: "var(--accent-gradient)", boxShadow: "0 6px 18px var(--accent-glow)", flexShrink: 0 }}>
+          <Sparkles size={19} color="#fff" />
+        </div>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 850, color: "#1a1a2e" }}>Multiple branches are part of {plan.name}</div>
+          <div style={{ fontSize: 12.5, color: "#6b6b8a", marginTop: 4, lineHeight: 1.6, maxWidth: 560 }}>{plan.blurb}</div>
+        </div>
+      </div>
+      <div style={{ padding: "18px 22px 22px", background: "#fff" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+          {plan.highlights.map((line) => (
+            <div key={line} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13, color: "#1a1a2e", fontWeight: 600 }}>
+              <Check size={14} color="var(--accent)" /> {line}
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 18, padding: "12px 14px", background: "#f9f9fb", borderRadius: 12, fontSize: 12, color: "#6b6b8a", lineHeight: 1.65 }}>
+          Your account is on <strong>Starter</strong>, which runs a single location. Get in touch to move it to {plan.name} —
+          your current branch, its data and every staff login carry over untouched.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BranchesSection() {
+  const [plan, setPlan] = useState<PlanDefinition>(() => PLANS.starter);
+  // The plan can only be read after hydration, and rendering the default in
+  // the meantime would flash "upgrade to Pro" at a business already on Pro.
+  const [ready, setReady] = useState(false);
+  const [multiBranch, setMultiBranch] = useState(false);
+  const [branches, setBranches] = useState<BusinessLocation[]>([]);
+  const [activeId, setActiveId] = useState("main");
+  const [adding, setAdding] = useState(false);
+  const [addDraft, setAddDraft] = useState<BranchDraft>(EMPTY_BRANCH);
+  const [editingId, setEditingId] = useState("");
+  const [editDraft, setEditDraft] = useState<BranchDraft>(EMPTY_BRANCH);
+  const [deleteId, setDeleteId] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  // Deferred a tick — the branch list, like everything else on this page,
+  // comes from localStorage and is only readable after hydration. It is also
+  // re-read when the session check pulls down a changed account: an owner who
+  // has just been moved onto Pro is very likely sitting on this exact screen.
+  useEffect(() => {
+    function refreshPlan() {
+      setPlan(activePlan());
+      setMultiBranch(canManageBranches());
+      setBranches(getBusinessLocations());
+      setActiveId(getActiveLocationFilter());
+      setReady(true);
+    }
+    const timer = window.setTimeout(refreshPlan, 0);
+    window.addEventListener(ACCOUNT_REFRESHED_EVENT, refreshPlan);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener(ACCOUNT_REFRESHED_EVENT, refreshPlan);
+    };
+  }, []);
+
+  function refresh() {
+    setBranches(getBusinessLocations());
+    setActiveId(getActiveLocationFilter());
+  }
+
+  function flashSaved() {
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
+  }
+
+  function addBranch() {
+    setError("");
+    try {
+      addBusinessLocation({ name: addDraft.name, address: addDraft.address, city: addDraft.city });
+      setAddDraft(EMPTY_BRANCH);
+      setAdding(false);
+      refresh();
+      flashSaved();
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : "Could not add that branch.");
+    }
+  }
+
+  function startEdit(branch: BusinessLocation) {
+    setError("");
+    setDeleteId("");
+    setEditingId(branch.id);
+    setEditDraft({ name: branch.name, address: branch.address || "", city: branch.city || "" });
+  }
+
+  function saveEdit() {
+    if (!editDraft.name.trim()) { setError("Branch name is required."); return; }
+    updateBusinessLocation(editingId, editDraft);
+    saveSettings();
+    setEditingId("");
+    refresh();
+    flashSaved();
+  }
+
+  // A branch switch reloads the page on purpose: the stores are keyed by
+  // branch, so the lists already in React state belong to the branch being
+  // left, and the new one needs its own sync from the database before any of
+  // it can be trusted.
+  function switchBranch(id: string) {
+    if (id === activeId) return;
+    setBusy(true);
+    setActiveLocationFilter(id);
+    window.location.reload();
+  }
+
+  async function confirmDelete(branch: BusinessLocation) {
+    setBusy(true);
+    setError("");
+    try {
+      const { nextActiveId, dataCleared } = await deleteBusinessLocation(branch.id);
+      if (!dataCleared) {
+        setError(`${branch.name} was removed from your business, but its saved data could not be cleared while offline.`);
+      }
+      setDeleteId("");
+      setDeleteConfirm("");
+      // Deleting the branch you were standing in changes which data the whole
+      // dashboard is reading — that has to be a reload, same as a switch.
+      if (branch.id === activeId || nextActiveId !== activeId) { window.location.reload(); return; }
+      refresh();
+      flashSaved();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Could not delete that branch.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!ready) {
+    return <div style={{ padding: "16px 18px", fontSize: 13, color: "#9898b0" }}>Loading your branches…</div>;
+  }
+
+  if (!multiBranch) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <BranchUpgradeCard plan={MULTI_BRANCH_PLAN} />
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#b0b0c8", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Your location</div>
+          {branches.map((branch) => (
+            <div key={branch.id} style={{ border: "1px solid #f2e9e1", borderRadius: 14, padding: "14px 16px", background: "#fff" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#1a1a2e" }}>{branch.name}</div>
+              <div style={{ fontSize: 12, color: "#9898b0", marginTop: 3 }}>
+                {[branch.address, branch.city].filter(Boolean).join(", ") || "No address set — add one in Business Profile."}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const slotsLeft = Math.max(0, plan.maxBranches - branches.length);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {saved && <SavedBanner />}
+
+      <div style={{ padding: "12px 14px", background: "#fff7ed", borderRadius: 10, fontSize: 12, color: "#c2410c", fontWeight: 650, lineHeight: 1.6 }}>
+        Each branch keeps its own clients, staff, stock, invoices and takings. The branch you switch to here is the one every
+        page reads and writes, and it is what staff pinned to that branch see when they sign in. Main Branch can be renamed
+        but not deleted — it is where the account falls back to.
+      </div>
+
+      {error && <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, fontSize: 13, color: "#991b1b", fontWeight: 500 }}>{error}</div>}
+
+      {branches.map((branch) => {
+        const isActive = branch.id === activeId;
+        const isEditing = editingId === branch.id;
+        const isDeleting = deleteId === branch.id;
+        return (
+          <div key={branch.id} style={{
+            border: `1px solid ${isActive ? "rgba(234,88,12,0.35)" : "#f2e9e1"}`,
+            borderRadius: 16, padding: "18px 20px",
+            background: isActive ? "linear-gradient(135deg, rgba(234,88,12,0.04), #fff)" : "#fff",
+            display: "flex", flexDirection: "column", gap: 14,
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, minWidth: 0 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 12, display: "grid", placeItems: "center", background: isActive ? "var(--accent-gradient)" : "#f4f4f8", flexShrink: 0 }}>
+                  <MapPin size={17} color={isActive ? "#fff" : "#9898b0"} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: "#1a1a2e" }}>{branch.name}</span>
+                    {isActive && (
+                      <span style={{ fontSize: 10, fontWeight: 800, color: "var(--accent-dark)", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 20, padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                        Currently open
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#9898b0", marginTop: 3 }}>
+                    {[branch.address, branch.city].filter(Boolean).join(", ") || "No address set"}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                {!isActive && (
+                  <button type="button" onClick={() => switchBranch(branch.id)} disabled={busy}
+                    style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "var(--accent-gradient)", fontSize: 12, fontWeight: 750, color: "#fff", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+                    Switch to this branch
+                  </button>
+                )}
+                <button type="button" onClick={() => (isEditing ? setEditingId("") : startEdit(branch))}
+                  style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #e3e0eb", background: "#fff", fontSize: 12, fontWeight: 700, color: "#6b6b8a", cursor: "pointer" }}>
+                  {isEditing ? "Cancel" : "Edit"}
+                </button>
+                {branch.id !== MAIN_LOCATION_ID && (
+                  <button type="button" aria-label={`Delete ${branch.name}`}
+                    onClick={() => { setDeleteId(isDeleting ? "" : branch.id); setDeleteConfirm(""); setEditingId(""); setError(""); }}
+                    style={{ padding: 9, borderRadius: 10, border: "1px solid #fecaca", background: "#fff", color: "#dc2626", cursor: "pointer", display: "grid", placeItems: "center" }}>
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {isEditing && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingTop: 14, borderTop: "1px solid #f0f0f5" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                  <Field label="Branch name"><input value={editDraft.name} onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })} style={inp} /></Field>
+                  <Field label="City"><input value={editDraft.city} onChange={(e) => setEditDraft({ ...editDraft, city: e.target.value })} style={inp} /></Field>
+                </div>
+                <Field label="Address" hint="Printed on this branch's receipts and invoices.">
+                  <input value={editDraft.address} onChange={(e) => setEditDraft({ ...editDraft, address: e.target.value })} style={inp} />
+                </Field>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button type="button" onClick={saveEdit}
+                    style={{ padding: "9px 20px", borderRadius: 12, border: "none", background: "var(--accent-gradient)", fontSize: 13, fontWeight: 750, color: "#fff", cursor: "pointer", boxShadow: "0 4px 14px var(--accent-glow)" }}>
+                    Save branch
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {isDeleting && (
+              <div style={{ paddingTop: 14, borderTop: "1px solid #fee2e2", display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ fontSize: 12.5, color: "#991b1b", lineHeight: 1.65 }}>
+                  Deleting <strong>{branch.name}</strong> permanently removes its clients, staff, stock, invoices, expenses and
+                  takings from every device on this account. Your other branches are untouched. This cannot be undone —
+                  type the branch name to confirm.
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <input value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)} placeholder={branch.name}
+                    style={{ ...inp, maxWidth: 260, borderColor: "#fecaca" }} />
+                  <button type="button" disabled={busy || deleteConfirm.trim() !== branch.name} onClick={() => confirmDelete(branch)}
+                    style={{
+                      padding: "10px 18px", borderRadius: 12, border: "none", fontSize: 13, fontWeight: 750, color: "#fff",
+                      background: deleteConfirm.trim() === branch.name ? "#dc2626" : "#fca5a5",
+                      cursor: busy || deleteConfirm.trim() !== branch.name ? "default" : "pointer",
+                    }}>
+                    {busy ? "Deleting…" : "Delete branch"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {adding ? (
+        <div style={{ border: "1px dashed #fed7aa", borderRadius: 16, padding: "18px 20px", background: "#fffdfa", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1a1a2e" }}>New branch</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <Field label="Branch name" hint="How your team will recognise it, e.g. DHA Phase 5.">
+              <input value={addDraft.name} onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} style={inp} />
+            </Field>
+            <Field label="City"><input value={addDraft.city} onChange={(e) => setAddDraft({ ...addDraft, city: e.target.value })} style={inp} /></Field>
+          </div>
+          <Field label="Address" hint="Printed on this branch's receipts and invoices.">
+            <input value={addDraft.address} onChange={(e) => setAddDraft({ ...addDraft, address: e.target.value })} style={inp} />
+          </Field>
+          <div style={{ fontSize: 12, color: "#9898b0", lineHeight: 1.6 }}>
+            A new branch starts empty — no clients, staff, stock or history carry over. Add its team on the Staff page, then
+            give each of them a login pinned to this branch under Staff Access.
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <button type="button" onClick={() => { setAdding(false); setAddDraft(EMPTY_BRANCH); setError(""); }}
+              style={{ padding: "9px 18px", borderRadius: 12, border: "1px solid #e3e0eb", background: "#fff", fontSize: 13, fontWeight: 700, color: "#6b6b8a", cursor: "pointer" }}>
+              Cancel
+            </button>
+            <button type="button" onClick={addBranch}
+              style={{ padding: "9px 20px", borderRadius: 12, border: "none", background: "var(--accent-gradient)", fontSize: 13, fontWeight: 750, color: "#fff", cursor: "pointer", boxShadow: "0 4px 14px var(--accent-glow)" }}>
+              Add branch
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ fontSize: 12, color: "#9898b0" }}>
+            {branches.length} of {plan.maxBranches} branches used on your {plan.name} plan.
+          </div>
+          <button type="button" disabled={slotsLeft === 0} onClick={() => { setAdding(true); setError(""); }}
+            style={{
+              display: "flex", alignItems: "center", gap: 7, padding: "10px 18px", borderRadius: 12, border: "none",
+              background: slotsLeft === 0 ? "#e3e0eb" : "var(--accent-gradient)",
+              fontSize: 13, fontWeight: 750, color: slotsLeft === 0 ? "#9898b0" : "#fff",
+              cursor: slotsLeft === 0 ? "default" : "pointer",
+              boxShadow: slotsLeft === 0 ? "none" : "0 4px 14px var(--accent-glow)",
+            }}>
+            <Plus size={15} /> Add branch
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [active, setActive] = useState("business");
 
@@ -652,6 +989,7 @@ export default function SettingsPage() {
             <div key={id} style={{ display: active === id ? "block" : "none" }}>
               <div style={{ fontWeight: 800, fontSize: 18, color: "#1a1a2e", marginBottom: 24 }}>{label}</div>
               {id === "business"    && <BusinessProfile />}
+              {id === "branches" && <BranchesSection />}
               {id === "hours"    && <BusinessHours />}
               {id === "whatsapp" && <WhatsAppSection />}
               {id === "printer"  && <ThermalPrinterSection />}

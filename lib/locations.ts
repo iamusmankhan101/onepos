@@ -1,5 +1,6 @@
 import { saveSettings, settingsStore } from "./settings-store";
 import { getCurrentUser, userKey } from "./auth";
+import { MULTI_BRANCH_PLAN, planFor, supportsMultiBranch, type PlanDefinition } from "./plans";
 
 export interface BusinessLocation {
   id: string;
@@ -8,27 +9,76 @@ export interface BusinessLocation {
   city?: string;
 }
 
+/**
+ * The original branch of every account. It predates branches (its data sits
+ * under the plain, un-suffixed storage keys), it is the one branch a
+ * single-location plan resolves to, and for both of those reasons it can be
+ * renamed but never deleted.
+ */
+export const MAIN_LOCATION_ID = "main";
+
 function slug(value: string) {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "location";
 }
 
+// settingsStore's shape is inferred as `any` in places (JSON.parse spreads in
+// settings-store.ts), so narrow it through a typed view instead of `as any`.
+interface LocationSettingsShape {
+  locations?: { activeLocationId?: string; items?: BusinessLocation[] };
+  business?: { address?: string; city?: string };
+}
+
+// ─── Plan entitlement ─────────────────────────────────────────────────────────
+
+/** The signed-in business's plan definition (Starter when signed out). */
+export function activePlan(): PlanDefinition {
+  return planFor(getCurrentUser());
+}
+
+/**
+ * Whether this business may run more than one branch at all. Every branch
+ * management surface — the Branches settings section, the dashboard switcher —
+ * hangs off this, and the server enforces the same thing independently in
+ * resolveActor(), so a client that ignores it gets pinned to Main Branch
+ * rather than quietly writing into a branch it isn't paying for.
+ */
+export function canManageBranches(): boolean {
+  return supportsMultiBranch(getCurrentUser()?.plan);
+}
+
+// ─── Branches ─────────────────────────────────────────────────────────────────
+
+/**
+ * Every branch the business has configured. On a plan without multi-branch
+ * this is only ever the one — a list left behind by a downgrade is trimmed to
+ * Main Branch, matching what the server keeps (see clampBranchesToPlan in
+ * /api/settings) and what it will actually serve data for.
+ */
 export function getBusinessLocations(): BusinessLocation[] {
   const configured = (settingsStore as { locations?: { items?: BusinessLocation[] } }).locations?.items;
-  if (Array.isArray(configured) && configured.length > 0) return configured;
   const business = settingsStore.business as { address?: string; city?: string };
-  return [{ id: "main", name: "Main Branch", address: business.address, city: business.city }];
+  const items = Array.isArray(configured) && configured.length > 0
+    ? configured
+    : [{ id: MAIN_LOCATION_ID, name: "Main Branch", address: business.address, city: business.city }];
+  if (canManageBranches()) return items;
+  const main = items.find((location) => location.id === MAIN_LOCATION_ID);
+  return [main ?? { id: MAIN_LOCATION_ID, name: items[0]?.name || "Main Branch", address: business.address, city: business.city }];
 }
 
 export function getDefaultLocationId() {
   const locations = getBusinessLocations();
   const active = (settingsStore as { locations?: { activeLocationId?: string } }).locations?.activeLocationId;
-  return locations.some((location) => location.id === active) ? active! : locations[0]?.id ?? "main";
+  return locations.some((location) => location.id === active) ? active! : locations[0]?.id ?? MAIN_LOCATION_ID;
 }
 
+/**
+ * The branch every store reads and writes right now. This is the client half
+ * of the same rule resolveActor() applies on the server, and the two must
+ * agree: if this returned a branch the server won't serve, the till would
+ * write branch-scoped keys locally and sync them against Main Branch.
+ */
 export function getActiveLocationFilter() {
-  const locations = getBusinessLocations();
-  const active = (settingsStore as { locations?: { activeLocationId?: string } }).locations?.activeLocationId;
-  return locations.some((location) => location.id === active) ? active! : locations[0]?.id ?? "main";
+  return getDefaultLocationId();
 }
 
 export function setActiveLocationFilter(locationId: string) {
@@ -74,7 +124,16 @@ export function addBusinessLocation(input: { name: string; address: string; city
   const cleanCity = input.city?.trim() || "";
   if (!cleanName) throw new Error("Location name is required.");
   if (!cleanAddress) throw new Error("Location address is required.");
+
+  const plan = activePlan();
   const locations = getBusinessLocations();
+  if (locations.length >= plan.maxBranches) {
+    throw new Error(
+      supportsMultiBranch(plan.id)
+        ? `Your ${plan.name} plan covers up to ${plan.maxBranches} branches. Remove one before adding another.`
+        : `Extra branches are part of the ${MULTI_BRANCH_PLAN.name} plan. Upgrade to run more than one location from this account.`,
+    );
+  }
   const existing = locations.find((location) => location.name.toLowerCase() === cleanName.toLowerCase());
   if (existing) throw new Error("A location with this branch name already exists.");
 
@@ -94,13 +153,18 @@ export function addBusinessLocation(input: { name: string; address: string; city
   return next;
 }
 
-export function updateActiveLocationDetails(details: { name?: string; address: string; city?: string }) {
-  const activeId = getActiveLocationFilter();
+/**
+ * Edits one branch's details in place. Does not persist on its own — the
+ * caller decides when to saveSettings(), so a form that also writes other
+ * settings (Business Profile does exactly this) still makes one save.
+ */
+export function updateBusinessLocation(locationId: string, details: { name?: string; address: string; city?: string }) {
+  const locationSettings = settingsStore as unknown as LocationSettingsShape;
   const locations = getBusinessLocations();
-  (settingsStore as any).locations = {
-    ...(settingsStore as any).locations,
-    activeLocationId: activeId,
-    items: locations.map((location) => location.id === activeId
+  locationSettings.locations = {
+    ...locationSettings.locations,
+    activeLocationId: getActiveLocationFilter(),
+    items: locations.map((location) => location.id === locationId
       ? {
           ...location,
           name: details.name?.trim() || location.name,
@@ -111,22 +175,20 @@ export function updateActiveLocationDetails(details: { name?: string; address: s
   };
 }
 
+export function updateActiveLocationDetails(details: { name?: string; address: string; city?: string }) {
+  updateBusinessLocation(getActiveLocationFilter(), details);
+}
+
 /**
- * Permanently removes a branch from the business's location list. The last
- * remaining location can never be deleted — every business needs at least one
- * branch to read/write data against. If the deleted branch was active, the
+ * Permanently removes a branch from the business's location list. Neither the
+ * last remaining location nor Main Branch can be deleted — every business
+ * needs at least one branch to read/write data against, and Main Branch is the
+ * one a single-location plan resolves to. If the deleted branch was active, the
  * first remaining branch becomes active and the business's address/city are
  * refreshed to match it. Returns the removed location and the id that is
  * active afterwards. Branch data itself (localStorage + DB rows) is wiped
  * separately via clearLocationLocalData() / the /api/db DELETE route.
  */
-// settingsStore's shape is inferred as `any` in places (JSON.parse spreads in
-// settings-store.ts), so narrow it through a typed view instead of `as any`.
-interface LocationSettingsShape {
-  locations?: { activeLocationId?: string; items?: BusinessLocation[] };
-  business?: { address?: string; city?: string };
-}
-
 export function removeBusinessLocation(locationId: string): { removed: BusinessLocation; nextActiveId: string } {
   const locationSettings = settingsStore as unknown as LocationSettingsShape;
   const locations = getBusinessLocations();
@@ -134,6 +196,10 @@ export function removeBusinessLocation(locationId: string): { removed: BusinessL
   if (!removed) throw new Error("Location not found.");
   if (locations.length <= 1) {
     throw new Error("You can't delete your only location. Add another branch first.");
+  }
+
+  if (locationId === MAIN_LOCATION_ID) {
+    throw new Error("Main Branch can't be deleted — it's the branch your account falls back to. Rename it instead.");
   }
 
   const remaining = locations.filter((location) => location.id !== locationId);
@@ -184,4 +250,47 @@ export function clearLocationLocalData(locationId: string) {
     doomed.push(key);
   }
   for (const key of doomed) localStorage.removeItem(key);
+}
+
+/**
+ * Removes a branch and everything it holds, in the one order that is safe:
+ *
+ *  1. the shared database rows first, while the branch id is still resolvable
+ *     and the server will still accept a scoped delete for it;
+ *  2. this browser's localStorage copy, which would otherwise be re-uploaded
+ *     by the next sync and bring the branch's data straight back;
+ *  3. the branch itself, out of the settings list.
+ *
+ * Doing (3) first is the tempting order and the wrong one — the list is what
+ * names the branch, so a failure after it leaves rows nothing can address.
+ * The DB delete is best-effort: an offline owner can still remove the branch
+ * from their business, and the rows stay addressable under the same key if the
+ * branch is ever re-created with that name.
+ *
+ * Returns the removed branch and the branch that is active afterwards.
+ */
+export async function deleteBusinessLocation(locationId: string) {
+  const locations = getBusinessLocations();
+  if (!locations.some((location) => location.id === locationId)) throw new Error("Location not found.");
+  if (locations.length <= 1) {
+    throw new Error("You can't delete your only location. Add another branch first.");
+  }
+  if (locationId === MAIN_LOCATION_ID) {
+    throw new Error("Main Branch can't be deleted — it's the branch your account falls back to. Rename it instead.");
+  }
+
+  let dataCleared = true;
+  try {
+    const response = await fetch(`/api/db?locationId=${encodeURIComponent(locationId)}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+    dataCleared = response.ok;
+  } catch {
+    dataCleared = false; // offline — the branch still goes, the rows are orphaned
+  }
+
+  clearLocationLocalData(locationId);
+  const { removed, nextActiveId } = removeBusinessLocation(locationId);
+  return { removed, nextActiveId, dataCleared };
 }

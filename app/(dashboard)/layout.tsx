@@ -3,18 +3,107 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ShoppingCart, ReceiptText, BarChart3, UserCog, Users, WifiOff, X } from "lucide-react";
+import { ShoppingCart, ReceiptText, BarChart3, UserCog, Users, WifiOff, X, Building2 } from "lucide-react";
 import Sidebar from "@/components/sidebar";
-import { getCurrentUser, checkServerSession, signOut } from "@/lib/auth";
+import { getCurrentUser, checkServerSession, signOut, ACCOUNT_REFRESHED_EVENT } from "@/lib/auth";
 import { applyAppearanceSettings, SETTINGS_CHANGED_EVENT, reloadSettings } from "@/lib/settings-store";
 import { syncFromDB, syncLocalDataToDB, SESSION_EXPIRED_EVENT } from "@/lib/turso-sync";
 import { getStoredStaff, getStoredServices } from "@/lib/storage";
 import { getActiveSection, setActiveSection, getSectionOptions } from "@/lib/sections";
-import { setActiveLocationFilter } from "@/lib/locations";
+import { canManageBranches, getActiveLocationFilter, getBusinessLocations, setActiveLocationFilter, type BusinessLocation } from "@/lib/locations";
 
 // Settings is the one owner-only screen; the four modules are reachable by
 // any staff login whose permission list names them.
 const OWNER_ONLY = ["settings"];
+
+// ─── Branch switcher (Pro — separate physical locations) ─────────────────────
+
+/**
+ * Which branch the whole dashboard is pointed at. Owner-only and Pro-only:
+ * staff and managers are pinned to their assigned branch (both here and in
+ * resolveActor on the server), and a Starter business has just the one.
+ *
+ * Switching reloads rather than re-rendering. Every store is keyed by branch,
+ * so the lists already in memory belong to the branch being left, and the new
+ * one needs its own pull from the shared database before any of it is true —
+ * the section switcher below can get away with a remount because both sections
+ * come out of the same underlying data.
+ */
+function DashboardBranchSwitcher() {
+  const [branches, setBranches] = useState<BusinessLocation[]>([]);
+  const [activeId, setActiveId] = useState("main");
+  const [switching, setSwitching] = useState(false);
+
+  useEffect(() => {
+    function refresh() {
+      const user = getCurrentUser();
+      const canSwitch = (user?.role === "owner" || user?.role === "admin") && canManageBranches();
+      setBranches(canSwitch ? getBusinessLocations() : []);
+      setActiveId(getActiveLocationFilter());
+    }
+    const timer = window.setTimeout(refresh, 0);
+    window.addEventListener(SETTINGS_CHANGED_EVENT, refresh);
+    window.addEventListener(ACCOUNT_REFRESHED_EVENT, refresh);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, refresh);
+      window.removeEventListener(ACCOUNT_REFRESHED_EVENT, refresh);
+    };
+  }, []);
+
+  if (branches.length < 2) return null;
+
+  function changeBranch(id: string) {
+    if (id === activeId) return;
+    setSwitching(true);
+    setActiveLocationFilter(id);
+    window.location.reload();
+  }
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+      margin: "10px 20px 0", padding: "12px 14px",
+      border: "1px solid rgba(234,88,12,0.13)", borderRadius: 16,
+      background: "linear-gradient(135deg, rgba(234,88,12,0.06), rgba(255,255,255,0.95))",
+      boxShadow: "0 10px 28px rgba(70,38,18,0.045)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: 12, display: "grid", placeItems: "center",
+          background: "var(--accent-gradient)", boxShadow: "0 5px 16px var(--accent-glow)", flexShrink: 0,
+        }}>
+          <Building2 size={17} color="#fff" />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 850, color: "var(--accent)", textTransform: "uppercase", letterSpacing: "0.09em" }}>
+            Active Branch
+          </div>
+          <div style={{ fontSize: 12, color: "#777792", fontWeight: 650, marginTop: 2 }}>
+            {switching
+              ? "Loading that branch…"
+              : "Sales, stock, clients and reports all belong to the branch selected here."}
+          </div>
+        </div>
+      </div>
+
+      <select
+        value={activeId}
+        onChange={(e) => changeBranch(e.target.value)}
+        disabled={switching}
+        style={{
+          minWidth: 160, padding: "9px 34px 9px 12px", borderRadius: 12,
+          border: "1px solid #fed7aa", background: "#fff", color: "#1a1a2e",
+          fontSize: 13, fontWeight: 800, outline: "none", cursor: switching ? "default" : "pointer",
+          boxShadow: "0 3px 10px rgba(75,40,20,0.04)",
+        }}
+        aria-label="Select active branch"
+      >
+        {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+      </select>
+    </div>
+  );
+}
 
 // ─── Section switcher (Men's / Women's split within one branch) ───────────────
 
@@ -286,6 +375,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         )}
 
+        <DashboardBranchSwitcher />
         <DashboardSectionSwitcher onSectionChange={handleSectionChange} />
         <div key={sectionRenderKey}>{children}</div>
       </main>

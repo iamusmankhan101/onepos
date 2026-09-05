@@ -1,3 +1,5 @@
+import type { PlanId } from "./plans";
+
 export interface AuthUser {
   id: string;
   ownerName: string;
@@ -11,12 +13,22 @@ export interface AuthUser {
   locationId?: string;
   permissions?: string[];
   approvalStatus?: "pending" | "approved" | "rejected";
+  /**
+   * The business's subscription tier, as the server reported it at sign-in and
+   * on every session check since. Staff logins carry their owner's tier, not
+   * their own row's. Absent on the local demo/seed accounts, which
+   * normalizePlanId() reads as Starter.
+   */
+  plan?: PlanId;
 }
 
 interface StoredUser extends AuthUser {
   password: string;
   emailVerified: boolean;
 }
+
+/** Fired when checkServerSession() pulls down a changed account record (e.g. a new plan). */
+export const ACCOUNT_REFRESHED_EVENT = "pointly_account_refreshed";
 
 const USERS_KEY = "pointly_auth_users";
 const SESSION_KEY = "pointly_auth_session";
@@ -259,7 +271,20 @@ export async function checkServerSession(): Promise<boolean> {
   try {
     const res = await fetch("/api/auth/user", { cache: "no-store", credentials: "same-origin" });
     if (res.status === 401) return false;
-    const data = await res.json() as { ok?: boolean };
+    const data = await res.json() as { ok?: boolean; user?: AuthUser };
+    // The server's copy is authoritative for anything that can change under an
+    // open session — the subscription plan above all, since a business that
+    // has just been moved to Pro should find the branch tools there without
+    // being made to sign out and back in. getCurrentUser() only ever reads
+    // this cache, so refreshing it here is what makes that land.
+    if (data.ok === true && data.user?.id) {
+      const cacheKey = `pointly_user_cache_${data.user.id}`;
+      const next = JSON.stringify(data.user);
+      if (localStorage.getItem(cacheKey) !== next) {
+        localStorage.setItem(cacheKey, next);
+        window.dispatchEvent(new CustomEvent(ACCOUNT_REFRESHED_EVENT));
+      }
+    }
     return data.ok === true;
   } catch {
     // Network hiccup, not a session problem — don't force a sign-out for it.

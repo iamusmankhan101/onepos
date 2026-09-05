@@ -13,18 +13,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowLeft, Building2, Check, Copy, Database, Download,
   KeyRound, LayoutGrid, Loader2, LogOut, MoreVertical, RefreshCw, Search, Shield,
-  ShieldCheck, ShieldOff, Snowflake, Trash2, UserCheck, UserX, Users, X, Zap,
+  ShieldCheck, ShieldOff, Snowflake, Sparkles, Trash2, UserCheck, UserX, Users, X, Zap,
 } from "lucide-react";
 import type { AuditEntry, PlatformStats, PlatformUser } from "@/lib/admin-db";
 import type { AuthUser } from "@/lib/auth-db";
 import { signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
+import { normalizePlanId, PLANS, type PlanId } from "@/lib/plans";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type AdminAction =
   | "freeze" | "unfreeze" | "approve" | "reject" | "revoke-sessions"
-  | "reset-password" | "delete" | "grant-admin" | "revoke-admin";
+  | "reset-password" | "delete" | "grant-admin" | "revoke-admin" | "set-plan";
 
 type RoleFilter = "all" | "owner" | "manager" | "staff" | "admin";
 type StatusFilter = "all" | "active" | "frozen" | "pending" | "rejected";
@@ -105,6 +106,12 @@ const ACTION_LABEL: Record<string, string> = {
   delete: "Deleted account",
   "grant-admin": "Granted admin",
   "revoke-admin": "Removed admin",
+  "set-plan": "Changed plan",
+};
+
+const PLAN_STYLE: Record<PlanId, { label: string; color: string; bg: string }> = {
+  starter: { label: "Starter", color: "#6b6b8a", bg: "#f3f4f6" },
+  pro:     { label: "Pro",     color: "#c2410c", bg: "#fff7ed" },
 };
 
 // ─── Small building blocks ────────────────────────────────────────────────────
@@ -304,7 +311,7 @@ export default function AdminConsolePage() {
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
-  async function runAction(action: AdminAction, targets: PlatformUser[], extra: { reason?: string; password?: string } = {}) {
+  async function runAction(action: AdminAction, targets: PlatformUser[], extra: { reason?: string; password?: string; plan?: PlanId } = {}) {
     if (targets.length === 0) return;
     setBusy(true);
     setMenuFor(null);
@@ -666,6 +673,7 @@ export default function AdminConsolePage() {
                   const role = ROLE_STYLE[user.role] ?? ROLE_STYLE.staff;
                   const isSelf = user.id === adminId;
                   const isTeamLogin = Boolean(user.businessOwnerId);
+                  const plan = PLANS[normalizePlanId(user.plan)];
                   return (
                     <div key={user.id} className="ac-row ac-user-row" style={{ borderBottom: "1px solid #f3f3f9", position: "relative" }}>
                       <input
@@ -704,10 +712,13 @@ export default function AdminConsolePage() {
                         <div style={{ fontSize: 12.5, fontWeight: 700, color: "#43435f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {isTeamLogin ? (user.ownerBusinessName || "—") : (user.businessName || "—")}
                         </div>
-                        <div style={{ fontSize: 11, color: "#a5a5bb", marginTop: 2 }}>
-                          {isTeamLogin
-                            ? `Branch: ${user.locationId || "main"}`
-                            : user.teamSize > 0 ? `${user.teamSize} team login${user.teamSize === 1 ? "" : "s"}` : "No team logins"}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+                          {!isTeamLogin && user.role !== "admin" && <Pill {...PLAN_STYLE[plan.id]} />}
+                          <span style={{ fontSize: 11, color: "#a5a5bb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {isTeamLogin
+                              ? `Branch: ${user.locationId || "main"}`
+                              : user.teamSize > 0 ? `${user.teamSize} team login${user.teamSize === 1 ? "" : "s"}` : "No team logins"}
+                          </span>
                         </div>
                       </div>
 
@@ -796,6 +807,14 @@ export default function AdminConsolePage() {
                               onClick={() => { setResetPassword(""); setIssuedPassword(""); setResetFor(user); setMenuFor(null); }}>
                               <KeyRound size={13} /> Reset password
                             </button>
+
+                            {!isTeamLogin && user.role !== "admin" && (
+                              <button type="button" className="ac-menu-item" disabled={busy}
+                                onClick={() => runAction("set-plan", [user], { plan: plan.id === "pro" ? "starter" : "pro" })}>
+                                <Sparkles size={13} color="#c2410c" />
+                                {plan.id === "pro" ? `Move to ${PLANS.starter.name} plan` : `Move to ${PLANS.pro.name} plan`}
+                              </button>
+                            )}
 
                             <div style={{ height: 1, background: "#f0f0f6", margin: "5px 2px" }} />
 

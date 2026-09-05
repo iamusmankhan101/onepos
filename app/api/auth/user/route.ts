@@ -13,7 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getUserById, isSessionRevoked } from "@/lib/auth-db";
+import { getEffectivePlan, getUserById, isSessionRevoked } from "@/lib/auth-db";
 import { verifySessionToken, COOKIE_NAME, LEGACY_COOKIE_NAME, tokenId } from "@/lib/session";
 
 /** 401 that also clears the dead cookie, so the browser stops re-sending it. */
@@ -65,6 +65,9 @@ export async function GET(req: NextRequest) {
         staffId: user.staffId,
         locationId: user.locationId,
         permissions: user.permissions,
+        // The business's tier, not necessarily this row's: a staff login
+        // inherits its owner's, and the dashboard gates multi-branch on it.
+        plan: await getEffectivePlan(user),
       },
     });
   } catch (err) {

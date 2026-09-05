@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateCredentials } from "@/lib/auth-db";
 import { createSessionToken, COOKIE_NAME, cookieOptions, tokenId } from "@/lib/session";
-import { createDbSession } from "@/lib/auth-db";
+import { createDbSession, getEffectivePlan } from "@/lib/auth-db";
 import { clientIp, rateLimit, rateLimitClear } from "@/lib/rate-limit";
 
 const BLOCK_MS = 30 * 60 * 1000; // 30-minute lockout
@@ -70,6 +70,7 @@ export async function POST(req: NextRequest) {
         staffId: user.staffId,
         locationId: user.locationId,
         permissions: user.permissions,
+        plan: await getEffectivePlan(user),
       },
     });
 
