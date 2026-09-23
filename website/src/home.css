@@ -1112,7 +1112,7 @@ body {
   border-radius: var(--hp-r-xl);
   padding: clamp(48px, 7vw, 76px) 0;
 }
-.hp-bandWrap { padding-inline: var(--hp-gutter); }
+.hp-bandWrap { padding-inline: var(--hp-gutter); padding-block-end: clamp(40px, 5vw, 68px); }
 .hp-band::before {
   content: '';
   position: absolute;
