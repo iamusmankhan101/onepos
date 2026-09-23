@@ -1,7 +1,7 @@
-import HomeNav from './HomeNav.jsx'
 import Ripple from './Ripple.jsx'
 import Till from './Till.jsx'
 import { Arrow } from '../components/Icons.jsx'
+import { whatsAppLink } from './copy.js'
 
 const Info = () => (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -13,25 +13,29 @@ const Info = () => (
 export default function HomeHero() {
   return (
     <section className="hp-hero" id="top">
-      <HomeNav />
-
       <div className="hp-hero__glow" aria-hidden="true" />
       <Ripple className="hp-ripple hp-ripple--l" />
       <Ripple className="hp-ripple hp-ripple--r" />
 
       <div className="hp-shell">
         <h1 className="hp-hero__title">
-          One Ledger For <br />
-          Running Your <em>Whole Business</em>
+          Sell, Stock And Get Paid <br />
+          From <em>One Screen</em>
         </h1>
 
         <p className="hp-hero__sub">
-          Bill, stock and books in one system. Every sale posts its own stock movement and journal
-          entry — without friction or complexity.
+          Pointly is the point of sale for salons, clinics and shops. Ring up services and products,
+          take cash, card or a wallet, and hand over the receipt. Stock, loyalty points and
+          today's profit update themselves.
         </p>
 
         <div className="hp-hero__cta">
-          <a className="hp-btn hp-btn--orange hp-btn--lg" href="#demo">
+          <a
+            className="hp-btn hp-btn--orange hp-btn--lg"
+            href={whatsAppLink("Hi Pointly, I'd like to get started. Can you show me the app?")}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Get Started
             <Arrow />
           </a>
@@ -68,12 +72,8 @@ export default function HomeHero() {
             </div>
 
             <span className="hp-chip hp-chip--b">
-              <span className="hp-faces" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </span>
-              12k+ tills
+              <i aria-hidden="true">●</i>
+              Sells offline
             </span>
 
             <Till />

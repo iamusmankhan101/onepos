@@ -1,12 +1,14 @@
-import { BAND_STATS } from './copy.js'
+import { BAND_STATS, whatsAppLink } from './copy.js'
 import { Arrow, Check } from '../components/Icons.jsx'
 
-// One bill, three consequences — the claim in the headline, shown.
+// One settle at the till, and everything it touches — the claim in the
+// headline, shown. These are the writes a POS sale actually makes.
 const FLOW = [
-  ['Sale posted', 'Rs 5,130 · card', '+0.0s'],
-  ['Stock deducted', '9 SKUs across 4 recipes', '+0.1s'],
-  ['Journal written', 'JV #40118 · sales + tax', '+0.1s'],
-  ['FBR invoice returned', '7742-0093', '+0.8s'],
+  ['Sale settled', 'Rs 5,130 · card', 'now'],
+  ['Stock deducted', '3 product lines', 'now'],
+  ['Invoice filed', 'SI-2026-0148 · paid', 'now'],
+  ['Points credited', '+513 pts · Gold', 'now'],
+  ['Receipt away', 'Printed · sent on WhatsApp', '2s'],
 ]
 
 export default function HomeBand() {
@@ -16,18 +18,26 @@ export default function HomeBand() {
         <div className="hp-band__in">
           <div className="hp-band__grid">
             <div>
+              <p className="hp-band__eyebrow hp-reveal">One tap at the till</p>
+
               <h2 className="hp-band__title hp-reveal">
-                Every bill writes to stock and the ledger in the same second
+                Settle the sale. Everything else is already written.
               </h2>
 
               <p className="hp-band__sub hp-reveal">
-                The till stops being a separate island. Month-end goes from four days of reconciling
-                three systems to one afternoon of reading a report that was already right.
+                The stock count, the invoice, the customer's points and tonight's profit figure all
+                move on the same tap. Nothing is typed twice, and nothing waits for the end of the
+                day to be true.
               </p>
 
-              <div className="hp-close__cta hp-reveal" style={{ justifyContent: 'flex-start', marginTop: 26 }}>
-                <a className="hp-btn hp-btn--white hp-btn--lg" href="#demo">
-                  See it on your data
+              <div className="hp-ctaRow hp-reveal" style={{ justifyContent: 'flex-start', marginTop: 26 }}>
+                <a
+                  className="hp-btn hp-btn--white hp-btn--lg"
+                  href={whatsAppLink("Hi Pointly, I'd like to see it running on my own counter.")}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  See it on your counter
                   <Arrow />
                 </a>
               </div>
@@ -35,9 +45,10 @@ export default function HomeBand() {
 
             <div className="hp-flow hp-reveal">
               <div className="hp-flow__head">
-                <b>Bill #40118</b>
+                <b>Till 02 · Clifton</b>
                 <span>12:04:22</span>
               </div>
+
               {FLOW.map(([title, meta, t]) => (
                 <div className="hp-flow__row" key={title}>
                   <span className="hp-flow__tick" aria-hidden="true">
@@ -50,6 +61,11 @@ export default function HomeBand() {
                   <em>{t}</em>
                 </div>
               ))}
+
+              <div className="hp-flow__foot">
+                <span className="hp-flow__pulse" aria-hidden="true" />
+                Saved on this device, synced to the cloud
+              </div>
             </div>
           </div>
 

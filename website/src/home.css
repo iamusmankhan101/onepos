@@ -97,7 +97,7 @@ body {
   padding-inline: var(--hp-gutter);
 }
 
-.hp-sec { position: relative; padding-block: clamp(64px, 9vw, 112px); }
+.hp-sec { position: relative; padding-block: clamp(40px, 5vw, 68px); }
 .hp [id] { scroll-margin-top: 88px; }
 
 .hp-h {
@@ -195,12 +195,24 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 9px;
+  line-height: 0;
   color: #fff;
   font-family: var(--hp-display);
   font-size: 1.0625rem;
   font-weight: 600;
   letter-spacing: -0.03em;
 }
+/* The supplied lockup is white on transparency, so it rides on the dark nav and
+   footer as-is. Height is set, width follows the 965x362 artwork. */
+.hp-lockup {
+  display: block;
+  height: 38px;
+  width: auto;
+  transition: height 0.3s;
+}
+.hp-nav--stuck .hp-lockup { height: 31px; }
+.hp-lockup--foot { height: 46px; }
+
 .hp-nav__badge {
   width: 26px;
   height: 26px;
@@ -585,7 +597,7 @@ body {
 /* ============================================================
    Features — centred head + card canvas
    ============================================================ */
-.hp-head { text-align: center; max-width: 620px; margin: 0 auto clamp(34px, 5vw, 52px); }
+.hp-head { text-align: center; max-width: 620px; margin: 0 auto clamp(28px, 3.6vw, 42px); }
 .hp-head h2 {
   font-family: var(--hp-display);
   font-size: clamp(1.75rem, 3.8vw, 2.5rem);
@@ -777,6 +789,282 @@ body {
 .hp-pop__meter { margin-top: 10px; height: 6px; border-radius: 4px; background: var(--hp-line-2); overflow: hidden; }
 .hp-pop__meter i { display: block; height: 100%; width: 72%; border-radius: 4px; background: var(--hp-grad-hot); }
 
+/* receipt card */
+.hp-rcpt { display: flex; flex-direction: column; gap: 9px; }
+.hp-rcpt__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--hp-line);
+  font-size: 0.6875rem;
+}
+.hp-rcpt__head b { font-family: var(--hp-mono); font-weight: 600; letter-spacing: -0.01em; }
+.hp-rcpt__head span { color: var(--hp-o-deep); background: var(--hp-o-tint); border-radius: 999px; padding: 3px 9px; }
+.hp-rcpt__line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 0.75rem;
+  color: var(--hp-ink-2);
+}
+.hp-rcpt__line span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hp-rcpt__line i { font-style: normal; font-size: 0.6875rem; color: var(--hp-ink-4); }
+.hp-rcpt__line b { font-family: var(--hp-mono); font-weight: 500; color: var(--hp-ink); }
+.hp-rcpt__total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--hp-line);
+  font-size: 0.75rem;
+  color: var(--hp-ink-3);
+}
+.hp-rcpt__total b {
+  font-family: var(--hp-display);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  color: var(--hp-ink);
+}
+.hp-rcpt__code { display: flex; align-items: flex-end; gap: 2px; height: 34px; margin-top: 6px; }
+.hp-rcpt__code i { display: block; flex: 1 1 0; height: 100%; background: transparent; }
+.hp-rcpt__code i.bar { background: var(--hp-ink); }
+.hp-rcpt__code i.wide { flex-grow: 2.6; }
+
+.hp-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 18px; }
+.hp-tags span {
+  font-size: 0.6875rem;
+  color: var(--hp-ink-2);
+  border: 1px solid var(--hp-line);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+/* loyalty card */
+.hp-tiers { margin-top: 20px; display: flex; flex-direction: column; gap: 13px; }
+.hp-tier__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.6875rem;
+  color: var(--hp-ink-4);
+}
+.hp-tier__row b { font-size: 0.75rem; font-weight: 600; color: var(--hp-ink); }
+.hp-tier__meter { margin-top: 6px; height: 6px; border-radius: 4px; background: var(--hp-line-2); overflow: hidden; }
+.hp-tier__meter i { display: block; height: 100%; border-radius: 4px; background: var(--hp-grad-hot); }
+
+/* ============================================================
+   Screens — real screenshots of the running app, in a tabbed frame
+   ============================================================ */
+.hp-shots__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+.hp-shots__tab {
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--hp-line);
+  background: #fff;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--hp-ink-2);
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
+}
+.hp-shots__tab:hover { border-color: var(--hp-o-pale); color: var(--hp-ink); }
+.hp-shots__tab.is-on {
+  color: #fff;
+  background: var(--hp-grad-hot);
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(242, 104, 31, 0.28);
+}
+
+.hp-shots__frame {
+  border: 1px solid var(--hp-line);
+  border-radius: var(--hp-r-lg);
+  background: var(--hp-canvas);
+  overflow: hidden;
+  box-shadow: 0 30px 70px rgba(28, 16, 8, 0.13);
+}
+.hp-shots__bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--hp-line);
+  background: #fff;
+}
+.hp-shots__bar i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--hp-line);
+}
+.hp-shots__bar i:first-child { background: var(--hp-o-pale); }
+.hp-shots__bar span {
+  margin-left: 10px;
+  font-family: var(--hp-mono);
+  font-size: 0.6875rem;
+  color: var(--hp-ink-4);
+}
+.hp-shots__img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 8 / 5;   /* reserved before the file lands, so nothing jumps */
+  object-fit: cover;
+  object-position: top left;
+  background: var(--hp-canvas);
+  animation: hp-shot-in 0.45s ease both;
+}
+@keyframes hp-shot-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.hp-shots__cap {
+  display: grid;
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px 32px;
+  align-items: baseline;
+  margin-top: 22px;
+  padding-inline: 4px;
+}
+.hp-shots__cap h3 {
+  font-family: var(--hp-display);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+.hp-shots__cap p {
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--hp-ink-3);
+  max-width: 62ch;
+}
+
+/* ============================================================
+   Pricing — three tiers, the middle one carried
+   ============================================================ */
+.hp-plans {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  align-items: stretch;   /* all three cards run to the tallest */
+}
+.hp-plan {
+  display: flex;
+  flex-direction: column;
+  padding: 30px 28px 32px;
+  border: 1px solid var(--hp-line);
+  border-radius: var(--hp-r-lg);
+  background: #fff;
+  transition: border-color 0.3s, box-shadow 0.3s, transform 0.3s;
+}
+.hp-plan:hover { border-color: var(--hp-o-pale); box-shadow: var(--hp-shadow); transform: translateY(-3px); }
+
+/* The carried tier is the orange one. */
+.hp-plan--hot {
+  border-color: transparent;
+  /* grad-hot rather than grad-band: it stays deep across the whole card, so
+     white body text keeps its contrast down the right-hand edge. */
+  background: var(--hp-grad-hot);
+  color: #fff;
+  box-shadow: 0 26px 60px rgba(120, 38, 4, 0.3);
+}
+.hp-plan--hot .hp-plan__top { border-bottom-color: rgba(255, 255, 255, 0.28); }
+.hp-plan--hot .hp-plan__blurb { color: rgba(255, 255, 255, 0.9); }
+.hp-plan--hot .hp-plan__price small { color: rgba(255, 255, 255, 0.86); }
+.hp-plan--hot .hp-plan__price span { color: rgba(255, 255, 255, 0.72); }
+.hp-plan--hot .hp-plan__lead { color: rgba(255, 255, 255, 0.78); }
+.hp-plan--hot .hp-plan__list li { color: rgba(255, 255, 255, 0.94); }
+
+.hp-plan__top { border-bottom: 1px solid var(--hp-line-2); padding-bottom: 22px; }
+.hp-plan h3 {
+  font-family: var(--hp-display);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+.hp-plan__blurb {
+  margin-top: 8px;
+  min-height: 3.4em;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: var(--hp-ink-3);
+}
+.hp-plan__price {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 18px;
+  font-family: var(--hp-display);
+  font-size: clamp(1.9rem, 3.4vw, 2.4rem);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+.hp-plan__price small {
+  font-family: var(--hp-body);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--hp-ink-3);
+}
+.hp-plan__price span {
+  font-family: var(--hp-body);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--hp-ink-4);
+}
+
+.hp-plan__cta { width: 100%; justify-content: center; margin-top: 22px; }
+
+.hp-plan__lead {
+  margin-top: 24px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hp-ink-4);
+}
+.hp-plan__list { flex: 1; margin-top: 14px; display: flex; flex-direction: column; gap: 11px; }
+.hp-plan__list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--hp-ink-2);
+}
+.hp-plan__tick {
+  flex: none;
+  margin-top: 1px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--hp-o-deep);
+  background: var(--hp-o-tint);
+}
+.hp-plan--hot .hp-plan__tick { color: var(--hp-o-deep); background: #fff; }
+
+.hp-plans__foot {
+  margin-top: 26px;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--hp-ink-4);
+}
+
 /* ============================================================
    Modules
    ============================================================ */
@@ -880,10 +1168,23 @@ body {
 .hp-flow__head b { font-family: var(--hp-display); font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.02em; }
 .hp-flow__head span { font-family: var(--hp-mono); font-size: 0.6875rem; color: rgba(255, 255, 255, 0.78); }
 .hp-flow__row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 11px;
   padding-top: 13px;
+}
+/* the rail: joins each tick to the one above, so the rows read as one sequence
+   rather than four unrelated ticks */
+.hp-flow__row + .hp-flow__row::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 0;
+  width: 2px;
+  height: 13px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.34);
 }
 .hp-flow__tick {
   flex: none;
@@ -904,6 +1205,45 @@ body {
   font-family: var(--hp-mono);
   font-size: 0.6875rem;
   color: rgba(255, 255, 255, 0.78);
+}
+
+.hp-flow__foot {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 16px;
+  padding-top: 13px;
+  border-top: 1px solid rgba(255, 255, 255, 0.24);
+  font-size: 0.6875rem;
+  color: rgba(255, 255, 255, 0.82);
+}
+.hp-flow__pulse {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6);
+  animation: hp-pulse 2.4s ease-out infinite;
+}
+@keyframes hp-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.55); }
+  70% { box-shadow: 0 0 0 7px rgba(255, 255, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+}
+
+.hp-band__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 5px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .hp-band__title {
@@ -948,39 +1288,7 @@ body {
 /* ============================================================
    Closing CTA
    ============================================================ */
-.hp-close { position: relative; text-align: center; overflow: hidden; }
-.hp-close__wash {
-  position: absolute;
-  inset: -30% -10% -10%;
-  z-index: 0;
-  pointer-events: none;
-  filter: blur(54px);
-  background:
-    radial-gradient(34% 44% at 26% 62%, rgba(255, 193, 145, 0.7), transparent 72%),
-    radial-gradient(38% 48% at 54% 76%, rgba(242, 104, 31, 0.45), transparent 74%),
-    radial-gradient(32% 42% at 80% 58%, rgba(255, 192, 97, 0.6), transparent 74%);
-  -webkit-mask-image: linear-gradient(180deg, transparent 8%, #000 50%, transparent 96%);
-  mask-image: linear-gradient(180deg, transparent 8%, #000 50%, transparent 96%);
-}
-.hp-close .hp-shell { position: relative; z-index: 1; }
-.hp-close h2 {
-  font-family: var(--hp-display);
-  font-size: clamp(1.9rem, 4.4vw, 3rem);
-  font-weight: 600;
-  line-height: 1.12;
-  letter-spacing: -0.035em;
-  max-width: 17ch;
-  margin-inline: auto;
-  text-wrap: balance;
-}
-.hp-close p {
-  margin: 16px auto 0;
-  max-width: 46ch;
-  font-size: 0.9375rem;
-  line-height: 1.7;
-  color: var(--hp-ink-2);
-}
-.hp-close__cta { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.hp-ctaRow { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
 
 /* ============================================================
    Footer — dark, bookending the hero
@@ -1055,6 +1363,7 @@ body {
   .hp-pop { left: auto; right: 14px; bottom: 18px; }
 
   .hp-mods { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hp-plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hp-foot__top { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
@@ -1090,6 +1399,20 @@ body {
   .hp-hero { padding-top: 112px; }
   .hp-stat__v { font-size: 1.125rem; }
   .hp-mods { grid-template-columns: 1fr; }
+  .hp-plans { grid-template-columns: 1fr; }
+  .hp-plan__blurb { min-height: 0; }
+  .hp-shots__cap { grid-template-columns: 1fr; gap: 6px; }
+  .hp-shots__tabs {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+    margin-inline: calc(var(--hp-gutter) * -1);
+    padding-inline: var(--hp-gutter);
+  }
+  .hp-shots__tabs::-webkit-scrollbar { display: none; }
+  .hp-shots__tab { flex: none; }
   .hp-foot__top { grid-template-columns: 1fr; gap: 26px; }
   .hp-btn { width: 100%; }
   .hp-nav__end .hp-btn { width: auto; }
@@ -1101,6 +1424,8 @@ body {
   .hp-hero__glow,
   .hp-band::before,
   .hp-chip,
+  .hp-flow__pulse,
+  .hp-shots__img,
   .hp-stat { animation: none; }
   .hp-reveal { opacity: 1; transform: none; transition: none; }
 }

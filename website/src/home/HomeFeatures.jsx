@@ -1,14 +1,29 @@
 const BARS = [
-  { month: 'September', values: [42, 64], hot: 1 },
-  { month: 'December', values: [58, 88], hot: 1 },
+  { month: 'July', values: [46, 72], hot: 1 },
+  { month: 'August', values: [52, 88], hot: 1 },
 ]
 
 const BOARD_ROWS = [
-  ['Gulberg · Lahore', [1, 1, 0, 1, 0]],
-  ['Clifton · Karachi', [1, 1, 1, 0, 0]],
-  ['F-7 · Islamabad', [1, 0, 1, 1, 1]],
-  ['Saddar · Karachi', [1, 1, 0, 0, 1]],
-  ['DHA · Lahore', [1, 0, 0, 1, 0]],
+  ['Gulberg · Lahore', [1, 1, 1, 1, 0]],
+  ['Clifton · Karachi', [1, 1, 1, 0, 1]],
+  ['F-7 · Islamabad', [1, 1, 0, 1, 1]],
+  ['Saddar · Karachi', [1, 1, 1, 1, 0]],
+  ['DHA · Lahore', [1, 0, 1, 1, 1]],
+]
+
+const RECEIPT_LINES = [
+  ['Haircut & beard trim', '1', '1,800'],
+  ['Keune shampoo 250ml', '2', '2,400'],
+  ['Colour touch-up', '1', '3,500'],
+]
+
+// Code 39 element widths: n = narrow, w = wide; even positions are bars, odd are gaps.
+const BARCODE = 'nwnnwnwnnwnnwnnnnwnnwwnnnnwnwnnwnwnnnwnnwnnwwnnnwnwnnwnnwnwnnwnwnn'
+
+const TIERS = [
+  ['Silver', 'Rs 25k spent · reached', 100],
+  ['Gold', 'Rs 80k spent · reached', 100],
+  ['Platinum', 'Rs 200k spent · 54% there', 54],
 ]
 
 export default function HomeFeatures() {
@@ -17,33 +32,37 @@ export default function HomeFeatures() {
       <div className="hp-shell">
         <div className="hp-head hp-reveal">
           <h2>
-            Powerful Features
+            Everything The Counter Does
             <br />
-            Built For Smarter Retail
+            On One Screen
           </h2>
           <p>
-            Everything you need to bill, stock and reconcile — securely and efficiently — from one
-            platform.
+            Ring up the sale, print the receipt, move the stock, credit the points and post the
+            profit, from a single tap on a single login.
           </p>
         </div>
 
         <div className="hp-grid">
           {/* --- sales line chart --- */}
           <article className="hp-card hp-reveal">
-            <h3>Innovative Counter Tools</h3>
-            <p>Modern tools that make the day's decisions obvious, not arithmetic.</p>
+            <h3>A sale takes one screen</h3>
+            <p>
+              Services and products in one cart. Scan a barcode, discount a line, split the payment
+              across cash, card, JazzCash, EasyPaisa or Raast, or put it on credit.
+            </p>
 
             <div className="hp-panel">
               <div className="hp-panel__top">
                 <div>
-                  <p className="hp-panel__k">Sold this day</p>
+                  <p className="hp-panel__k">Taken today · 84 sales</p>
                   <p className="hp-panel__v">Rs 287,650</p>
                 </div>
+                <span className="hp-panel__sel">Live</span>
               </div>
 
               <div className="hp-spark">
-                <span className="hp-spark__tip">89.75%</span>
-                <svg viewBox="0 0 320 110" preserveAspectRatio="none" role="img" aria-label="Daily sales trend, peaking mid-month">
+                <span className="hp-spark__tip">Busiest hour · 7pm</span>
+                <svg viewBox="0 0 320 110" preserveAspectRatio="none" role="img" aria-label="Sales through the day, peaking in the evening">
                   <defs>
                     <linearGradient id="hpFill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#f2681f" stopOpacity="0.30" />
@@ -70,18 +89,21 @@ export default function HomeFeatures() {
             </div>
           </article>
 
-          {/* --- outlet bar chart --- */}
+          {/* --- profit bar chart --- */}
           <article className="hp-card hp-reveal">
-            <h3>Scalable Infrastructure</h3>
-            <p>Built to hold growing transaction volumes without losing a beat at the counter.</p>
+            <h3>Profit, not just takings</h3>
+            <p>
+              Log rent, salaries, utilities and supplies against the month they belong to. Revenue
+              reports the difference, split by payment channel.
+            </p>
 
             <div className="hp-panel">
               <div className="hp-panel__top">
                 <div>
                   <p className="hp-panel__v" style={{ fontSize: '1rem' }}>
-                    Sales Statistics
+                    Income vs expenses
                   </p>
-                  <p className="hp-panel__k">Updated 1 day ago</p>
+                  <p className="hp-panel__k">Last two months</p>
                 </div>
                 <span className="hp-panel__sel">
                   Monthly
@@ -111,32 +133,122 @@ export default function HomeFeatures() {
               </div>
 
               <p className="hp-panel__k" style={{ marginTop: 14 }}>
-                Bills
+                Net profit in August
               </p>
-              <p className="hp-panel__v">26,954</p>
+              <p className="hp-panel__v">Rs 1,204,900</p>
             </div>
           </article>
 
-          {/* --- wide insight card --- */}
+          {/* --- receipt card --- */}
+          <article className="hp-card hp-reveal">
+            <h3>Receipt in their hand before they leave</h3>
+            <p>
+              An 80mm till roll with your logo and a scannable Code 39 number. Print it, send the PDF
+              on WhatsApp, or fire it straight at a LAN thermal printer.
+            </p>
+
+            <div className="hp-panel">
+              <div className="hp-rcpt">
+                <div className="hp-rcpt__head">
+                  <b>Invoice SI-2026-0148</b>
+                  <span>Paid · Card</span>
+                </div>
+
+                {RECEIPT_LINES.map(([name, qty, amount]) => (
+                  <div className="hp-rcpt__line" key={name}>
+                    <span>{name}</span>
+                    <i>×{qty}</i>
+                    <b>{amount}</b>
+                  </div>
+                ))}
+
+                <div className="hp-rcpt__total">
+                  <span>Total</span>
+                  <b>Rs 7,700</b>
+                </div>
+
+                <div className="hp-rcpt__code" aria-hidden="true">
+                  {BARCODE.split('').map((c, i) => (
+                    <i
+                      key={i}
+                      className={`${i % 2 === 0 ? 'bar' : ''}${c === 'w' ? ' wide' : ''}`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="hp-tags">
+                <span>Print</span>
+                <span>WhatsApp</span>
+                <span>PDF</span>
+                <span>Thermal</span>
+              </div>
+            </div>
+          </article>
+
+          {/* --- loyalty card --- */}
+          <article className="hp-card hp-reveal">
+            <h3>Loyalty that runs itself</h3>
+            <p>
+              Points earn on every sale at the rate you set and redeem at the till. Tiers move on
+              their own as lifetime spend crosses your thresholds.
+            </p>
+
+            <div className="hp-panel">
+              <div className="hp-panel__top">
+                <div>
+                  <p className="hp-panel__k">Ayesha K. · 24 visits</p>
+                  <p className="hp-panel__v">1,840 pts</p>
+                </div>
+                <span className="hp-panel__sel">Gold</span>
+              </div>
+
+              <div className="hp-tiers">
+                {TIERS.map(([name, rule, pct]) => (
+                  <div className="hp-tier" key={name}>
+                    <div className="hp-tier__row">
+                      <b>{name}</b>
+                      <span>{rule}</span>
+                    </div>
+                    <div className="hp-tier__meter">
+                      <i style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <p className="hp-panel__k" style={{ marginTop: 'auto', paddingTop: 16 }}>
+                Redeemed at this counter this month
+              </p>
+              <p className="hp-panel__v" style={{ fontSize: '1.25rem' }}>
+                Rs 62,400
+              </p>
+            </div>
+          </article>
+
+          {/* --- wide branches card --- */}
           <article className="hp-card hp-card--wide hp-reveal">
             <div className="hp-wide">
               <div className="hp-wide__copy">
                 <h3>
-                  Insights That Drive Better
+                  Up To Twenty Branches
                   <br />
-                  Decisions &amp; Smarter Choices
+                  On One Login
                 </h3>
-                <p>Clear, data-backed reporting across every outlet.</p>
+                <p>
+                  Each branch keeps its own stock, staff, clients and takings. Switch between them
+                  without signing out, and pin a staff login to the branch they actually work at.
+                </p>
               </div>
 
               <div className="hp-wide__art">
                 <div className="hp-board">
                   <div className="hp-board__bar">
-                    <b>Outlets</b>
-                    <span>Sales</span>
+                    <b>Branch</b>
+                    <span>POS</span>
                     <span>Stock</span>
-                    <span>Ledger</span>
-                    <span>Tax</span>
+                    <span>Staff</span>
+                    <span>Reports</span>
                   </div>
                   {BOARD_ROWS.map(([name, cells]) => (
                     <div className="hp-board__row" key={name}>
@@ -149,9 +261,9 @@ export default function HomeFeatures() {
                 </div>
 
                 <div className="hp-pop">
-                  <p className="hp-pop__k">Active tills</p>
+                  <p className="hp-pop__k">Offline queue</p>
                   <p className="hp-pop__v">
-                    258 <small>right now</small>
+                    Synced <small>a moment ago</small>
                   </p>
                   <div className="hp-pop__meter" aria-hidden="true">
                     <i />

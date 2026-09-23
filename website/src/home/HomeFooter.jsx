@@ -6,17 +6,18 @@ export default function HomeFooter() {
       <div className="hp-shell">
         <div className="hp-foot__top">
           <div>
-            <a className="hp-nav__mark" href="#top">
-              <span className="hp-nav__badge" aria-hidden="true">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M6 18L12 7l6 11" />
-                </svg>
-              </span>
-              Pointly
+            <a className="hp-nav__mark" href="#top" aria-label="Pointly, back to top">
+              <img
+                className="hp-lockup hp-lockup--foot"
+                src="/pointly-lockup.png"
+                width="965"
+                height="362"
+                alt="Pointly, powered by Salon Central"
+              />
             </a>
             <p className="hp-foot__blurb">
-              POS, inventory and accounting on one ledger — for restaurant groups, salon chains and
-              clinics across Pakistan.
+              The point of sale for salons, clinics and shops across Pakistan. Selling, stock,
+              clients and takings on one login.
             </p>
           </div>
 
@@ -37,7 +38,7 @@ export default function HomeFooter() {
         <div className="hp-foot__rule" aria-hidden="true" />
 
         <div className="hp-foot__base">
-          <span>© {new Date().getFullYear()} Pointly · Powered by Salon Central</span>
+          <span>© {new Date().getFullYear()} Pointly</span>
           <span>Karachi · Lahore · Islamabad</span>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NAV } from './copy.js'
+import { NAV, whatsAppLink } from './copy.js'
 
 export default function HomeNav() {
   const [stuck, setStuck] = useState(false)
@@ -30,13 +30,14 @@ export default function HomeNav() {
     <header className={`hp-nav${stuck ? ' hp-nav--stuck' : ''}${open ? ' hp-nav--open' : ''}`}>
       <div className="hp-shell">
         <div className="hp-nav__row">
-          <a className="hp-nav__mark" href="#top" aria-label="Pointly — home">
-            <span className="hp-nav__badge" aria-hidden="true">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6 18L12 7l6 11" />
-              </svg>
-            </span>
-            Pointly
+          <a className="hp-nav__mark" href="#top" aria-label="Pointly, back to top">
+            <img
+              className="hp-lockup"
+              src="/pointly-lockup.png"
+              width="965"
+              height="362"
+              alt="Pointly, powered by Salon Central"
+            />
           </a>
 
           <nav className="hp-nav__links" aria-label="Primary">
@@ -48,7 +49,12 @@ export default function HomeNav() {
           </nav>
 
           <div className="hp-nav__end">
-            <a className="hp-btn hp-btn--white hp-btn--sm" href="#demo">
+            <a
+              className="hp-btn hp-btn--white hp-btn--sm"
+              href={whatsAppLink('Hi Pointly, I have a question about the point of sale.')}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               Contact Us
             </a>
             <button
@@ -70,7 +76,12 @@ export default function HomeNav() {
                   {l.label}
                 </a>
               ))}
-              <a href="#demo" onClick={() => setOpen(false)}>
+              <a
+                href={whatsAppLink('Hi Pointly, I have a question about the point of sale.')}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setOpen(false)}
+              >
                 Contact Us
               </a>
             </nav>

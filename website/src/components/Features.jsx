@@ -13,10 +13,10 @@ export default function Features() {
             </span>
           </div>
           <h2>
-            Six modules. One login. <span className="nowrap">No re-entry.</span>
+            Nine modules. One login. <span className="nowrap">No re-entry.</span>
           </h2>
           <p>
-            Everything a multi-outlet operator needs between the counter and the closing balance.
+            Everything a counter needs between the first sale of the day and the closing balance.
           </p>
         </div>
 

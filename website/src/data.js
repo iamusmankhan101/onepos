@@ -20,7 +20,7 @@ export const NARRATIVE = [
   {
     num: '01',
     kicker: 'The problem',
-    title: 'Three systems, one truth — and none agree',
+    title: 'Three systems, one truth, and none agree',
     body: 'The till says one number, the stock register another, the auditor a third. Month-end becomes an argument instead of a report.',
   },
   {
@@ -123,34 +123,49 @@ export const INDUSTRIES = [
 
 export const FEATURES = [
   {
-    title: 'Offline-first till',
-    body: 'Bills keep printing through outages; the queue syncs itself the moment the line returns.',
+    title: 'Point of sale',
+    body: 'Services and products in one cart. Scan a barcode, apply a discount, split the payment across cash, card, JazzCash, EasyPaisa or Raast, or put it on credit.',
     icon: 'bolt',
   },
   {
-    title: 'Batch & expiry',
-    body: 'FIFO picking and expiry alerts land before stock turns dead on the shelf.',
+    title: 'Products & stock',
+    body: 'Catalogue with cost and retail price, units, photos and barcodes. Low-stock and out-of-stock flags, a restock list, and Excel or CSV import and export.',
     icon: 'box',
   },
   {
-    title: 'FBR integration',
-    body: 'Live invoice numbers pushed to FBR, with returns filed straight from posted documents.',
+    title: 'Invoices & receipts',
+    body: 'Every sale files itself as a numbered invoice. Print an 80mm till roll with a Code 39 barcode, send the PDF over WhatsApp, or push it to a LAN thermal printer.',
+    icon: 'receipt',
+  },
+  {
+    title: 'Clients & loyalty',
+    body: 'Visit count, spend and notes on every customer. Points earn on each sale and redeem at the till, with Bronze to Platinum tiers set by your own thresholds.',
+    icon: 'star',
+  },
+  {
+    title: 'Revenue & cash flow',
+    body: 'Takings, expenses by category and real net profit, split by payment channel. Log cash income and bills, then export the period as a PDF report.',
+    icon: 'chart',
+  },
+  {
+    title: 'Staff & access',
+    body: 'Team list with roles, commission or salary pay, paid leave and per-person revenue. Each login opens only the modules you tick for it.',
+    icon: 'users',
+  },
+  {
+    title: 'Branches & sections',
+    body: 'Run up to 20 locations from one account, each with its own stock, staff, clients and takings. Switch branch without signing out, or split one floor into sections.',
+    icon: 'store',
+  },
+  {
+    title: 'Works offline, syncs itself',
+    body: 'The till keeps selling on a dead connection because it reads and writes locally first, then syncs to the cloud, deletes included, so nothing comes back.',
+    icon: 'cloud',
+  },
+  {
+    title: 'Safe by default',
+    body: 'Signed-in staff logins, rate-limited sign-in, an audit trail on the admin console, and a backup taken before every write your data can be restored from.',
     icon: 'shield',
-  },
-  {
-    title: 'Vendor ledger',
-    body: 'PO to GRN to bill, three-way matched — with vendor ageing you can actually act on.',
-    icon: 'ledger',
-  },
-  {
-    title: 'Audit trail',
-    body: 'Every void, discount and price edit is signed by a staff login. Nothing moves anonymously.',
-    icon: 'trail',
-  },
-  {
-    title: 'Open API',
-    body: 'Webhooks and REST for aggregators, loyalty and payroll — plus QuickBooks and Xero exports.',
-    icon: 'api',
   },
 ]
 
@@ -218,7 +233,7 @@ export const FAQS = [
   },
   {
     q: 'Which hardware does it run on?',
-    a: 'Android tablets, Windows tills or the Pointly terminal. Printers, scanners, scales and cash drawers auto-detect — if it speaks ESC/POS, it works.',
+    a: 'Android tablets, Windows tills or the Pointly terminal. Printers, scanners, scales and cash drawers auto-detect. If it speaks ESC/POS, it works.',
   },
   {
     q: 'Do auditors get their own access?',
@@ -226,7 +241,7 @@ export const FAQS = [
   },
   {
     q: 'How does FBR integration actually work?',
-    a: 'Pointly registers each invoice with FBR at the moment of sale and prints the returned invoice number on the receipt. Sales tax returns are then generated from those same posted documents — no separate workbook.',
+    a: 'Pointly registers each invoice with FBR at the moment of sale and prints the returned invoice number on the receipt. Sales tax returns are then generated from those same posted documents, with no separate workbook.',
   },
 ]
 

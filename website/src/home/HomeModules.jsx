@@ -7,10 +7,10 @@ export default function HomeModules() {
       <div className="hp-shell">
         <div className="hp-head hp-reveal">
           <p className="hp-label">The platform</p>
-          <h2 style={{ marginTop: 12 }}>Six modules, one system of record</h2>
+          <h2 style={{ marginTop: 12 }}>Nine modules, one system of record</h2>
           <p>
-            Turn on what you need today. Everything you add later reads from the same ledger, so the
-            numbers never fork.
+            Everything reads and writes the same records, so a sale at the till is already in the
+            stock count, the client's history and tonight's profit figure.
           </p>
         </div>
 

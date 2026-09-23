@@ -1,9 +1,10 @@
-// CSS-built stand-in for the hero product shot. Swap for a real
-// screenshot when one exists.
+// CSS-built stand-in for the hero product shot — the real screens are further
+// down the page in HomeScreens.jsx. Keep the figures here matching that POS
+// screenshot so the two never contradict each other.
 const LINES = [
-  ['Chicken Karahi · full', 'Hot line', '2 × 1,450'],
-  ['Garlic naan', 'Tandoor', '4 × 120'],
-  ['Mint margarita', 'Bar', '2 × 390'],
+  ['Root touch-up', 'Service · Hina', '1 × 5,500'],
+  ['Hydra facial', 'Service · Ayesha', '1 × 8,500'],
+  ['Care shampoo 250ml', 'Product · 24 left', '1 × 2,600'],
 ]
 
 export default function Till() {
@@ -37,17 +38,17 @@ export default function Till() {
 
         <div className="hp-till__side">
           <div className="hp-till__row">
-            Subtotal <span>4,240</span>
+            Subtotal <span>16,600</span>
           </div>
           <div className="hp-till__row">
-            Sales tax 16% <span>678</span>
+            Points · 1,845 <span>-1,845</span>
           </div>
           <div className="hp-till__total">
             <b>Due</b>
-            <span>Rs 5,130</span>
+            <span>Rs 14,755</span>
           </div>
           <div className="hp-till__charge">Charge</div>
-          <p className="hp-till__post">Posts to stock + ledger on settle</p>
+          <p className="hp-till__post">Stock, points and profit move on settle</p>
         </div>
       </div>
     </div>
