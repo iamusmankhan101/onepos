@@ -1,6 +1,7 @@
 import HomeNav from './HomeNav.jsx'
 import HomeHero from './HomeHero.jsx'
 import HomeFeatures from './HomeFeatures.jsx'
+import HomeServices from './HomeServices.jsx'
 import HomeModules from './HomeModules.jsx'
 import HomeScreens from './HomeScreens.jsx'
 import HomePricing from './HomePricing.jsx'
@@ -18,6 +19,7 @@ export default function Home() {
       <main>
         <HomeHero />
         <HomeFeatures />
+        <HomeServices />
         <HomeModules />
         <HomeScreens />
         <HomePricing />
