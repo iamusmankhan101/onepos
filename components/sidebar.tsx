@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   UserCog, BarChart3, Banknote, Settings, ReceiptText, ShoppingCart, Package, Users,
-  X, LogOut, ChevronDown, Shield,
+  X, LogOut, ChevronDown, Shield, Gift,
 } from "lucide-react";
 import { AuthUser, getCurrentUser, signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
@@ -21,6 +21,7 @@ const NAV_GROUPS: {
       { href: "/dashboard/pos",      icon: ShoppingCart, label: "POS"      },
       { href: "/dashboard/products", icon: Package,      label: "Products" },
       { href: "/dashboard/clients",  icon: Users,        label: "Clients"  },
+      { href: "/dashboard/loyalty",  icon: Gift,         label: "Loyalty"  },
       { href: "/dashboard/invoices", icon: ReceiptText,  label: "Invoices" },
     ],
   },

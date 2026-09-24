@@ -5,7 +5,7 @@ import { getStaffUsersForOwner, getUserById, upsertStaffUser } from "@/lib/auth-
 const STAFF_PERMISSIONS = ["dashboard", "calendar", "appointments", "clients", "pos", "invoices"];
 const MANAGER_PERMISSIONS = ["*"];
 const ALL_PERMISSION_KEYS = new Set([
-  "dashboard", "calendar", "appointments", "clients", "pos", "invoices", "loyalty",
+  "dashboard", "calendar", "appointments", "clients", "pos", "products", "invoices", "loyalty",
   "revenue", "cash-flow", "inventory", "services", "staff", "messages", "try-on",
   "account", "billing",
 ]);

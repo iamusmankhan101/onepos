@@ -7,6 +7,7 @@ only the point-of-sale side of the product:
 | --- | --- | --- |
 | **Products** | `/dashboard/products` | The POS catalogue — add/edit products, categories, stock levels, cost and selling price, barcodes, Excel/CSV import & export, restock list |
 | **POS** | `/dashboard/pos` | Catalogue (services + products), barcode scanning, cart, discounts, loyalty redeem, split payment methods, credit sales, receipt printing, WhatsApp receipt |
+| **Loyalty** | `/dashboard/loyalty` | Loyalty programme on/off, earning and redemption rates, tier thresholds; client leaderboard by tier; per-client points history, manual add/redeem, and a printable digital loyalty card. Points are earned and redeemed at the POS, and every branch keeps its own points |
 | **Invoices** | `/dashboard/invoices` | Every sale as an invoice — search, filter, edit, mark paid, print, PDF |
 | **Receipts** | — | Printed and PDF output is an 80mm till-roll receipt (not A4): shop header, items, totals, a Code 39 barcode of the receipt number, and the Pointly mark. `@page { size: 80mm auto }` for the browser; `lib/invoice-pdf.tsx` computes the page height from the content so a receipt is never a second page or a tail of blank paper. LAN thermal printers go through `/api/print` (ESC/POS) |
 | **Revenue** | `/dashboard/revenue` | Revenue, expenses, net profit, channel split, month drill-down, PDF report |

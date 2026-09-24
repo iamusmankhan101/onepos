@@ -32,6 +32,7 @@ const PERMISSION_OPTIONS = [
   { key: "pos",       label: "POS"       },
   { key: "products",  label: "Products"  },
   { key: "clients",   label: "Clients"   },
+  { key: "loyalty",   label: "Loyalty"   },
   { key: "invoices",  label: "Invoices"  },
   { key: "revenue",   label: "Revenue"   },
   { key: "cash-flow", label: "Cash Flow" },
