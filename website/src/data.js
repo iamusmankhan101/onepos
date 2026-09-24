@@ -121,51 +121,71 @@ export const INDUSTRIES = [
   },
 ]
 
+// `body` is the long copy (legacy page); `short` and `tags` feed the homepage
+// module grid in home/HomeModules.jsx.
 export const FEATURES = [
   {
     title: 'Point of sale',
     body: 'Services and products in one cart. Scan a barcode, apply a discount, split the payment across cash, card, JazzCash, EasyPaisa or Raast, or put it on credit.',
     icon: 'bolt',
+    short: 'Services and products in one cart, paid by cash, card, JazzCash, EasyPaisa or Raast, or on credit.',
+    tags: ['Barcode scan', 'Split payment', 'Credit sales'],
   },
   {
     title: 'Products & stock',
     body: 'Catalogue with cost and retail price, units, photos and barcodes. Low-stock and out-of-stock flags, a restock list, and Excel or CSV import and export.',
     icon: 'box',
+    short: 'Cost and retail price, units, photos and barcodes, with a flag before anything runs out.',
+    tags: ['Low-stock flags', 'Restock list', 'Excel import'],
   },
   {
     title: 'Invoices & receipts',
     body: 'Every sale files itself as a numbered invoice. Print an 80mm till roll with a Code 39 barcode, send the PDF over WhatsApp, or push it to a LAN thermal printer.',
     icon: 'receipt',
+    short: 'Every sale files itself as a numbered invoice, printed or sent the moment it settles.',
+    tags: ['80mm till roll', 'WhatsApp PDF', 'Thermal'],
   },
   {
     title: 'Clients & loyalty',
     body: 'Visit count, spend and notes on every customer. Points earn on each sale and redeem at the till, with Bronze to Platinum tiers set by your own thresholds.',
     icon: 'star',
+    short: 'Visit count, spend and notes on every customer, and points that earn and redeem at the till.',
+    tags: ['Visit history', 'Points', 'Bronze to Platinum'],
   },
   {
     title: 'Revenue & cash flow',
     body: 'Takings, expenses by category and real net profit, split by payment channel. Log cash income and bills, then export the period as a PDF report.',
     icon: 'chart',
+    short: 'Takings, expenses by category and real net profit, split by the channel it came in on.',
+    tags: ['Net profit', 'By channel', 'PDF report'],
   },
   {
     title: 'Staff & access',
     body: 'Team list with roles, commission or salary pay, paid leave and per-person revenue. Each login opens only the modules you tick for it.',
     icon: 'users',
+    short: 'Roles, commission or salary pay and per-person revenue. Each login opens only what you tick.',
+    tags: ['Roles', 'Commission', 'Per-module access'],
   },
   {
     title: 'Branches & sections',
     body: 'Run up to 20 locations from one account, each with its own stock, staff, clients and takings. Switch branch without signing out, or split one floor into sections.',
     icon: 'store',
+    short: 'Up to 20 locations on one account, each with its own stock, staff, clients and takings.',
+    tags: ['20 branches', 'Sections', 'Pinned logins'],
   },
   {
     title: 'Works offline, syncs itself',
     body: 'The till keeps selling on a dead connection because it reads and writes locally first, then syncs to the cloud, deletes included, so nothing comes back.',
     icon: 'cloud',
+    short: 'The till keeps selling on a dead connection and catches the cloud up the moment it’s back.',
+    tags: ['Local first', 'Auto sync', 'Deletes stay deleted'],
   },
   {
     title: 'Safe by default',
     body: 'Signed-in staff logins, rate-limited sign-in, an audit trail on the admin console, and a backup taken before every write your data can be restored from.',
     icon: 'shield',
+    short: 'Rate-limited sign-in, an audit trail on every change, and a backup before every write.',
+    tags: ['Audit trail', 'Rate limits', 'Auto backups'],
   },
 ]
 
