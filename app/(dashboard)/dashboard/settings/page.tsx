@@ -497,9 +497,9 @@ function ThermalPrinterSection() {
       </Field>
 
       {/* Port */}
-      <Field label="Port" hint="Default is 9100 for all ESC/POS LAN printers — don't change unless needed.">
+      <Field label="Port" hint="Default is 9100 for all ESC/POS LAN printers — don't change unless needed. Allowed: 9100–9109.">
         <input
-          type="number" value={form.port} min={1} max={65535}
+          type="number" value={form.port} min={9100} max={9109}
           onChange={e => setForm(f => ({ ...f, port: parseInt(e.target.value) || 9100 }))}
           style={{ ...inp, maxWidth: 140 }}
         />

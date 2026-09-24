@@ -7,8 +7,15 @@ import { NextRequest } from "next/server";
 import { createUser } from "@/lib/auth-db";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 
+/**
+ * The one success reply, identical for a new account and an email that's
+ * already taken. The sign-up page only needs approvalStatus to show its
+ * "waiting for approval" panel.
+ */
+const PENDING_RESPONSE = { ok: true, user: { approvalStatus: "pending" } } as const;
+
 export async function POST(req: NextRequest) {
-  const limit = rateLimit("signup", clientIp(req), { maxAttempts: 8, windowMs: 15 * 60 * 1000, blockMs: 30 * 60 * 1000 });
+  const limit = await rateLimit("signup", clientIp(req), { maxAttempts: 8, windowMs: 15 * 60 * 1000, blockMs: 30 * 60 * 1000 });
   if (limit.blocked) {
     return Response.json(
       { ok: false, error: "Too many signup attempts. Please try again later.", retryAfter: limit.retryAfter },
@@ -51,7 +58,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const user = await createUser({
+    await createUser({
       email,
       password,
       ownerName,
@@ -66,26 +73,19 @@ export async function POST(req: NextRequest) {
       approvalStatus: "pending",
     });
 
-    return Response.json({
-      ok: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        ownerName: user.ownerName,
-        businessName: user.businessName,
-        phone: user.phone,
-        role: user.role,
-        emailVerified: user.emailVerified,
-        approvalStatus: user.approvalStatus,
-        createdAt: user.createdAt,
-      },
-    });
+    return Response.json(PENDING_RESPONSE);
   } catch (err) {
-    console.error("[auth/signup] Error:", err);
     const message = err instanceof Error ? err.message : "Failed to create account.";
 
-    // User-facing errors (email taken, etc.) → 400; server/DB errors → 500
-    const isUserError = message.includes("already exists");
-    return Response.json({ ok: false, error: isUserError ? message : "Failed to create account. Please try again." }, { status: isUserError ? 400 : 500 });
+    // An email that's already registered gets exactly the reply a new sign-up
+    // gets, so this form can't be used to find out who has a Pointly account.
+    // (createUser hashes the password before the insert fails, so the two
+    // paths take the same time too.) The real owner can still just sign in.
+    if (message.includes("already exists")) {
+      return Response.json(PENDING_RESPONSE);
+    }
+
+    console.error("[auth/signup] Error:", err);
+    return Response.json({ ok: false, error: "Failed to create account. Please try again." }, { status: 500 });
   }
 }

@@ -133,6 +133,9 @@ export default function SignUpPage() {
                   Pointly admin to approve it. You&apos;ll be able to sign in with <strong>{form.email}</strong> as soon
                   as that&apos;s done.
                 </p>
+                <p className={styles.formSubtitle} style={{ marginTop: 10 }}>
+                  Already had an account with this email? Nothing has changed — sign in with your existing password.
+                </p>
               </div>
               <Link href="/sign-in" className={styles.primaryButton} style={{ textDecoration: "none", justifyContent: "center" }}>
                 Go to sign in <ArrowRight size={14} />

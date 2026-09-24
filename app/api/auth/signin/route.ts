@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   const ip = clientIp(req);
 
   // Check rate limit before doing any work
-  const limit = rateLimit("signin", ip, { maxAttempts: 10, blockMs: BLOCK_MS });
+  const limit = await rateLimit("signin", ip, { maxAttempts: 10, blockMs: BLOCK_MS });
   if (limit.blocked) {
     const minutes = Math.ceil((limit.retryAfter ?? BLOCK_MS / 1000) / 60);
     return Response.json(
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   // slow down on the account they target. Looser than the per-IP limit and a
   // shorter block, so it can't be used to keep a real owner locked out for long.
   const emailKey = email.trim().toLowerCase();
-  const accountLimit = rateLimit("signin-email", emailKey, { maxAttempts: 15, blockMs: 15 * 60 * 1000 });
+  const accountLimit = await rateLimit("signin-email", emailKey, { maxAttempts: 15, blockMs: 15 * 60 * 1000 });
   if (accountLimit.blocked) {
     const minutes = Math.ceil((accountLimit.retryAfter ?? 900) / 60);
     return Response.json(
@@ -68,8 +68,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Success — clear the rate-limit counters for this IP and account
-    rateLimitClear("signin", ip);
-    rateLimitClear("signin-email", emailKey);
+    await rateLimitClear("signin", ip);
+    await rateLimitClear("signin-email", emailKey);
 
     const res = NextResponse.json({
       ok: true,

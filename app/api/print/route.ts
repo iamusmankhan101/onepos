@@ -127,6 +127,23 @@ function buildReceipt(data: ReceiptData): Buffer {
   return Buffer.concat(chunks);
 }
 
+// ── Target check ───────────────────────────────────────────────────────────────
+// The server connects wherever the body says, so only a receipt printer is
+// allowed: an IPv4 literal in a private LAN range (never a hostname, which
+// could resolve anywhere; never loopback or 169.254.x, where cloud metadata
+// lives) on the raw-print ports. Anything else is refused before a socket opens.
+
+const PRINTER_PORT_MIN = 9100;
+const PRINTER_PORT_MAX = 9109;
+
+function isLanPrinterAddress(ip: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (!m) return false;
+  const [a, b, c, d] = m.slice(1).map(Number);
+  if ([a, b, c, d].some((n) => n > 255)) return false;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
 // ── TCP send ───────────────────────────────────────────────────────────────────
 
 function sendToprinter(ip: string, port: number, data: Buffer): Promise<void> {
@@ -199,18 +216,33 @@ export async function POST(req: NextRequest) {
   if (!printerIp || typeof printerIp !== "string") {
     return Response.json({ ok: false, error: "printerIp is required" }, { status: 400 });
   }
+  if (!isLanPrinterAddress(printerIp.trim())) {
+    return Response.json(
+      { ok: false, error: "Printer IP must be a local network address, like 192.168.1.50." },
+      { status: 400 },
+    );
+  }
   const port = Number(printerPort);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    return Response.json({ ok: false, error: "printerPort is invalid" }, { status: 400 });
+  if (!Number.isInteger(port) || port < PRINTER_PORT_MIN || port > PRINTER_PORT_MAX) {
+    return Response.json(
+      { ok: false, error: `Printer port must be between ${PRINTER_PORT_MIN} and ${PRINTER_PORT_MAX} (usually 9100).` },
+      { status: 400 },
+    );
   }
 
   try {
     const receipt = buildReceipt(receiptData);
-    await sendToprinter(printerIp, port, receipt);
+    await sendToprinter(printerIp.trim(), port, receipt);
     return Response.json({ ok: true });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[thermal-print] error:", msg);
-    return Response.json({ ok: false, error: msg }, { status: 502 });
+    // Only the timeout message is ours; raw socket errors (refused, reset,
+    // unreachable) would tell a caller what is listening where, so they get
+    // one generic line.
+    const shown = msg.startsWith("Printer connection timed out")
+      ? msg
+      : "Could not reach the printer. Check the IP, port and LAN cable.";
+    return Response.json({ ok: false, error: shown }, { status: 502 });
   }
 }
