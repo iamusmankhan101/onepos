@@ -6,6 +6,7 @@
 
 import { NextRequest } from "next/server";
 import * as net from "net";
+import { resolveActor } from "@/lib/api-auth";
 
 // ── ESC/POS helpers ────────────────────────────────────────────────────────────
 
@@ -179,6 +180,13 @@ interface ReceiptData {
 // ── Route ──────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // This route makes the server open a raw TCP connection to an address the
+  // caller names, so it must never be reachable without a live session.
+  const actor = await resolveActor(req);
+  if (!actor) {
+    return Response.json({ ok: false, error: "Not authenticated." }, { status: 401 });
+  }
+
   let body: ReceiptData & { printerIp: string; printerPort?: number };
   try {
     body = await req.json();
@@ -188,13 +196,17 @@ export async function POST(req: NextRequest) {
 
   const { printerIp, printerPort = 9100, ...receiptData } = body;
 
-  if (!printerIp) {
+  if (!printerIp || typeof printerIp !== "string") {
     return Response.json({ ok: false, error: "printerIp is required" }, { status: 400 });
+  }
+  const port = Number(printerPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return Response.json({ ok: false, error: "printerPort is invalid" }, { status: 400 });
   }
 
   try {
     const receipt = buildReceipt(receiptData);
-    await sendToprinter(printerIp, printerPort, receipt);
+    await sendToprinter(printerIp, port, receipt);
     return Response.json({ ok: true });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

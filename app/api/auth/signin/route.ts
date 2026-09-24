@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { email: string; password: string; portal?: "admin" | "staff" };
+  let body: { email?: unknown; password?: unknown; portal?: "admin" | "staff" };
   try {
     body = await req.json();
   } catch {
@@ -35,8 +35,26 @@ export async function POST(req: NextRequest) {
 
   const { email, password } = body;
 
-  if (!email || !password) {
+  if (typeof email !== "string" || typeof password !== "string" || !email.trim() || !password) {
     return Response.json({ ok: false, error: "Missing email or password." }, { status: 400 });
+  }
+  // Nothing legitimate is this long; refusing early keeps a giant body from
+  // being fed through 120k rounds of pbkdf2.
+  if (email.length > 254 || password.length > 1024) {
+    return Response.json({ ok: false, error: "Invalid email or password." }, { status: 401 });
+  }
+
+  // A second counter per account, so guesses spread across many IPs still
+  // slow down on the account they target. Looser than the per-IP limit and a
+  // shorter block, so it can't be used to keep a real owner locked out for long.
+  const emailKey = email.trim().toLowerCase();
+  const accountLimit = rateLimit("signin-email", emailKey, { maxAttempts: 15, blockMs: 15 * 60 * 1000 });
+  if (accountLimit.blocked) {
+    const minutes = Math.ceil((accountLimit.retryAfter ?? 900) / 60);
+    return Response.json(
+      { ok: false, error: `Too many failed attempts on this account. Try again in ${minutes} minute${minutes !== 1 ? "s" : ""}.`, retryAfter: accountLimit.retryAfter },
+      { status: 429, headers: { "Retry-After": String(accountLimit.retryAfter ?? 0) } },
+    );
   }
 
   try {
@@ -49,8 +67,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Success — clear the rate-limit counter for this IP
+    // Success — clear the rate-limit counters for this IP and account
     rateLimitClear("signin", ip);
+    rateLimitClear("signin-email", emailKey);
 
     const res = NextResponse.json({
       ok: true,

@@ -117,6 +117,23 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(httpsUrl, { status: 301 });
   }
 
+  // ── Same-origin check on API writes (CSRF defence in depth) ───────────────
+  // The session cookie is SameSite=Lax, which already keeps it off cross-site
+  // POSTs; this also covers sibling subdomains (same-site, so Lax lets them
+  // through) and any browser that mishandles SameSite. Every legitimate caller
+  // is this app's own fetch(), which always sends a matching Origin.
+  if (pathname.startsWith("/api/") && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    const origin = req.headers.get("origin");
+    const host   = (req.headers.get("x-forwarded-host") ?? req.headers.get("host"))?.split(",")[0].trim();
+    let crossOrigin = req.headers.get("sec-fetch-site") === "cross-site";
+    if (origin && host) {
+      try { crossOrigin ||= new URL(origin).host !== host; } catch { crossOrigin = true; }
+    }
+    if (crossOrigin) {
+      return NextResponse.json({ ok: false, error: "Cross-origin request refused." }, { status: 403 });
+    }
+  }
+
   // ── Session check (crypto-only — no DB round-trip in Edge middleware) ─────
   // DB-level revocation is enforced in the API routes and signout handler.
   const currentToken = req.cookies.get(COOKIE_NAME)?.value ?? "";

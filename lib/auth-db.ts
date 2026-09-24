@@ -44,7 +44,7 @@ function decoyHash(): string {
   return decoyHashCache;
 }
 
-export { hashPassword };
+export { hashPassword, verifyPassword };
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────

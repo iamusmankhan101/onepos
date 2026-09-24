@@ -12,8 +12,8 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { getUserById } from "@/lib/auth-db";
-import { COOKIE_NAME, LEGACY_COOKIE_NAME, verifySessionToken } from "@/lib/session";
+import { getUserById, isSessionRevoked } from "@/lib/auth-db";
+import { COOKIE_NAME, LEGACY_COOKIE_NAME, tokenId, verifySessionToken } from "@/lib/session";
 
 export const metadata: Metadata = {
   title: "Admin Console",
@@ -23,7 +23,8 @@ export const metadata: Metadata = {
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value ?? cookieStore.get(LEGACY_COOKIE_NAME)?.value;
-  const userId = token ? verifySessionToken(token) : null;
+  const verified = token ? verifySessionToken(token) : null;
+  const userId = verified && !(await isSessionRevoked(tokenId(token!))) ? verified : null;
   const user = userId ? await getUserById(userId) : null;
 
   // A cookie that failed to verify (or points at a deleted account) means the

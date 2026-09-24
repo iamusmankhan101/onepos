@@ -9,9 +9,24 @@
  */
 
 import { NextRequest } from "next/server";
-import { COOKIE_NAME, LEGACY_COOKIE_NAME, verifySessionToken } from "./session";
-import { getEffectivePlan, getUserById, type AuthUser } from "./auth-db";
+import { COOKIE_NAME, LEGACY_COOKIE_NAME, tokenId, verifySessionToken } from "./session";
+import { getEffectivePlan, getUserById, isSessionRevoked, type AuthUser } from "./auth-db";
 import { supportsMultiBranch, type PlanId } from "./plans";
+
+/**
+ * The user id behind the request's session cookie, or null. Checks both the
+ * token's signature/expiry and the sessions table, so a session that was signed
+ * out (or killed by a freeze or password change) stops working everywhere at
+ * once, not just on the /api/auth/user probe. Every route that trusts a
+ * session should come through here rather than calling verifySessionToken.
+ */
+export async function sessionUserId(req: NextRequest): Promise<string | null> {
+  const token = req.cookies.get(COOKIE_NAME)?.value ?? req.cookies.get(LEGACY_COOKIE_NAME)?.value;
+  const userId = token ? verifySessionToken(token) : null;
+  if (!token || !userId) return null;
+  if (await isSessionRevoked(tokenId(token))) return null;
+  return userId;
+}
 
 export interface ResolvedActor {
   /** The business-owner id that scopes the data (staff resolve to their owner's id). */
@@ -44,8 +59,7 @@ export async function resolveActor(
   req: NextRequest,
   requestedLocationId = "main",
 ): Promise<ResolvedActor | null> {
-  const token = req.cookies.get(COOKIE_NAME)?.value ?? req.cookies.get(LEGACY_COOKIE_NAME)?.value;
-  const actorId = token ? verifySessionToken(token) : null;
+  const actorId = await sessionUserId(req);
   const actor = actorId ? await getUserById(actorId) : null;
   if (!actor) return null;
   if (actor.role !== "admin" && (actor.approvalStatus !== "approved" || actor.accountFrozen)) return null;
@@ -103,8 +117,7 @@ export async function resolveActor(
  * caller's own scope.
  */
 export async function requireAdmin(req: NextRequest): Promise<AuthUser | null> {
-  const token = req.cookies.get(COOKIE_NAME)?.value ?? req.cookies.get(LEGACY_COOKIE_NAME)?.value;
-  const actorId = token ? verifySessionToken(token) : null;
+  const actorId = await sessionUserId(req);
   const actor = actorId ? await getUserById(actorId) : null;
   if (!actor || actor.role !== "admin") return null;
 

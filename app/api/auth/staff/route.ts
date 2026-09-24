@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { COOKIE_NAME, LEGACY_COOKIE_NAME, verifySessionToken } from "@/lib/session";
+import { sessionUserId } from "@/lib/api-auth";
 import { getStaffUsersForOwner, getUserById, upsertStaffUser } from "@/lib/auth-db";
 
 const STAFF_PERMISSIONS = ["dashboard", "calendar", "appointments", "clients", "pos", "invoices"];
@@ -10,13 +10,17 @@ const ALL_PERMISSION_KEYS = new Set([
   "account", "billing",
 ]);
 
+const isText = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
+
 async function getAuthorizedActor(req: NextRequest) {
-  const token = req.cookies.get(COOKIE_NAME)?.value ?? req.cookies.get(LEGACY_COOKIE_NAME)?.value;
-  const actorId = token ? verifySessionToken(token) : null;
+  const actorId = await sessionUserId(req);
   if (!actorId) return { error: Response.json({ ok: false, error: "Not authenticated." }, { status: 401 }) };
 
   const actor = await getUserById(actorId);
-  if (!actor || !["owner", "manager"].includes(actor.role)) {
+  if (!actor || actor.approvalStatus !== "approved" || actor.accountFrozen) {
+    return { error: Response.json({ ok: false, error: "Not authenticated." }, { status: 401 }) };
+  }
+  if (!["owner", "manager"].includes(actor.role)) {
     return { error: Response.json({ ok: false, error: "Only owners or managers can manage staff access." }, { status: 403 }) };
   }
 
@@ -35,12 +39,31 @@ export async function POST(req: NextRequest) {
   const { actor, error } = await getAuthorizedActor(req);
   if (error) return error;
 
-  const body = await req.json() as {
+  let body: {
     staffId?: string; name?: string; email?: string; phone?: string; password?: string; locationId?: string;
     role?: string; permissions?: string[];
   };
-  if (!body.staffId || !body.name || !body.email || !body.locationId) {
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ ok: false, error: "Invalid request body." }, { status: 400 });
+  }
+  const { staffId, name, email, locationId } = body;
+  if (!isText(staffId) || !isText(name) || !isText(email) || !isText(locationId)) {
     return Response.json({ ok: false, error: "Staff name, email, ID and assigned location are required." }, { status: 400 });
+  }
+  if (body.phone !== undefined && typeof body.phone !== "string") {
+    return Response.json({ ok: false, error: "Invalid phone number." }, { status: 400 });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.length > 254) {
+    return Response.json({ ok: false, error: "Please enter a valid email address." }, { status: 400 });
+  }
+  // Checked here, not only on create: a blank password keeps the current one,
+  // but a new one must meet the same rule whether the login is new or not.
+  if (body.password !== undefined && body.password !== "") {
+    if (typeof body.password !== "string" || body.password.length < 8 || body.password.length > 128) {
+      return Response.json({ ok: false, error: "Staff password must be 8 to 128 characters." }, { status: 400 });
+    }
   }
 
   const isManager = body.role === "manager";
@@ -54,15 +77,15 @@ export async function POST(req: NextRequest) {
   try {
     const user = await upsertStaffUser({
       businessOwnerId: actor!.businessOwnerId || actor!.id,
-      staffId: body.staffId,
-      name: body.name,
+      staffId,
+      name,
       businessName: actor!.businessName,
-      email: body.email,
+      email,
       phone: body.phone || "",
       password: body.password,
       role: isManager ? "manager" : "staff",
       permissions,
-      locationId: body.locationId,
+      locationId,
     });
     return Response.json({ ok: true, user });
   } catch (error) {

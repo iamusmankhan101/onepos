@@ -16,13 +16,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: {
-    email: string;
-    password: string;
-    ownerName: string;
-    businessName: string;
-    phone: string;
-  };
+  let body: Record<string, unknown>;
 
   try {
     body = await req.json();
@@ -30,14 +24,30 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false, error: "Invalid request body." }, { status: 400 });
   }
 
-  const { email, password, ownerName, businessName, phone } = body;
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const email = str(body.email).trim();
+  const password = str(body.password);
+  const ownerName = str(body.ownerName).trim();
+  const businessName = str(body.businessName).trim();
+  const phone = str(body.phone).trim();
 
   if (!email || !password || !ownerName) {
     return Response.json({ ok: false, error: "Missing required fields." }, { status: 400 });
   }
 
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return Response.json({ ok: false, error: "Please enter a valid email address." }, { status: 400 });
+  }
+
   if (password.length < 8) {
     return Response.json({ ok: false, error: "Password must be at least 8 characters." }, { status: 400 });
+  }
+  if (password.length > 128) {
+    return Response.json({ ok: false, error: "Password must be 128 characters or fewer." }, { status: 400 });
+  }
+
+  if (ownerName.length > 100 || businessName.length > 120 || phone.length > 30) {
+    return Response.json({ ok: false, error: "One of the fields is too long." }, { status: 400 });
   }
 
   try {
