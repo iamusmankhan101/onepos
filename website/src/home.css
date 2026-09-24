@@ -471,6 +471,8 @@ body {
   color: var(--hp-o-lift);
 }
 
+.hp-stat__d--muted { color: var(--hp-on-dark-3); font-weight: 500; }
+
 .hp-statRow { display: contents; }
 
 .hp-stat--a { left: 0; top: 4%; animation-delay: -1.5s; }
@@ -1479,8 +1481,24 @@ body {
   .hp-shots__tabs::-webkit-scrollbar { display: none; }
   .hp-shots__tab { flex: none; }
   .hp-foot__top { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 30px 20px; }
-  .hp-btn { width: 100%; }
-  .hp-nav__end .hp-btn { width: auto; }
+
+  /* Hero, tightened for a phone: smaller type, the two buttons side by side,
+     compact stat cards, less air between the blocks. */
+  .hp-hero { padding-top: 104px; border-radius: 0 0 24px 24px; }
+  .hp-hero__title { font-size: clamp(1.9rem, 8.6vw, 2.3rem); line-height: 1.08; }
+  .hp-hero__sub { margin-top: 16px; font-size: 0.875rem; line-height: 1.65; max-width: 34ch; }
+  .hp-hero__cta { margin-top: 24px; flex-wrap: nowrap; gap: 10px; }
+  .hp-hero__cta .hp-btn { flex: 1 1 0; min-width: 0; padding: 13px 14px; font-size: 0.875rem; }
+  .hp-float { margin-top: 32px; }
+  .hp-float__inner { gap: 10px; }
+  .hp-statRow { gap: 10px; }
+  .hp-stat { padding: 11px 13px 12px; border-radius: 14px; }
+  .hp-stat__k { font-size: 0.625rem; }
+  .hp-stat__v { margin-top: 3px; font-size: 1.0625rem; }
+  .hp-stat__d { margin-top: 4px; font-size: 0.625rem; }
+  .hp-till { border-radius: 14px 14px 0 0; margin-top: 2px; }
+  .hp-till__bar { padding: 8px 12px; }
+  .hp-till__live { font-size: 0.5625rem; padding: 3px 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

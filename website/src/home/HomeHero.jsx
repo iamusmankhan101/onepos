@@ -68,6 +68,7 @@ export default function HomeHero() {
                   <Info />
                 </p>
                 <p className="hp-stat__v">Rs 567.34K</p>
+                <p className="hp-stat__d hp-stat__d--muted">This month</p>
               </div>
             </div>
 
