@@ -1,56 +1,31 @@
-// CSS-built stand-in for the hero product shot — the real screens are further
-// down the page in HomeScreens.jsx. Keep the figures here matching that POS
-// screenshot so the two never contradict each other.
-const LINES = [
-  ['Root touch-up', 'Service · Hina', '1 × 5,500'],
-  ['Hydra facial', 'Service · Ayesha', '1 × 8,500'],
-  ['Care shampoo 250ml', 'Product · 24 left', '1 × 2,600'],
-]
-
+// The hero product shot: the real POS screen (the same capture HomeScreens.jsx
+// shows further down), in a slim browser frame that runs off the hero's
+// bottom edge into the white floor.
 export default function Till() {
   return (
-    <div className="hp-till">
+    <figure className="hp-till">
       <div className="hp-till__bar">
         <span className="hp-till__dots" aria-hidden="true">
           <i />
           <i />
           <i />
         </span>
-        <span className="hp-till__name">Clifton branch · Till 02</span>
+        <span className="hp-till__name">pointly.saloncentral.xyz/dashboard/pos</span>
         <span className="hp-till__live">
           <i aria-hidden="true" />
           Posting live
         </span>
       </div>
 
-      <div className="hp-till__body">
-        <div className="hp-till__lines">
-          {LINES.map(([name, station, qty]) => (
-            <div className="hp-till__line" key={name}>
-              <div>
-                <b>{name}</b>
-                <small>{station}</small>
-              </div>
-              <span>{qty}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="hp-till__side">
-          <div className="hp-till__row">
-            Subtotal <span>16,600</span>
-          </div>
-          <div className="hp-till__row">
-            Points · 1,845 <span>-1,845</span>
-          </div>
-          <div className="hp-till__total">
-            <b>Due</b>
-            <span>Rs 14,755</span>
-          </div>
-          <div className="hp-till__charge">Charge</div>
-          <p className="hp-till__post">Stock, points and profit move on settle</p>
-        </div>
-      </div>
-    </div>
+      <img
+        className="hp-till__shot"
+        src="/screens/pos.webp"
+        width="1600"
+        height="1000"
+        alt="The Pointly point-of-sale screen: a selected customer with 1,845 loyalty points, the service and product catalogue, and a three-item cart totalling PKR 16,600"
+        fetchPriority="high"
+        decoding="async"
+      />
+    </figure>
   )
 }

@@ -386,7 +386,8 @@ body {
   position: relative;
   z-index: 2;
   margin-top: clamp(40px, 6vw, 68px);
-  min-height: clamp(300px, 34vw, 400px);
+  /* ≈ the shot's height (88% width × 10/16 + its bar) so it sits flush */
+  min-height: clamp(300px, 52vw, 540px);
 }
 .hp-float__inner {
   position: relative;
@@ -398,6 +399,7 @@ body {
 
 .hp-chip {
   position: absolute;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -426,6 +428,7 @@ body {
 
 .hp-stat {
   position: absolute;
+  z-index: 2; /* float over the product shot */
   min-width: 158px;
   text-align: left;
   border-radius: 16px;
@@ -486,35 +489,45 @@ body {
 .hp-faces span:nth-child(2) { background: linear-gradient(135deg, #ffd6a8, #ff9142); }
 .hp-faces span:nth-child(3) { background: linear-gradient(135deg, #f7c9a2, #d4490f); }
 
-/* --- the till panel the glow sits behind ------------------- */
+/* --- the product shot the glow sits behind ----------------- */
 .hp-till {
   position: absolute;
+  z-index: 0;
   left: 50%;
   bottom: 0;
   transform: translateX(-50%);
-  width: min(560px, 100%);
+  width: min(820px, 88%);
+  margin: 0;
   text-align: left;
   border-radius: 18px 18px 0 0;
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.7);
   border-bottom: 0;
   box-shadow: var(--hp-shadow-lift);
-  backdrop-filter: blur(20px);
   overflow: hidden;
 }
 .hp-till__bar {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 12px 16px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--hp-line-2);
 }
 .hp-till__dots { display: flex; gap: 5px; }
 .hp-till__dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--hp-line); }
 .hp-till__dots i:first-child { background: var(--hp-o-lift); }
-.hp-till__name { font-size: 0.75rem; font-weight: 600; color: var(--hp-ink-2); }
+.hp-till__name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--hp-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
 .hp-till__live {
   margin-left: auto;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -534,65 +547,7 @@ body {
   background: var(--hp-o);
   box-shadow: 0 0 0 3px rgba(242, 104, 31, 0.18);
 }
-.hp-till__body { display: grid; grid-template-columns: 1fr 190px; }
-.hp-till__lines { padding: 6px 16px 14px; }
-.hp-till__line {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: baseline;
-  padding-block: 9px;
-  border-bottom: 1px dashed var(--hp-line-2);
-  font-size: 0.8125rem;
-}
-.hp-till__line:last-child { border-bottom: 0; }
-.hp-till__line b { font-weight: 600; letter-spacing: -0.01em; }
-.hp-till__line small { display: block; font-size: 0.6875rem; color: var(--hp-ink-4); margin-top: 1px; }
-.hp-till__line span { font-family: var(--hp-mono); font-size: 0.75rem; color: var(--hp-ink-2); }
-.hp-till__side {
-  border-left: 1px solid var(--hp-line-2);
-  background: linear-gradient(180deg, var(--hp-o-tint), rgba(255, 255, 255, 0));
-  padding: 14px 16px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-.hp-till__row { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--hp-ink-3); }
-.hp-till__row span { font-family: var(--hp-mono); color: var(--hp-ink-2); }
-.hp-till__total {
-  margin-top: 2px;
-  padding-top: 10px;
-  border-top: 1px solid var(--hp-line);
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.hp-till__total b {
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--hp-ink-3);
-}
-.hp-till__total span {
-  font-family: var(--hp-display);
-  font-size: 1.3125rem;
-  font-weight: 600;
-  letter-spacing: -0.035em;
-  color: var(--hp-o-deep);
-}
-.hp-till__charge {
-  margin-top: 4px;
-  border-radius: 10px;
-  background: var(--hp-grad-hot);
-  color: #fff;
-  text-align: center;
-  padding: 10px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  box-shadow: 0 8px 18px rgba(242, 104, 31, 0.3);
-}
-.hp-till__post { font-size: 0.625rem; text-align: center; color: var(--hp-ink-4); }
+.hp-till__shot { display: block; width: 100%; height: auto; }
 
 /* ============================================================
    Features — centred head + card canvas
@@ -1369,8 +1324,7 @@ body {
 
 @media (max-width: 720px) {
   .hp-grid { grid-template-columns: 1fr; }
-  .hp-till__body { grid-template-columns: 1fr; }
-  .hp-till__side { border-left: 0; border-top: 1px solid var(--hp-line-2); }
+  .hp-till__live { display: none; }
   .hp-band__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 18px; }
 
   /* Too little room to float things over each other — lay the hero
