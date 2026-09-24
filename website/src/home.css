@@ -516,15 +516,6 @@ body {
 .hp-till__dots { display: flex; gap: 5px; }
 .hp-till__dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--hp-line); }
 .hp-till__dots i:first-child { background: var(--hp-o-lift); }
-.hp-till__name {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--hp-ink-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
 .hp-till__live {
   margin-left: auto;
   flex-shrink: 0;
@@ -1324,7 +1315,6 @@ body {
 
 @media (max-width: 720px) {
   .hp-grid { grid-template-columns: 1fr; }
-  .hp-till__live { display: none; }
   .hp-band__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 18px; }
 
   /* Too little room to float things over each other — lay the hero

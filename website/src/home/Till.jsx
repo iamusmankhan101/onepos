@@ -10,7 +10,6 @@ export default function Till() {
           <i />
           <i />
         </span>
-        <span className="hp-till__name">pointly.saloncentral.xyz/dashboard/pos</span>
         <span className="hp-till__live">
           <i aria-hidden="true" />
           Posting live
