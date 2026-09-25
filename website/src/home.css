@@ -662,13 +662,15 @@ body {
 }
 
 /* ============================================================
-   Pricing — three tiers, the middle one carried
+   Pricing — two tiers, Pro carried
    ============================================================ */
 .hp-plans {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 900px;
+  margin-inline: auto;
   gap: 18px;
-  align-items: stretch;   /* all three cards run to the tallest */
+  align-items: stretch;   /* both cards run to the tallest */
 }
 .hp-plan {
   display: flex;
@@ -1411,14 +1413,14 @@ body {
   .hp-band__grid { grid-template-columns: 1fr; gap: 30px; }
 
   .hp-mods { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  /* three tiers don't split into two columns without orphaning one */
-  .hp-plans { grid-template-columns: 1fr; max-width: 520px; margin-inline: auto; }
   .hp-plan__blurb { min-height: 0; }
   .hp-foot__top { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .hp-foot__top > :first-child { grid-column: 1 / -1; }
 }
 
 @media (max-width: 720px) {
+  .hp-plans { grid-template-columns: 1fr; max-width: 520px; }
+
   .hp-band__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 18px; }
 
   /* Too little room to float things over each other — lay the hero

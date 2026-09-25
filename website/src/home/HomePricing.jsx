@@ -7,10 +7,10 @@ export default function HomePricing() {
       <div className="hp-shell">
         <div className="hp-head hp-reveal">
           <p className="hp-label">Pricing</p>
-          <h2 style={{ marginTop: 12 }}>Three plans. No surprises.</h2>
+          <h2 style={{ marginTop: 12 }}>Two plans. No surprises.</h2>
           <p>
-            Every plan runs the counter in full. What changes above Basic is loyalty, and then how
-            many branches you run.
+            Both plans run the counter in full. Pro adds loyalty and as many branches as you
+            run.
           </p>
         </div>
 

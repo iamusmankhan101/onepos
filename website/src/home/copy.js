@@ -28,14 +28,14 @@ export function whatsAppLink(message) {
 }
 
 // ─── Pricing ─────────────────────────────────────────────────────────────────
-// Three tiers, monthly, in PKR. Basic is the whole counter; Pro adds loyalty;
-// Premium adds branches. Each tier lists only what it adds on top of the one
-// before it, so the ladder reads in one pass.
+// Two tiers, monthly, in PKR. Basic is the whole counter for one shop; Pro adds
+// loyalty and branches. Pro lists only what it adds on top of Basic, so the
+// ladder reads in one pass.
 export const PLANS = [
   {
     id: 'basic',
     name: 'Basic',
-    price: '2,499',
+    price: '3,499',
     blurb: 'The whole counter for one shop. Selling, stock, invoices and reporting.',
     lead: 'Everything you need to trade',
     points: [
@@ -54,32 +54,21 @@ export const PLANS = [
   {
     id: 'pro',
     name: 'Pro',
-    price: '4,499',
+    price: '5,999',
     featured: true,
-    blurb: 'Basic, plus a loyalty programme that runs itself at the till.',
+    blurb: 'Basic, plus a loyalty programme and every branch you run on a single login.',
     lead: 'Everything in Basic, and',
     points: [
-      'Loyalty points earned on every sale',
-      'Points redeemed on the billing screen',
+      'Loyalty points earned and redeemed at the till',
       'Bronze, Silver, Gold and Platinum tiers',
       'Your own earn rate and tier thresholds',
       'Points balance and history on each client',
-    ],
-    cta: 'Choose Pro',
-  },
-  {
-    id: 'premium',
-    name: 'Premium',
-    price: '5,999',
-    blurb: 'Pro, plus every branch you run on a single login.',
-    lead: 'Everything in Pro, and',
-    points: [
       'Up to 20 branches on one account',
       'Separate stock, staff, clients and takings per branch',
       'Switch branch without signing out',
       'Staff logins pinned to their own branch',
       'Sections to split one floor in two',
     ],
-    cta: 'Choose Premium',
+    cta: 'Choose Pro',
   },
 ]
