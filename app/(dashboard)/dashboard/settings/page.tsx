@@ -9,7 +9,7 @@ import {
   getBusinessLocations, getDefaultLocationId, locationName, MAIN_LOCATION_ID, setActiveLocationFilter,
   updateActiveLocationDetails, updateBusinessLocation, type BusinessLocation,
 } from "@/lib/locations";
-import { MULTI_BRANCH_PLAN, PLANS, type PlanDefinition } from "@/lib/plans";
+import { MULTI_BRANCH_PLAN, PLANS, planPriceLabel, type PlanDefinition } from "@/lib/plans";
 import { ACCOUNT_REFRESHED_EVENT, updateCurrentPassword, type AuthUser } from "@/lib/auth";
 import { getStoredStaff } from "@/lib/storage";
 import type { Staff } from "@/lib/types";
@@ -780,7 +780,7 @@ function BranchUpgradeCard({ plan }: { plan: PlanDefinition }) {
           ))}
         </div>
         <div style={{ marginTop: 18, padding: "12px 14px", background: "#f9f9fb", borderRadius: 12, fontSize: 12, color: "#6b6b8a", lineHeight: 1.65 }}>
-          Your account is on <strong>Starter</strong>, which runs a single location. Get in touch to move it to {plan.name} —
+          Your account is on <strong>{PLANS.starter.name}</strong>, which runs a single location. Get in touch to move it to {plan.name} ({planPriceLabel(plan)}) —
           your current branch, its data and every staff login carry over untouched.
         </div>
       </div>

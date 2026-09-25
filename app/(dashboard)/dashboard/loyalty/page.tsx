@@ -12,16 +12,18 @@ import { getInvoices } from "@/lib/invoices";
 import type { Client } from "@/lib/types";
 import {
   getTier, TIER_META, nextTierThreshold, pointsToRupees,
-  getClientHistory, adjustPoints, redeemPoints,
+  getClientHistory, adjustPoints, redeemPoints, loyaltyActive,
   type LoyaltySettings,
 } from "@/lib/loyalty";
 import { settingsStore, saveSettings } from "@/lib/settings-store";
 import { getActiveSection, inSection } from "@/lib/sections";
-import { locationName } from "@/lib/locations";
+import { activePlan, locationName } from "@/lib/locations";
+import { LOYALTY_PLAN, planPriceLabel, supportsLoyalty } from "@/lib/plans";
+import { ACCOUNT_REFRESHED_EVENT } from "@/lib/auth";
 import { fmtCurrency as fmt } from "@/lib/format";
 import {
   Gift, Star, Search, Settings2, ChevronRight, TrendingUp,
-  Award, Users, Plus, Minus, X, CreditCard, Printer, Share2,
+  Award, Users, Plus, Minus, X, CreditCard, Printer, Share2, Sparkles, Check,
 } from "lucide-react";
 import PageTitle from "@/components/page-title";
 
@@ -647,7 +649,41 @@ function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (s:
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
+/** Shown in place of the programme to a business whose plan leaves loyalty out. */
+function LoyaltyUpgradeCard() {
+  const plan = LOYALTY_PLAN;
+  const current = activePlan();
+  return (
+    <div style={{ border: "1px solid #fed7aa", borderRadius: 18, overflow: "hidden", maxWidth: 720 }}>
+      <div style={{ padding: "20px 22px", background: "linear-gradient(135deg, rgba(234,88,12,0.08), rgba(255,255,255,0.9))", display: "flex", alignItems: "flex-start", gap: 14 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 13, display: "grid", placeItems: "center", background: "var(--accent-gradient)", boxShadow: "0 6px 18px var(--accent-glow)", flexShrink: 0 }}>
+          <Sparkles size={19} color="#fff" />
+        </div>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 850, color: "#1a1a2e" }}>Loyalty is part of {plan.name}</div>
+          <div style={{ fontSize: 12.5, color: "#6b6b8a", marginTop: 4, lineHeight: 1.6, maxWidth: 560 }}>{plan.blurb}</div>
+        </div>
+      </div>
+      <div style={{ padding: "18px 22px 22px", background: "#fff" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+          {plan.highlights.map((line) => (
+            <div key={line} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13, color: "#1a1a2e", fontWeight: 600 }}>
+              <Check size={14} color="var(--accent)" /> {line}
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 18, padding: "12px 14px", background: "#f9f9fb", borderRadius: 12, fontSize: 12, color: "#6b6b8a", lineHeight: 1.65 }}>
+          Your account is on <strong>{current.name}</strong>. Get in touch to move it to {plan.name} ({planPriceLabel(plan)}) —
+          your clients and their visit history carry over untouched.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LoyaltyPage() {
+  // null until hydrated, so a Pro business never sees the upgrade card flash.
+  const [planHasLoyalty, setPlanHasLoyalty] = useState<boolean | null>(null);
   const [clients, setClients]         = useState<Client[]>([]);
   const [allAppts, setAllAppts]       = useState<ReturnType<typeof getStoredAppointments>>([]);
   const [allInvoices, setAllInvoices] = useState<ReturnType<typeof getInvoices>>([]);
@@ -672,7 +708,7 @@ export default function LoyaltyPage() {
       // lower them), so the balance the POS redeems against matches this page.
       let changed = false;
       const corrected = storedClients.map((c) => {
-        if (!ls.enabled) return c; // paused programmes don't accrue — same as the client page
+        if (!loyaltyActive(ls)) return c; // paused (or not on the plan) programmes don't accrue — same as the client page
         const { earned, balance } = liveLoyalty(c, storedAppts, storedInvoices, ls);
         if (earned === (c.loyaltyPointsEarned ?? 0)) return c;
         changed = true;
@@ -691,6 +727,18 @@ export default function LoyaltyPage() {
     }, 0);
 
     return () => window.clearTimeout(timer);
+  }, []);
+
+  // Re-read when the session check pulls down a changed account: an owner who
+  // has just been moved onto Pro is likely sitting on this screen.
+  useEffect(() => {
+    const refreshPlan = () => setPlanHasLoyalty(supportsLoyalty(activePlan().id));
+    const timer = window.setTimeout(refreshPlan, 0);
+    window.addEventListener(ACCOUNT_REFRESHED_EVENT, refreshPlan);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener(ACCOUNT_REFRESHED_EVENT, refreshPlan);
+    };
   }, []);
 
   function handleUpdate(updated: Client) {
@@ -735,6 +783,15 @@ export default function LoyaltyPage() {
     branchName,
     activeSection === "all" ? "Reward your customers, grow repeat visits" : `Restricted to ${activeSection} only`,
   ].filter(Boolean).join(" · ");
+
+  if (planHasLoyalty === false) {
+    return (
+      <div className="dash-page dashboard-polish" style={{ minHeight: "100vh", background: "#ffffff", padding: "28px 32px 48px", display: "flex", flexDirection: "column", gap: 20 }}>
+        <PageTitle icon={<Gift size={24} />} title="Loyalty Program" subtitle="Reward your customers, grow repeat visits" />
+        <LoyaltyUpgradeCard />
+      </div>
+    );
+  }
 
   return (
     <div className="dash-page dashboard-polish" style={{ minHeight: "100vh", background: "#ffffff", padding: "28px 32px 48px", display: "flex", flexDirection: "column", gap: 20 }}>

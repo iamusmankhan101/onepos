@@ -7,7 +7,7 @@ import { getInvoices, type Invoice } from "@/lib/invoices";
 import { BEAUTY_PROFILES } from "@/lib/mock-data";
 import type { Client, Appointment } from "@/lib/types";
 import { fmtCurrency as fmt } from "@/lib/format";
-import { getTier, TIER_META, nextTierThreshold, pointsToRupees, type LoyaltySettings } from "@/lib/loyalty";
+import { getTier, loyaltyActive, TIER_META, nextTierThreshold, pointsToRupees, type LoyaltySettings } from "@/lib/loyalty";
 import { settingsStore } from "@/lib/settings-store";
 import { exportClientPdf } from "@/lib/export-pdf";
 import { locationUserKey } from "@/lib/locations";
@@ -104,7 +104,7 @@ export default function ClientProfilePage() {
       // so this page always agrees with the loyalty leaderboard.
       const ls = settingsStore.loyalty as LoyaltySettings;
       let resolved = found;
-      if (ls.enabled) {
+      if (loyaltyActive(ls)) {
         const apptSpend = allAppts
           .filter((a) => a.clientId === clientId && a.status === "completed")
           .reduce((s, a) => s + a.totalAmount, 0);
@@ -500,7 +500,7 @@ export default function ClientProfilePage() {
             {/* Loyalty Card */}
             {(() => {
               const ls = settingsStore.loyalty as LoyaltySettings;
-              if (!ls.enabled) return null;
+              if (!loyaltyActive(ls)) return null;
               const balance = client.loyaltyPoints ?? 0;
               const earned  = client.loyaltyPointsEarned ?? 0;
               const tier    = getTier(earned, ls);

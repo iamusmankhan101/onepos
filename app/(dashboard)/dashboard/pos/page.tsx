@@ -10,7 +10,7 @@ import {
   Clock, AlertCircle, Gift,
   ScanBarcode, Lock,
 } from "lucide-react";
-import { awardPoints, redeemPoints, type LoyaltySettings } from "@/lib/loyalty";
+import { awardPoints, loyaltyActive, redeemPoints, type LoyaltySettings } from "@/lib/loyalty";
 import InvoicePrint from "@/components/invoice-print";
 import InvoiceEdit from "@/components/invoice-edit";
 import {
@@ -283,7 +283,7 @@ export default function POSPage() {
   const loyaltySettings       = settingsStore.loyalty as LoyaltySettings;
   const availableLoyaltyPts   = selectedClient?.id ? (selectedClient.loyaltyPoints ?? 0) : 0;
   const cappedLoyaltyRedeem   = Math.min(loyaltyRedeem, availableLoyaltyPts);
-  const loyaltyDiscount       = loyaltySettings.enabled && cappedLoyaltyRedeem > 0
+  const loyaltyDiscount       = loyaltyActive(loyaltySettings) && cappedLoyaltyRedeem > 0
     ? Math.min(Math.floor(cappedLoyaltyRedeem * loyaltySettings.rupeePerPoint), Math.max(0, rawSubtotal - discountAmount - discountAmount2))
     : 0;
   const totalDiscountAmount   = Math.min(rawSubtotal, wholePkr(discountAmount + discountAmount2 + loyaltyDiscount));
@@ -477,7 +477,7 @@ export default function POSPage() {
           totalSpend:  selectedClient.totalSpend + total,
           lastVisitDate: today,
         };
-        if (loyaltySettings.enabled) {
+        if (loyaltyActive(loyaltySettings)) {
           if (loyaltyDiscount > 0 && cappedLoyaltyRedeem > 0) {
             updatedClient = redeemPoints(updatedClient, cappedLoyaltyRedeem, `Redeemed at POS · ${invoice.number}`);
           }
@@ -893,11 +893,11 @@ export default function POSPage() {
 
                   {/* Stats */}
                   {selectedClient.id && (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: loyaltyActive(loyaltySettings) ? "1fr 1fr 1fr" : "1fr 1fr", gap: 6 }}>
                       {[
                         { label: "Visits", value: selectedClient.totalVisits, color: "#EA580C", bg: "rgba(234,88,12,0.07)" },
                         { label: "Spent", value: selectedClient.totalSpend >= 1000 ? `${(selectedClient.totalSpend / 1000).toFixed(1)}k` : selectedClient.totalSpend, color: "#059669", bg: "rgba(5,150,105,0.07)" },
-                        { label: "Points", value: selectedClient.loyaltyPoints ?? 0, color: "#d97706", bg: "rgba(217,119,6,0.07)" },
+                        ...(loyaltyActive(loyaltySettings) ? [{ label: "Points", value: selectedClient.loyaltyPoints ?? 0, color: "#d97706", bg: "rgba(217,119,6,0.07)" }] : []),
                       ].map(s => (
                         <div key={s.label} style={{ padding: "8px 6px", borderRadius: 9, background: s.bg, textAlign: "center" }}>
                           <div style={{ fontSize: 16, fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.value}</div>
@@ -1278,7 +1278,7 @@ export default function POSPage() {
                 )}
 
                 {/* Loyalty redemption row */}
-                {loyaltySettings.enabled && selectedClient?.id && availableLoyaltyPts > 0 && (
+                {loyaltyActive(loyaltySettings) && selectedClient?.id && availableLoyaltyPts > 0 && (
                   <div style={{ marginTop: 8, padding: "10px", borderRadius: 9, background: "#fffbeb", border: "1px solid #fde68a" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 7 }}>
                       <Gift size={12} color="#d97706" style={{ flexShrink: 0 }} />

@@ -1,6 +1,7 @@
 import { saveLoyaltyHistoryToDB } from "./turso-sync";
 import type { Client, LoyaltyTransaction } from "./types";
-import { locationUserKey } from "./locations";
+import { activePlan, locationUserKey } from "./locations";
+import { supportsLoyalty } from "./plans";
 
 const HISTORY_KEY = "pointly_loyalty_history";
 
@@ -13,6 +14,16 @@ export interface LoyaltySettings {
   silverMin: number;
   goldMin: number;
   platinumMin: number;
+}
+
+/**
+ * True when points should accrue and be redeemable right now: the business has
+ * switched the programme on *and* its plan includes loyalty. A Basic account
+ * keeps its saved settings and balances untouched — moving it to Pro brings
+ * the programme straight back as it was.
+ */
+export function loyaltyActive(settings: Pick<LoyaltySettings, "enabled">): boolean {
+  return settings.enabled && supportsLoyalty(activePlan().id);
 }
 
 export const TIER_META: Record<LoyaltyTier, { label: string; color: string; bg: string; emoji: string }> = {
@@ -81,7 +92,7 @@ export function awardPoints(
   settings: LoyaltySettings,
   appointmentId?: string,
 ): Client {
-  if (!settings.enabled) return client;
+  if (!loyaltyActive(settings)) return client;
   const pts = calcPointsToEarn(amount, settings.pointsPerRupee);
   if (pts <= 0) return client;
   const updated = {

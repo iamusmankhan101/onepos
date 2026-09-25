@@ -19,7 +19,7 @@ import type { AuditEntry, PlatformStats, PlatformUser } from "@/lib/admin-db";
 import type { AuthUser } from "@/lib/auth-db";
 import { signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
-import { normalizePlanId, PLANS, type PlanId } from "@/lib/plans";
+import { normalizePlanId, planPriceLabel, PLANS, type PlanId } from "@/lib/plans";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -110,8 +110,8 @@ const ACTION_LABEL: Record<string, string> = {
 };
 
 const PLAN_STYLE: Record<PlanId, { label: string; color: string; bg: string }> = {
-  starter: { label: "Starter", color: "#6b6b8a", bg: "#f3f4f6" },
-  pro:     { label: "Pro",     color: "#c2410c", bg: "#fff7ed" },
+  starter: { label: PLANS.starter.name, color: "#6b6b8a", bg: "#f3f4f6" },
+  pro:     { label: PLANS.pro.name,     color: "#c2410c", bg: "#fff7ed" },
 };
 
 // ─── Small building blocks ────────────────────────────────────────────────────
@@ -713,7 +713,9 @@ export default function AdminConsolePage() {
                           {isTeamLogin ? (user.ownerBusinessName || "—") : (user.businessName || "—")}
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
-                          {!isTeamLogin && user.role !== "admin" && <Pill {...PLAN_STYLE[plan.id]} />}
+                          {!isTeamLogin && user.role !== "admin" && (
+                            <span title={planPriceLabel(plan)}><Pill {...PLAN_STYLE[plan.id]} /></span>
+                          )}
                           <span style={{ fontSize: 11, color: "#a5a5bb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {isTeamLogin
                               ? `Branch: ${user.locationId || "main"}`
@@ -812,7 +814,9 @@ export default function AdminConsolePage() {
                               <button type="button" className="ac-menu-item" disabled={busy}
                                 onClick={() => runAction("set-plan", [user], { plan: plan.id === "pro" ? "starter" : "pro" })}>
                                 <Sparkles size={13} color="#c2410c" />
-                                {plan.id === "pro" ? `Move to ${PLANS.starter.name} plan` : `Move to ${PLANS.pro.name} plan`}
+                                {plan.id === "pro"
+                                  ? `Move to ${PLANS.starter.name} (${planPriceLabel(PLANS.starter)})`
+                                  : `Move to ${PLANS.pro.name} (${planPriceLabel(PLANS.pro)})`}
                               </button>
                             )}
 

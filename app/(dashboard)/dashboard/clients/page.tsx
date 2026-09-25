@@ -8,7 +8,7 @@ import { getInvoices, type Invoice } from "@/lib/invoices";
 import type { Client, Appointment } from "@/lib/types";
 import { Search, X, Plus, Phone, Mail, Calendar, Heart, Tag, MapPin, ChevronDown, Camera, ExternalLink, Trash2, Download, Upload, FileSpreadsheet, ShoppingCart } from "lucide-react";
 import { SETTINGS_CHANGED_EVENT, settingsStore } from "@/lib/settings-store";
-import { getTier, TIER_META, nextTierThreshold, pointsToRupees, type LoyaltySettings } from "@/lib/loyalty";
+import { getTier, loyaltyActive, TIER_META, nextTierThreshold, pointsToRupees, type LoyaltySettings } from "@/lib/loyalty";
 import { clientLocationId, getActiveLocationFilter, getDefaultLocationId, getBusinessLocations, locationName, type BusinessLocation } from "@/lib/locations";
 import { getSectionOptions, getActiveSection, inSection, defaultSectionForNewRecord } from "@/lib/sections";
 import { normalizePhone } from "@/lib/whatsapp-link";
@@ -237,7 +237,7 @@ function ClientPanel({ client, onClose, appointments, locations, onUpdate, onDel
             </div>
 
             {/* Loyalty row — only when enabled */}
-            {loyalty.enabled && (
+            {loyaltyActive(loyalty) && (
               <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderRadius: 12, background: tierMeta.bg, border: `1px solid ${tierMeta.color}28` }}>
                 <div style={{ fontSize: 20, lineHeight: 1 }}>{tierMeta.emoji}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
