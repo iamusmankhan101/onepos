@@ -31,7 +31,8 @@ export type AdminAction =
   | "reset-password"
   | "delete"
   | "grant-admin" | "revoke-admin"
-  | "set-plan";
+  | "set-plan"
+  | "record-payment" | "void-payment";
 
 export interface AuditEntry {
   id: string;
