@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowRight, Building2, Clock, LockKeyhole, Mail, Phone, User } from "lucide-react";
+import { ArrowRight, Building2, Clock, Coffee, LockKeyhole, Mail, Phone, Scissors, ShoppingBag, User, UtensilsCrossed } from "lucide-react";
 import Wordmark from "@/components/wordmark";
+import { BUSINESS_TYPES, SIGNUP_BUSINESS_TYPE_IDS, type BusinessTypeId } from "@/lib/business-types";
 import styles from "../auth.module.css";
 
 // `businessName` is the API's field name (unchanged so nothing downstream breaks);
@@ -16,8 +17,16 @@ const FIELDS = [
   { id: "password",  label: "Password",      icon: LockKeyhole, type: "password", placeholder: "Minimum 8 characters" },
 ] as const;
 
+const TYPE_ICONS: Partial<Record<BusinessTypeId, React.ElementType>> = {
+  restaurant: UtensilsCrossed,
+  cafe:       Coffee,
+  retail:     ShoppingBag,
+  salon:      Scissors,
+};
+
 export default function SignUpPage() {
   const [form, setForm] = useState({ ownerName: "", businessName: "", email: "", phone: "", password: "" });
+  const [businessType, setBusinessType] = useState<BusinessTypeId | "">("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   // Set once the account exists but is waiting on a platform admin — there is
@@ -31,6 +40,7 @@ export default function SignUpPage() {
   async function handleSubmit(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+    if (!businessType) { setError("Choose your type of business."); return; }
     if (form.password.length < 8) { setError("Password must be at least 8 characters."); return; }
 
     setSending(true);
@@ -44,6 +54,7 @@ export default function SignUpPage() {
           ownerName: form.ownerName,
           businessName: form.businessName || form.ownerName,
           phone:     form.phone,
+          businessType,
         }),
       });
       const signupData = await signupRes.json() as {
@@ -146,6 +157,31 @@ export default function SignUpPage() {
             <div className={styles.formHeader}>
               <h1 className={styles.formTitle} style={{ marginTop: 14 }}>Create your account</h1>
               <p className={styles.formSubtitle}>Fill in your business details — a Pointly admin approves new accounts before the first sign-in.</p>
+            </div>
+
+            <span className={styles.label} id="business-type-label">Type of business</span>
+            <div className={styles.typeGrid} role="radiogroup" aria-labelledby="business-type-label">
+              {SIGNUP_BUSINESS_TYPE_IDS.map((id) => {
+                const type = BUSINESS_TYPES[id];
+                const Icon = TYPE_ICONS[id] ?? Building2;
+                const active = businessType === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => { setBusinessType(id); setError(""); }}
+                    className={`${styles.typeCard}${active ? ` ${styles.typeCardActive}` : ""}`}
+                  >
+                    <span className={styles.typeIcon}><Icon size={16} /></span>
+                    <span>
+                      <span className={styles.typeName}>{type.name}</span>
+                      <span className={styles.typeBlurb}>{type.blurb}</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
             <div className={styles.fieldGrid}>

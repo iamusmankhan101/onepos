@@ -10,6 +10,7 @@ import {
 import { AuthUser, getCurrentUser, signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
 import { SETTINGS_CHANGED_EVENT, settingsStore, reloadSettings } from "@/lib/settings-store";
+import { useBusinessType } from "@/lib/use-business-type";
 
 const NAV_GROUPS: {
   label: string;
@@ -51,6 +52,12 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
   const [businessLogo, setBusinessLogo] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const businessType = useBusinessType();
+  // A café's Products is its Menu — the route stays the same, only the name changes.
+  const labelFor = (href: string, fallback: string) =>
+    href === "/dashboard/products" ? businessType.productsLabel
+      : href === "/dashboard/clients" ? businessType.clientsLabel
+      : fallback;
 
   useEffect(() => {
     function sync() {
@@ -315,7 +322,7 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
               <div key={group.label}>
                 <div className="sb-section">{group.label}</div>
                 {visibleItems.map((item) => (
-                  <NavItem key={item.href} href={item.href} icon={item.icon} label={item.label} />
+                  <NavItem key={item.href} href={item.href} icon={item.icon} label={labelFor(item.href, item.label)} />
                 ))}
               </div>
             );

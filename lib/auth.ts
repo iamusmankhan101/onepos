@@ -1,4 +1,5 @@
 import type { PlanId } from "./plans";
+import type { BusinessTypeId } from "./business-types";
 
 export interface AuthUser {
   id: string;
@@ -20,6 +21,11 @@ export interface AuthUser {
    * normalizePlanId() reads as Starter.
    */
   plan?: PlanId;
+  /**
+   * Restaurant, café, retail… — the owner's, for staff logins too. Absent on
+   * the local demo/seed accounts, which normalizeBusinessTypeId() reads as General.
+   */
+  businessType?: BusinessTypeId;
 }
 
 interface StoredUser extends AuthUser {

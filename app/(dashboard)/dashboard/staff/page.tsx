@@ -6,9 +6,10 @@ import { getStoredStaff, saveStaff, getStoredServices, saveServices, getStoredAp
 import type { Staff, Service, StaffPayType, Appointment } from "@/lib/types";
 import { X, Plus, Check, ChevronRight, Trash2, UserCog, Pencil, Lock, Upload, Download, FileSpreadsheet, ChevronDown } from "lucide-react";
 import { getSectionOptions, getActiveSection, inSection, defaultSectionForNewRecord } from "@/lib/sections";
-import { CUSTOM_ROLE_OPTION, getRoleOptions, normalizeRole, roleLabel, roleStyle, ROLE_SEED, toRoleId } from "@/lib/staff-roles";
+import { CUSTOM_ROLE_OPTION, getRoleOptions, normalizeRole, roleLabel, roleStyle, toRoleId } from "@/lib/staff-roles";
 import PageTitle from "@/components/page-title";
 import MobilePageHeader from "@/components/mobile-page-header";
+import { useBusinessType } from "@/lib/use-business-type";
 
 import { fmtCurrency as fmt } from "@/lib/format";
 
@@ -102,7 +103,8 @@ function StaffFormModal({ onClose, onSave, staff, servicesList, staffList }: { o
   // Built-in roles plus whatever this team has already invented. An existing
   // custom role is therefore already in the list when editing someone who
   // holds it, so the picker shows their real role rather than falling blank.
-  const roleOptions = getRoleOptions(staffList);
+  const { roleSeed } = useBusinessType();
+  const roleOptions = getRoleOptions(staffList, roleSeed);
   const [customRole, setCustomRole] = useState("");
   const addingCustomRole = form.role === CUSTOM_ROLE_OPTION;
 
@@ -300,6 +302,7 @@ function StaffImportModal({ existing, servicesList, onClose, onImport }: {
   onClose: () => void;
   onImport: (records: StaffImportRecord[]) => StaffImportResult;
 }) {
+  const { roleSeed } = useBusinessType();
   const [step, setStep] = useState<"pick" | "preview" | "done">("pick");
   const [parsed, setParsed] = useState<StaffImportRecord[]>([]);
   const [result, setResult] = useState<StaffImportResult | null>(null);
@@ -447,7 +450,7 @@ function StaffImportModal({ existing, servicesList, onClose, onImport }: {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 16px", fontSize: 11 }}>
                 {[
-                  ["Name", "Required"], ["Phone", "Required"], ["Role", `${ROLE_SEED.join(" / ")} — or your own`], ["Pay Type", "commission / salary / both"],
+                  ["Name", "Required"], ["Phone", "Required"], ["Role", `${roleSeed.join(" / ")} — or your own`], ["Pay Type", "commission / salary / both"],
                   ["Assigned Services", "Comma-separated service names"], ["Specialties", "Comma-separated"], ["Active", "Yes / No"], ["Section", "Optional"],
                 ].map(([col, hint]) => <div key={col}><strong>{col}</strong>: {hint}</div>)}
               </div>

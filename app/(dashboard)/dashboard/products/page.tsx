@@ -8,6 +8,7 @@ import type { InventoryItem, InventoryCategory, InventoryUnit } from "@/lib/type
 import { getSectionOptions, getActiveSection, inSection, defaultSectionForNewRecord } from "@/lib/sections";
 import MobilePageHeader from "@/components/mobile-page-header";
 import PageTitle from "@/components/page-title";
+import { useBusinessType } from "@/lib/use-business-type";
 import {
   Search, X, Plus, AlertTriangle, Package, ChevronDown,
   Edit2, Trash2, Bell, Copy, CheckCircle, TrendingDown,
@@ -29,6 +30,16 @@ const CATEGORY_CONFIG: Record<InventoryCategory, { label: string; color: string;
 
 const UNITS: InventoryUnit[]      = ["pcs", "pack", "box", "kg", "g", "l", "ml", "bottle"];
 const CATEGORIES = Object.keys(CATEGORY_CONFIG) as InventoryCategory[];
+
+/**
+ * The categories a picker offers: the business type's own first (a café leads
+ * with Drinks), then any other category still in use, so nothing already
+ * filed under, say, Electronics becomes unpickable or unfilterable.
+ */
+function categoryOptions(featured: InventoryCategory[], inUse: (InventoryCategory | "")[]): InventoryCategory[] {
+  const extra = CATEGORIES.filter((c) => !featured.includes(c) && inUse.includes(c));
+  return [...featured, ...extra];
+}
 
 import { fmtCurrency as fmt } from "@/lib/format";
 const fmtV = (n: number) => {
@@ -197,6 +208,8 @@ function formToItem(form: ItemForm, existing?: InventoryItem): InventoryItem {
 function ItemFormFields({ form, set, items }: { form: ItemForm; set: (k: keyof ItemForm, v: string | boolean) => void; items: InventoryItem[] }) {
   const [imageError, setImageError] = useState("");
   const [reading, setReading] = useState(false);
+  const businessType = useBusinessType();
+  const categoryChoices = categoryOptions(businessType.categories, [form.category, ...items.map((i) => i.category)]);
 
   async function pickImage(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -246,14 +259,14 @@ function ItemFormFields({ form, set, items }: { form: ItemForm; set: (k: keyof I
         {imageError && <div style={{ fontSize: 11, color: "#dc2626", marginTop: 6 }}>{imageError}</div>}
       </Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Product Name *"><input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. 500ml Water Bottle" style={INP} /></Field>
+        <Field label={`${businessType.productLabel} Name *`}><input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. 500ml Water Bottle" style={INP} /></Field>
         <Field label="Brand"><input value={form.brand} onChange={(e) => set("brand", e.target.value)} placeholder="e.g. Nestle" style={INP} /></Field>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Category *">
           <select value={form.category} onChange={(e) => set("category", e.target.value)} style={INP}>
             <option value="">Select…</option>
-            {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_CONFIG[c].label}</option>)}
+            {categoryChoices.map((c) => <option key={c} value={c}>{CATEGORY_CONFIG[c].label}</option>)}
           </select>
         </Field>
         <Field label="Unit *">
@@ -596,6 +609,7 @@ function AddModal({ onClose, onAdd, items }: { onClose: () => void; onAdd: (item
   const [form, setForm] = useState<ItemForm>(EMPTY_FORM);
   const listedInPos = Boolean(form.variablePrice ? form.priceRangeMin : form.retailPrice);
   const [done, setDone] = useState(false);
+  const { productLabel } = useBusinessType();
   const set = useCallback((k: keyof ItemForm, v: string | boolean) => setForm((f) => ({ ...f, [k]: v })), []);
   const canSubmit = form.name && form.category && form.currentStock && form.minStock && form.costPrice && priceFieldsValid(form);
 
@@ -603,7 +617,7 @@ function AddModal({ onClose, onAdd, items }: { onClose: () => void; onAdd: (item
     <Overlay onClose={onClose}>
       <div style={{ textAlign: "center", padding: "16px 0" }}>
         <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#ecfdf5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 28 }}>✓</div>
-        <div style={{ fontWeight: 700, fontSize: 17, color: "#1a1a2e", marginBottom: 6 }}>Product Added!</div>
+        <div style={{ fontWeight: 700, fontSize: 17, color: "#1a1a2e", marginBottom: 6 }}>{productLabel} Added!</div>
         <div style={{ fontSize: 13, color: "#9898b0", marginBottom: 24 }}>
           {listedInPos
             ? "It's on sale in the POS now."
@@ -616,7 +630,7 @@ function AddModal({ onClose, onAdd, items }: { onClose: () => void; onAdd: (item
 
   return (
     <Overlay onClose={onClose}>
-      <ModalHeader title="Add Product" onClose={onClose} />
+      <ModalHeader title={`Add ${productLabel}`} onClose={onClose} />
       <div style={{ padding: "22px 24px" }}>
         <ItemFormFields form={form} set={set} items={items} />
         <div style={{ display: "flex", gap: 10, paddingTop: 18, marginTop: 6, borderTop: "1px solid #f0f0f8" }}>
@@ -871,6 +885,7 @@ export default function ProductsPage() {
   const [items, setItems]               = useState<InventoryItem[]>([]);
   const [search, setSearch]             = useState("");
   const [catFilter, setCatFilter]       = useState<InventoryCategory | "all">("all");
+  const businessType = useBusinessType();
   const [statusFilter, setStatusFilter] = useState<"all" | "low" | "out" | "ok">("all");
   const [sectionFilter, setSectionFilter] = useState(() => getActiveSection());
   const [showFilters, setShowFilters]   = useState(false);
@@ -928,6 +943,10 @@ export default function ProductsPage() {
   }, [items, persist]);
 
   const retailItems = useMemo(() => items.filter(i => (i.retailPrice ?? 0) > 0), [items]);
+  const categoryChoices = useMemo(
+    () => categoryOptions(businessType.categories, items.map((i) => i.category)),
+    [businessType, items],
+  );
 
   const totalValue = useMemo(() => items.reduce((s, i) => s + i.costPrice * i.currentStock, 0), [items]);
   const alertItems = useMemo(() => items.filter((i) => stockStatus(i) !== "ok"), [items]);
@@ -975,7 +994,7 @@ export default function ProductsPage() {
 
       {/* Mobile app bar */}
       <MobilePageHeader
-        title="Products"
+        title={businessType.productsLabel}
         subtitle={tab === "stock"
           ? `${items.length} items · ${fmtV(totalValue)}`
           : `${retailItems.length} in POS`}
@@ -1012,7 +1031,7 @@ export default function ProductsPage() {
             </div>
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, opacity: 0.7, textTransform: "uppercase" }}>Categories</div>
-              <div style={{ fontSize: 18, fontWeight: 900, color: "rgba(255,255,255,0.9)" }}>{CATEGORIES.length}</div>
+              <div style={{ fontSize: 18, fontWeight: 900, color: "rgba(255,255,255,0.9)" }}>{categoryChoices.length}</div>
             </div>
           </div>
         </div>
@@ -1076,7 +1095,7 @@ export default function ProductsPage() {
           {/* Category filter chips */}
           <div className="mobile-filter-row">
             <button type="button" className={`mobile-filter-chip ${catFilter === "all" ? "active" : ""}`} onClick={() => setCatFilter("all")}>All</button>
-            {CATEGORIES.map(c => (
+            {categoryChoices.map(c => (
               <button key={c} type="button" className={`mobile-filter-chip ${catFilter === c ? "active" : ""}`} onClick={() => setCatFilter(c)}>
                 {CATEGORY_CONFIG[c].label}
               </button>
@@ -1245,7 +1264,7 @@ export default function ProductsPage() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <PageTitle
             icon={<Package size={24} />}
-            title="Products"
+            title={businessType.productsLabel}
             subtitle={
               <>
                 {tab === "stock"
@@ -1304,7 +1323,7 @@ export default function ProductsPage() {
               style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 12, border: "none", background: "var(--accent-gradient)", fontSize: 13, fontWeight: 750, color: "#fff", cursor: "pointer", boxShadow: "0 4px 14px var(--accent-glow)", transition: "all 0.18s ease" }}
               className="page-header-btn hover-scale"
             >
-              <Plus size={16} /> Add Product
+              <Plus size={16} /> Add {businessType.productLabel}
             </button>
           </div>
         </div>
@@ -1550,7 +1569,7 @@ export default function ProductsPage() {
                 {
                   label: "Category", value: catFilter,
                   onChange: (v: string) => setCatFilter(v as InventoryCategory | "all"),
-                  options: [["all", "All Categories"], ...CATEGORIES.map((c) => [c, CATEGORY_CONFIG[c].label])] as [string, string][],
+                  options: [["all", "All Categories"], ...categoryChoices.map((c) => [c, CATEGORY_CONFIG[c].label])] as [string, string][],
                 },
                 {
                   label: "Stock Status", value: statusFilter,

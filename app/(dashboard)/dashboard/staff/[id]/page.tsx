@@ -15,6 +15,7 @@ import { exportStaffPdf } from "@/lib/export-pdf";
 import { settingsStore } from "@/lib/settings-store";
 import { getActiveSection, inSection } from "@/lib/sections";
 import { CUSTOM_ROLE_OPTION, getRoleOptions, roleLabel, roleStyle, toRoleId } from "@/lib/staff-roles";
+import { activeBusinessType } from "@/lib/use-business-type";
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
   completed:    { label: "Completed",   color: "#059669", bg: "#ecfdf5" },
@@ -76,7 +77,7 @@ function EditModal({
   // Seeded from storage rather than a prop: this modal is only ever mounted
   // from the loaded detail page, and the whole team is what says which custom
   // roles exist (see lib/staff-roles.ts).
-  const [roleOptions] = useState<string[]>(() => getRoleOptions(getStoredStaff()));
+  const [roleOptions] = useState<string[]>(() => getRoleOptions(getStoredStaff(), activeBusinessType().roleSeed));
   const [customRole, setCustomRole] = useState("");
   const addingCustomRole = form.role === CUSTOM_ROLE_OPTION;
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));

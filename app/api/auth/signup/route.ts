@@ -6,6 +6,7 @@
 import { NextRequest } from "next/server";
 import { createUser } from "@/lib/auth-db";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
+import { normalizeBusinessTypeId, SIGNUP_BUSINESS_TYPE_IDS } from "@/lib/business-types";
 
 /**
  * The one success reply, identical for a new account and an email that's
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest) {
   const ownerName = str(body.ownerName).trim();
   const businessName = str(body.businessName).trim();
   const phone = str(body.phone).trim();
+  const businessType = normalizeBusinessTypeId(body.businessType);
 
   if (!email || !password || !ownerName) {
     return Response.json({ ok: false, error: "Missing required fields." }, { status: 400 });
@@ -53,6 +55,11 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false, error: "Password must be 128 characters or fewer." }, { status: 400 });
   }
 
+  // "general" is the legacy default, not a choice the form offers.
+  if (!SIGNUP_BUSINESS_TYPE_IDS.includes(businessType)) {
+    return Response.json({ ok: false, error: "Please choose your type of business." }, { status: 400 });
+  }
+
   if (ownerName.length > 100 || businessName.length > 120 || phone.length > 30) {
     return Response.json({ ok: false, error: "One of the fields is too long." }, { status: 400 });
   }
@@ -65,6 +72,7 @@ export async function POST(req: NextRequest) {
       businessName: businessName || ownerName,
       phone: phone || "",
       role: "owner",
+      businessType,
       emailVerified: true,
       // Every new business waits for a platform admin to approve it in
       // /admin. validateCredentials() refuses a pending account, so the

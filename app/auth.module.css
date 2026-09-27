@@ -554,3 +554,77 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Business type picker (sign-up) ─────────────────────────────── */
+.typeGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.typeCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.typeCard:hover {
+  border-color: #fdba74;
+}
+
+.typeCard:focus-visible {
+  outline: 2px solid #ea580c;
+  outline-offset: 2px;
+}
+
+.typeCardActive {
+  border-color: #ea580c;
+  background: #fff7ed;
+  box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.12);
+}
+
+.typeIcon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.typeCardActive .typeIcon {
+  background: #ea580c;
+  color: #fff;
+}
+
+.typeName {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.typeBlurb {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #64748b;
+}
+
+@media (max-width: 380px) {
+  .typeGrid {
+    grid-template-columns: 1fr;
+  }
+}

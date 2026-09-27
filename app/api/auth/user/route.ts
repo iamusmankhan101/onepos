@@ -13,7 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getEffectivePlan, getUserById, isSessionRevoked } from "@/lib/auth-db";
+import { getEffectiveBusinessType, getEffectivePlan, getUserById, isSessionRevoked } from "@/lib/auth-db";
 import { verifySessionToken, COOKIE_NAME, LEGACY_COOKIE_NAME, tokenId } from "@/lib/session";
 
 /** 401 that also clears the dead cookie, so the browser stops re-sending it. */
@@ -68,6 +68,8 @@ export async function GET(req: NextRequest) {
         // The business's tier, not necessarily this row's: a staff login
         // inherits its owner's, and the dashboard gates multi-branch on it.
         plan: await getEffectivePlan(user),
+        // Same inheritance as plan — it decides what the dashboard calls things.
+        businessType: await getEffectiveBusinessType(user),
       },
     });
   } catch (err) {

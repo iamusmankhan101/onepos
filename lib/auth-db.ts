@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import type { InValue } from "@libsql/client";
 import { randomBytes, pbkdf2Sync, timingSafeEqual } from "crypto";
 import { normalizePlanId, type PlanId } from "@/lib/plans";
+import { normalizeBusinessTypeId, type BusinessTypeId } from "@/lib/business-types";
 
 // ─── Password hashing ─────────────────────────────────────────────────────────
 
@@ -77,6 +78,8 @@ async function ensureAuthTablesUncached(): Promise<void> {
   await db.execute("ALTER TABLE users ADD COLUMN account_frozen INTEGER NOT NULL DEFAULT 0").catch(() => {});
   await db.execute("ALTER TABLE users ADD COLUMN freeze_reason TEXT").catch(() => {});
   await db.execute("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'starter'").catch(() => {});
+  // 'general' for every account that predates the sign-up picker — it keeps the app as it was.
+  await db.execute("ALTER TABLE users ADD COLUMN business_type TEXT NOT NULL DEFAULT 'general'").catch(() => {});
 
   // Create index for faster email lookups
   await db.execute(`
@@ -119,6 +122,11 @@ export interface User {
    * staff or manager row inherits its owner's, see getEffectivePlan().
    */
   plan: PlanId;
+  /**
+   * What kind of business this is (restaurant, café…). Like plan, only the
+   * owner's row is consulted — see getEffectiveBusinessType().
+   */
+  businessType: BusinessTypeId;
   createdAt: string;
 }
 
@@ -142,6 +150,11 @@ export interface AuthUser {
    * staff or manager row inherits its owner's, see getEffectivePlan().
    */
   plan: PlanId;
+  /**
+   * What kind of business this is (restaurant, café…). Like plan, only the
+   * owner's row is consulted — see getEffectiveBusinessType().
+   */
+  businessType: BusinessTypeId;
   createdAt: string;
 }
 
@@ -166,6 +179,7 @@ function rowToUser(r: any): User {
     accountFrozen: (r.account_frozen as number) === 1,
     freezeReason: (r.freeze_reason as string) ?? null,
     plan: normalizePlanId(r.plan),
+    businessType: normalizeBusinessTypeId(r.business_type),
     createdAt: r.created_at as string,
   };
 }
@@ -187,6 +201,7 @@ export async function createUser(input: {
   role?: "owner" | "manager" | "staff" | "admin";
   emailVerified?: boolean;
   approvalStatus?: ApprovalStatus;
+  businessType?: BusinessTypeId;
 }): Promise<AuthUser> {
   await ensureAuthTables();
 
@@ -195,8 +210,8 @@ export async function createUser(input: {
 
   try {
     await db.execute({
-      sql: `INSERT INTO users (id, email, password, owner_name, business_name, phone, role, email_verified, approval_status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO users (id, email, password, owner_name, business_name, phone, role, email_verified, approval_status, business_type, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         input.email.trim().toLowerCase(),
@@ -207,6 +222,7 @@ export async function createUser(input: {
         input.role || "owner",
         input.emailVerified ? 1 : 0,
         input.approvalStatus ?? ((input.role || "owner") === "owner" ? "pending" : "approved"),
+        normalizeBusinessTypeId(input.businessType),
         createdAt,
       ],
     });
@@ -357,6 +373,22 @@ export async function getEffectivePlan(user: Pick<User, "plan" | "businessOwnerI
   if (!user.businessOwnerId) return normalizePlanId(user.plan);
   const owner = await getUserById(user.businessOwnerId);
   return normalizePlanId(owner?.plan);
+}
+
+/** Sets what kind of business an owner runs. Team logins inherit it, like the plan. */
+export async function setUserBusinessType(id: string, businessType: BusinessTypeId): Promise<void> {
+  await ensureAuthTables();
+  await db.execute({
+    sql: "UPDATE users SET business_type = ? WHERE id = ?",
+    args: [businessType, id],
+  });
+}
+
+/** The business type that applies to a login — their owner's for staff and managers. */
+export async function getEffectiveBusinessType(user: Pick<User, "businessType" | "businessOwnerId">): Promise<BusinessTypeId> {
+  if (!user.businessOwnerId) return normalizeBusinessTypeId(user.businessType);
+  const owner = await getUserById(user.businessOwnerId);
+  return normalizeBusinessTypeId(owner?.businessType);
 }
 
 export async function updateAccountFreeze(

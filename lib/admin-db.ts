@@ -32,6 +32,7 @@ export type AdminAction =
   | "delete"
   | "grant-admin" | "revoke-admin"
   | "set-plan"
+  | "set-business-type"
   | "record-payment" | "void-payment";
 
 export interface AuditEntry {

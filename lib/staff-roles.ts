@@ -85,12 +85,15 @@ export function roleStyle(role: StaffRoleValue | undefined): { color: string; bg
 /**
  * What the role pickers offer: the seeds first, then every custom role the
  * team already uses. Mirrors getSectionOptions() in lib/sections.ts.
+ *
+ * `seed` is the business type's list (a café's baristas, a restaurant's
+ * chefs — see lib/business-types.ts); it defaults to the original salon one.
  */
-export function getRoleOptions(records: { role?: StaffRoleValue }[]): string[] {
+export function getRoleOptions(records: { role?: StaffRoleValue }[], seed: readonly string[] = ROLE_SEED): string[] {
   const inUse = Array.from(
     new Set(records.map((record) => String(record.role ?? "").trim()).filter(Boolean)),
-  ).filter((role) => !(ROLE_SEED as readonly string[]).includes(role));
-  return [...ROLE_SEED, ...inUse.sort()];
+  ).filter((role) => !seed.includes(role));
+  return [...seed, ...inUse.sort()];
 }
 
 /**

@@ -19,11 +19,13 @@ import { requireAdmin } from "@/lib/api-auth";
 import {
   getUserById,
   revokeAllSessionsForUser,
+  setUserBusinessType,
   setUserPlan,
   updateAccountFreeze,
   updateUserApprovalStatus,
 } from "@/lib/auth-db";
 import { normalizePlanId, PLANS } from "@/lib/plans";
+import { BUSINESS_TYPES, normalizeBusinessTypeId } from "@/lib/business-types";
 import {
   adminResetPassword,
   deleteUserAccount,
@@ -37,6 +39,7 @@ import {
 const ACTIONS = new Set<AdminAction>([
   "freeze", "unfreeze", "approve", "reject", "revoke-sessions",
   "reset-password", "delete", "grant-admin", "revoke-admin", "set-plan",
+  "set-business-type",
 ]);
 
 /** Actions that must never be pointed at the admin running them. */
@@ -59,7 +62,7 @@ export async function POST(req: NextRequest) {
   const admin = await requireAdmin(req);
   if (!admin) return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
-  let body: { action?: string; userIds?: unknown; reason?: string; password?: string; plan?: string };
+  let body: { action?: string; userIds?: unknown; reason?: string; password?: string; plan?: string; businessType?: string };
   try {
     body = await req.json();
   } catch {
@@ -99,6 +102,11 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false, error: "Unknown plan." }, { status: 400 });
   }
   const plan = normalizePlanId(body.plan);
+
+  if (action === "set-business-type" && normalizeBusinessTypeId(body.businessType) !== body.businessType) {
+    return Response.json({ ok: false, error: "Unknown business type." }, { status: 400 });
+  }
+  const businessType = normalizeBusinessTypeId(body.businessType);
 
   const results: { id: string; email?: string; ok: boolean; error?: string }[] = [];
 
@@ -165,6 +173,12 @@ export async function POST(req: NextRequest) {
           if (target.businessOwnerId) throw new Error("Team logins follow their business owner's plan.");
           await setUserPlan(id, plan);
           detail = `Plan set to ${PLANS[plan].name}.`;
+          break;
+        }
+        case "set-business-type": {
+          if (target.businessOwnerId) throw new Error("Team logins follow their business owner's type.");
+          await setUserBusinessType(id, businessType);
+          detail = `Business type set to ${BUSINESS_TYPES[businessType].name}.`;
           break;
         }
       }

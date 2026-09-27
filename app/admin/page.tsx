@@ -22,12 +22,13 @@ import { Modal, Pill, StatCard } from "./ui";
 import BillingTab from "./billing-tab";
 import Wordmark from "@/components/wordmark";
 import { normalizePlanId, planPriceLabel, PLANS, type PlanId } from "@/lib/plans";
+import { BUSINESS_TYPE_IDS, BUSINESS_TYPES, businessTypeFor, type BusinessTypeId } from "@/lib/business-types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type AdminAction =
   | "freeze" | "unfreeze" | "approve" | "reject" | "revoke-sessions"
-  | "reset-password" | "delete" | "grant-admin" | "revoke-admin" | "set-plan";
+  | "reset-password" | "delete" | "grant-admin" | "revoke-admin" | "set-plan" | "set-business-type";
 
 type RoleFilter = "all" | "owner" | "manager" | "staff" | "admin";
 type StatusFilter = "all" | "active" | "frozen" | "pending" | "rejected";
@@ -109,6 +110,7 @@ const ACTION_LABEL: Record<string, string> = {
   "grant-admin": "Granted admin",
   "revoke-admin": "Removed admin",
   "set-plan": "Changed plan",
+  "set-business-type": "Changed business type",
   "record-payment": "Recorded payment",
   "void-payment": "Voided payment",
 };
@@ -234,7 +236,7 @@ export default function AdminConsolePage() {
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
-  async function runAction(action: AdminAction, targets: PlatformUser[], extra: { reason?: string; password?: string; plan?: PlanId } = {}) {
+  async function runAction(action: AdminAction, targets: PlatformUser[], extra: { reason?: string; password?: string; plan?: PlanId; businessType?: BusinessTypeId } = {}) {
     if (targets.length === 0) return;
     setBusy(true);
     setMenuFor(null);
@@ -598,6 +600,7 @@ export default function AdminConsolePage() {
                   const isSelf = user.id === adminId;
                   const isTeamLogin = Boolean(user.businessOwnerId);
                   const plan = PLANS[normalizePlanId(user.plan)];
+                  const businessType = businessTypeFor(user);
                   return (
                     <div key={user.id} className="ac-row ac-user-row" style={{ borderBottom: "1px solid #f3f3f9", position: "relative" }}>
                       <input
@@ -639,6 +642,9 @@ export default function AdminConsolePage() {
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
                           {!isTeamLogin && user.role !== "admin" && (
                             <span title={planPriceLabel(plan)}><Pill {...PLAN_STYLE[plan.id]} /></span>
+                          )}
+                          {!isTeamLogin && user.role !== "admin" && (
+                            <span style={{ fontSize: 11, fontWeight: 700, color: "#6b6b8a", whiteSpace: "nowrap" }}>{businessType.name} ·</span>
                           )}
                           <span style={{ fontSize: 11, color: "#a5a5bb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {isTeamLogin
@@ -742,6 +748,21 @@ export default function AdminConsolePage() {
                                   ? `Move to ${PLANS.starter.name} (${planPriceLabel(PLANS.starter)})`
                                   : `Move to ${PLANS.pro.name} (${planPriceLabel(PLANS.pro)})`}
                               </button>
+                            )}
+
+                            {!isTeamLogin && user.role !== "admin" && (
+                              <label className="ac-menu-item" style={{ cursor: "default" }}>
+                                <Building2 size={13} color="#6b6b8a" />
+                                <select
+                                  aria-label={`Business type for ${user.email}`}
+                                  disabled={busy}
+                                  value={businessType.id}
+                                  onChange={(e) => runAction("set-business-type", [user], { businessType: e.target.value as BusinessTypeId })}
+                                  style={{ flex: 1, border: "1px solid #ececf4", borderRadius: 7, padding: "4px 6px", fontSize: 12, fontFamily: "inherit", color: "#3f3f5a", background: "#fff", cursor: "pointer" }}
+                                >
+                                  {BUSINESS_TYPE_IDS.map((id) => <option key={id} value={id}>{BUSINESS_TYPES[id].name}</option>)}
+                                </select>
+                              </label>
                             )}
 
                             {!isTeamLogin && user.role === "owner" && (

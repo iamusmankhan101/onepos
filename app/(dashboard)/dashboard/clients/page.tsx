@@ -14,6 +14,7 @@ import { getSectionOptions, getActiveSection, inSection, defaultSectionForNewRec
 import { normalizePhone } from "@/lib/whatsapp-link";
 import PageTitle from "@/components/page-title";
 import MobilePageHeader from "@/components/mobile-page-header";
+import { useBusinessType } from "@/lib/use-business-type";
 
 const STATUS_CONFIG = {
   booked:        { color: "#6366f1", bg: "#eef2ff" },
@@ -91,6 +92,7 @@ function DeleteConfirmModal({ clientName, onConfirm, onCancel }: { clientName: s
 // ── Client Detail Panel ───────────────────────────────────────────────────────
 function ClientPanel({ client, onClose, appointments, locations, onUpdate, onDelete }: { client: Client; onClose: () => void; appointments: Appointment[]; locations: BusinessLocation[]; onUpdate?: (c: Client) => void; onDelete?: (id: string) => void }) {
   const panelRouter = useRouter();
+  const businessType = useBusinessType();
   const allClientAppts   = appointments.filter((a) => a.clientId === client.id);
   const completedAppts   = allClientAppts.filter((a) => a.status === "completed").sort((a, b) => b.date.localeCompare(a.date));
   const posInvoices      = getInvoices().filter((inv) => inv.clientId === client.id && inv.source === "pos");
@@ -129,7 +131,8 @@ function ClientPanel({ client, onClose, appointments, locations, onUpdate, onDel
     const db = b.data.date;
     return db.localeCompare(da);
   });
-  const profile = BEAUTY_PROFILES.find((p) => p.clientId === client.id);
+  // Skin type, allergies, hair formulas — only a salon or clinic keeps these.
+  const profile = businessType.beautyProfile ? BEAUTY_PROFILES.find((p) => p.clientId === client.id) : undefined;
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     name: client.name,
@@ -568,6 +571,7 @@ function InfoLine({ icon, label }: { icon: React.ReactNode; label: string }) {
 // ── Add Client Modal ──────────────────────────────────────────────────────────
 function AddClientModal({ onClose, onAdd, locations, allowLocationSelection, clients }: { onClose: () => void; onAdd: (c: Client) => void; locations: BusinessLocation[]; allowLocationSelection: boolean; clients: Client[] }) {
   const [done, setDone] = useState(false);
+  const { clientLabel } = useBusinessType();
   const [form, setForm] = useState({ name: "", phone: "", email: "", dob: "", source: "whatsapp", tag: "", section: defaultSectionForNewRecord(), notes: "", locationId: getDefaultLocationId() });
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const canSubmit = form.name.trim();
@@ -600,7 +604,7 @@ function AddClientModal({ onClose, onAdd, locations, allowLocationSelection, cli
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 20, width: 360, maxWidth: "100%", padding: "48px 32px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
         <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#ecfdf5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 28 }}>✓</div>
-        <div style={{ fontWeight: 700, fontSize: 18, color: "#1a1a2e", marginBottom: 8 }}>Client Added</div>
+        <div style={{ fontWeight: 700, fontSize: 18, color: "#1a1a2e", marginBottom: 8 }}>{clientLabel} Added</div>
         <div style={{ fontSize: 13, color: "#9898b0", marginBottom: 24 }}>The new client has been created.</div>
         <button onClick={onClose} style={{ padding: "10px 32px", borderRadius: 10, background: "#EA580C", border: "none", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Done</button>
       </div>
@@ -611,7 +615,7 @@ function AddClientModal({ onClose, onAdd, locations, allowLocationSelection, cli
     <div onClick={onClose} className="modal-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div onClick={(e) => e.stopPropagation()} className="modal-sheet" style={{ background: "#fff", borderRadius: 20, width: 440, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
         <div style={{ padding: "22px 24px 18px", borderBottom: "1px solid #f0f0f8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: "#1a1a2e" }}>Add New Client</div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: "#1a1a2e" }}>Add New {clientLabel}</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={18} color="#6b6b8a" /></button>
         </div>
         <div style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
@@ -670,7 +674,7 @@ function AddClientModal({ onClose, onAdd, locations, allowLocationSelection, cli
           <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>
             <button onClick={onClose} style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "1px solid #e8e8f0", background: "#fff", fontSize: 13, fontWeight: 600, color: "#6b6b8a", cursor: "pointer" }}>Cancel</button>
             <button onClick={handleAdd} style={{ flex: 2, padding: "11px 0", borderRadius: 10, border: "none", background: canSubmit ? "#EA580C" : "#e8e8f0", fontSize: 13, fontWeight: 600, color: canSubmit ? "#fff" : "#b0b0c8", cursor: canSubmit ? "pointer" : "not-allowed" }}>
-              Add Client
+              Add {clientLabel}
             </button>
           </div>
         </div>
@@ -930,6 +934,7 @@ function ImportModal({ existing, onClose, onImport }: {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function ClientsPage() {
+  const businessType = useBusinessType();
   const [search, setSearch] = useState("");
   const [tagFilter, setTagFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -1145,8 +1150,8 @@ export default function ClientsPage() {
 
       {/* Native mobile app bar */}
       <MobilePageHeader
-        title="Clients"
-        subtitle={`${filtered.length} clients`}
+        title={businessType.clientsLabel}
+        subtitle={`${filtered.length} ${businessType.clientsLabel.toLowerCase()}`}
         action={{ label: "Add", icon: <Plus size={14} />, onClick: () => setShowAdd(true) }}
       />
 
@@ -1154,7 +1159,7 @@ export default function ClientsPage() {
       <div className="dashboard-topbar page-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <PageTitle
           icon={<Heart size={24} />}
-          title="Clients"
+          title={businessType.clientsLabel}
           subtitle={
             <>
             {filtered.length} clients
@@ -1222,7 +1227,7 @@ export default function ClientsPage() {
             style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 12, border: "none", background: "var(--accent-gradient)", fontSize: 13, fontWeight: 750, color: "#fff", boxShadow: "0 4px 14px var(--accent-glow)", cursor: "pointer", transition: "all 0.18s ease" }}
             className="page-header-btn"
           >
-            <Plus size={16} /> Add Client
+            <Plus size={16} /> Add {businessType.clientLabel}
           </button>
         </div>
       </div>
