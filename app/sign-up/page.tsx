@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowRight, Building2, Clock, Coffee, LockKeyhole, Mail, Phone, Scissors, ShoppingBag, User, UtensilsCrossed } from "lucide-react";
+import { ArrowRight, Building2, Check, Clock, Coffee, LockKeyhole, Mail, Phone, Scissors, ShoppingBag, User, UtensilsCrossed } from "lucide-react";
 import Wordmark from "@/components/wordmark";
 import { BUSINESS_TYPES, SIGNUP_BUSINESS_TYPE_IDS, type BusinessTypeId } from "@/lib/business-types";
 import styles from "../auth.module.css";
@@ -174,11 +174,10 @@ export default function SignUpPage() {
                     onClick={() => { setBusinessType(id); setError(""); }}
                     className={`${styles.typeCard}${active ? ` ${styles.typeCardActive}` : ""}`}
                   >
-                    <span className={styles.typeIcon}><Icon size={16} /></span>
-                    <span>
-                      <span className={styles.typeName}>{type.name}</span>
-                      <span className={styles.typeBlurb}>{type.blurb}</span>
-                    </span>
+                    <span className={styles.typeIcon}><Icon size={15} /></span>
+                    <span className={styles.typeName}>{type.shortName}</span>
+                    <span className={styles.typeCheck} aria-hidden="true">{active && <Check size={11} strokeWidth={3} />}</span>
+                    <span className={styles.typeBlurb}>{type.blurb}</span>
                   </button>
                 );
               })}
@@ -193,7 +192,7 @@ export default function SignUpPage() {
                     <input
                       className={styles.input}
                       type={type}
-                      placeholder={placeholder}
+                      placeholder={id === "businessName" && businessType ? BUSINESS_TYPES[businessType].exampleName : placeholder}
                       value={form[id]}
                       onChange={(e) => setField(id, e.target.value)}
                       required
@@ -205,7 +204,7 @@ export default function SignUpPage() {
 
             {error && <div className={`${styles.error} ${styles.signupError}`}>{error}</div>}
 
-            <button type="submit" className={styles.primaryButton} disabled={sending}>
+            <button type="submit" className={`${styles.primaryButton} ${styles.signupSubmit}`} disabled={sending}>
               {sending ? "Creating…" : <>Create account <ArrowRight size={14} /></>}
             </button>
 

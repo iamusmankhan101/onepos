@@ -26,8 +26,12 @@ export type BusinessTypeId = "general" | "restaurant" | "cafe" | "retail" | "sal
 export interface BusinessTypeDefinition {
   id: BusinessTypeId;
   name: string;
-  /** One line under the name on the sign-up picker. */
+  /** The name on the sign-up picker's cards, where "Café / Coffee shop" won't fit. */
+  shortName: string;
+  /** One short line under the name on the sign-up picker. */
   blurb: string;
+  /** Example business name for the sign-up form. */
+  exampleName: string;
   /** Sidebar and page title for /dashboard/products. */
   productsLabel: string;
   /** Singular of productsLabel, for buttons like "Add Menu Item". */
@@ -61,7 +65,9 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
   general: {
     id: "general",
     name: "General",
-    blurb: "Every module with the standard labels.",
+    shortName: "General",
+    blurb: "Every module, standard labels",
+    exampleName: "Raza Traders",
     productsLabel: "Products",
     productLabel: "Product",
     clientsLabel: "Clients",
@@ -74,7 +80,9 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
   restaurant: {
     id: "restaurant",
     name: "Restaurant",
-    blurb: "Dine-in, takeaway and delivery.",
+    shortName: "Restaurant",
+    blurb: "Dine-in, takeaway, delivery",
+    exampleName: "Karahi House",
     productsLabel: "Menu",
     productLabel: "Menu Item",
     clientsLabel: "Customers",
@@ -87,7 +95,9 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
   cafe: {
     id: "cafe",
     name: "Café / Coffee shop",
-    blurb: "Coffee, drinks, bakery and light food.",
+    shortName: "Café",
+    blurb: "Coffee, bakery, light food",
+    exampleName: "Chai Corner",
     productsLabel: "Menu",
     productLabel: "Menu Item",
     clientsLabel: "Customers",
@@ -100,7 +110,9 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
   retail: {
     id: "retail",
     name: "Retail / Mart",
-    blurb: "Shops, groceries and general stores.",
+    shortName: "Retail",
+    blurb: "Shops, marts, groceries",
+    exampleName: "Raza Mart",
     productsLabel: "Products",
     productLabel: "Product",
     clientsLabel: "Customers",
@@ -113,7 +125,9 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
   salon: {
     id: "salon",
     name: "Salon / Clinic",
-    blurb: "Salons, spas, barbers and clinics.",
+    shortName: "Salon",
+    blurb: "Salons, spas, clinics",
+    exampleName: "Glow Studio",
     productsLabel: "Products",
     productLabel: "Product",
     clientsLabel: "Clients",
