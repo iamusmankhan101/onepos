@@ -1178,3 +1178,14 @@ input, textarea, select { font-family: inherit; }
   opacity: 1 !important;
   transform: translate(-50%, -4px) !important;
 }
+
+/* Option-group and recipe rows (components/modifier-groups-editor.tsx,
+   components/recipe-editor.tsx): on a phone the name/ingredient takes a
+   full row of its own instead of being squeezed to a few letters. */
+@media (max-width: 560px) {
+  .mg-head { display: none !important; }
+  .mg-row { grid-template-columns: minmax(0, 1fr) 44px 40px auto !important; }
+  .mg-row > .mg-name { grid-column: 1 / -1; }
+  .rc-row { grid-template-columns: minmax(0, 1fr) 58px 64px 30px !important; }
+  .rc-row > .rc-item { grid-column: 1 / -1; }
+}

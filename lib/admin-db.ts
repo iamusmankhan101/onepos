@@ -149,6 +149,7 @@ const DATA_ENTITIES = [
   "clients", "appointments", "staff", "services", "inventory", "invoices",
   "expenses", "attendance", "payouts", "cash_flow_income", "deleted_records",
   "dining_tables", "restaurant_orders", "kitchen_tickets", "modifier_groups",
+  "stock_movements", "suppliers", "purchase_orders",
   "loyalty_history", "settings",
 ] as const;
 

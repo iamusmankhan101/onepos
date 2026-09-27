@@ -6,7 +6,9 @@
  */
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, X, Sparkles, ChevronUp, ChevronDown, Check } from "lucide-react";
+import { Plus, Trash2, X, Sparkles, ChevronUp, ChevronDown, Check, FlaskConical } from "lucide-react";
+import RecipeEditor from "@/components/recipe-editor";
+import { recipeCost } from "@/lib/stock";
 import {
   MENU_CHANGED_EVENT, getModifierGroups, newMenuId, presetGroups, saveModifierGroups,
   type ModifierGroup, type ModifierOption,
@@ -31,6 +33,9 @@ export default function ModifierGroupsEditor({ items, currency, onClose }: {
   const [groups, setGroups] = useState<ModifierGroup[]>(() => getModifierGroups());
   const [editing, setEditing] = useState<ModifierGroup | null>(null);
   const [error, setError] = useState("");
+  /** The option whose ingredients are open for editing. */
+  const [recipeFor, setRecipeFor] = useState<string | null>(null);
+  const money = (n: number) => `${currency} ${Math.round(n).toLocaleString("en-PK")}`;
 
   // A sync landing while this is open (a fresh device, another till's edit)
   // must show here — adding the starter set against a stale, empty list would
@@ -63,7 +68,10 @@ export default function ModifierGroupsEditor({ items, currency, onClose }: {
   function saveEditing() {
     if (!editing) return;
     const options = editing.options
-      .map((o) => ({ ...o, name: o.name.trim(), price: Math.max(0, Math.round(Number(o.price) || 0)) }))
+      .map((o) => {
+        const recipe = (o.recipe ?? []).filter((l) => l.itemId && l.qty !== 0);
+        return { ...o, name: o.name.trim(), price: Math.max(0, Math.round(Number(o.price) || 0)), recipe: recipe.length ? recipe : undefined };
+      })
       .filter((o) => o.name);
     const name = editing.name.trim();
     if (!name) { setError("Give the group a name, like Size or Milk."); return; }
@@ -192,24 +200,48 @@ export default function ModifierGroupsEditor({ items, currency, onClose }: {
             </div>
 
             <div>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 84px 44px auto", gap: 8, fontSize: 10, fontWeight: 800, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
-                <span>Option</span><span>Extra ({currency})</span><span>Default</span><span />
+              <div className="mg-head" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 84px 52px 40px auto", gap: 8, fontSize: 10, fontWeight: 800, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+                <span>Option</span><span>Extra ({currency})</span><span>Default</span><span title="Ingredients this choice uses">Recipe</span><span />
               </div>
               {editing.options.map((o, i) => {
                 const isDefault = (editing.defaultOptionIds ?? []).includes(o.id);
+                const recipeCount = (o.recipe ?? []).length;
                 return (
-                  <div key={o.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 84px 44px auto", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                    <input value={o.name} onChange={(e) => patchOption(o.id, { name: e.target.value })} placeholder={i === 0 ? "e.g. Large" : "Option"} style={INP} aria-label="Option name" />
+                  <div key={o.id}>
+                  <div className="mg-row" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 84px 52px 40px auto", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                    <input className="mg-name" value={o.name} onChange={(e) => patchOption(o.id, { name: e.target.value })} placeholder={i === 0 ? "e.g. Large" : "Option"} style={INP} aria-label="Option name" />
                     <input type="number" min={0} value={o.price || ""} onChange={(e) => patchOption(o.id, { price: Number(e.target.value) || 0 })} placeholder="0" style={INP} aria-label={`Extra price for ${o.name || "option"}`} />
                     <button type="button" onClick={() => toggleDefault(o.id)} aria-pressed={isDefault} title="Pre-selected when the item is added"
                       style={{ height: 34, borderRadius: 8, border: `1.5px solid ${isDefault ? "#059669" : "#e8e8f0"}`, background: isDefault ? "#ecfdf5" : "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                       {isDefault && <Check size={14} color="#059669" />}
+                    </button>
+                    <button type="button" onClick={() => setRecipeFor(recipeFor === o.id ? null : o.id)} aria-pressed={recipeFor === o.id}
+                      title="Ingredients this choice adds or takes away"
+                      style={{ height: 34, borderRadius: 8, border: `1.5px solid ${recipeCount ? "#2563eb" : "#e8e8f0"}`, background: recipeCount ? "#eff6ff" : "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 2, fontSize: 10, fontWeight: 800, color: "#2563eb" }}>
+                      <FlaskConical size={13} color={recipeCount ? "#2563eb" : "#9898b0"} />{recipeCount || ""}
                     </button>
                     <div style={{ display: "flex", gap: 4 }}>
                       <button type="button" onClick={() => moveOption(i, -1)} disabled={i === 0} aria-label="Move up" style={{ padding: 6, borderRadius: 7, border: "1px solid #ecebf3", background: "#fff", cursor: "pointer", opacity: i === 0 ? 0.35 : 1, display: "flex" }}><ChevronUp size={13} /></button>
                       <button type="button" onClick={() => moveOption(i, 1)} disabled={i === editing.options.length - 1} aria-label="Move down" style={{ padding: 6, borderRadius: 7, border: "1px solid #ecebf3", background: "#fff", cursor: "pointer", opacity: i === editing.options.length - 1 ? 0.35 : 1, display: "flex" }}><ChevronDown size={13} /></button>
                       <button type="button" onClick={() => setEditing({ ...editing, options: editing.options.filter((x) => x.id !== o.id) })} aria-label="Remove option" style={{ padding: 6, borderRadius: 7, border: "1px solid #fee2e2", background: "#fff5f5", cursor: "pointer", display: "flex" }}><Trash2 size={13} color="#dc2626" /></button>
                     </div>
+                  </div>
+                  {recipeFor === o.id && (
+                    <div style={{ margin: "2px 0 10px", padding: 10, borderRadius: 10, border: "1px solid #dbeafe", background: "#f8fbff" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#1e3a8a", marginBottom: 6 }}>
+                        Ingredients for “{o.name || "this option"}” — on top of the item&apos;s own recipe
+                      </div>
+                      <RecipeEditor lines={o.recipe ?? []} onChange={(next) => patchOption(o.id, { recipe: next })} items={items} money={money} allowNegative
+                        emptyHint="e.g. Large: +100 ml milk, +9 g beans. Oat milk: +250 ml oat milk, −250 ml full-cream milk." />
+                      {o.price > 0 && (o.recipe ?? []).length > 0 && (
+                        <div style={{ fontSize: 11, color: "#6b6b8a", marginTop: 6 }}>
+                          Charges {money(o.price)}, costs {money(recipeCost(o.recipe, items))} — {o.price >= recipeCost(o.recipe, items)
+                            ? `profit ${money(o.price - recipeCost(o.recipe, items))}`
+                            : `loses ${money(recipeCost(o.recipe, items) - o.price)} per drink`}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   </div>
                 );
               })}

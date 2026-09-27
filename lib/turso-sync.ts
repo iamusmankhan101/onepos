@@ -17,6 +17,8 @@ const ENTITIES = [
   "dining_tables", "restaurant_orders", "kitchen_tickets",
   // Menu options (lib/menu.ts).
   "modifier_groups",
+  // Inventory (lib/stock.ts).
+  "stock_movements", "suppliers", "purchase_orders",
   DELETED_RECORDS_ENTITY,
 ] as const;
 export type Entity = typeof ENTITIES[number];

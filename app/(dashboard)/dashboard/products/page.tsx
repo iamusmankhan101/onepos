@@ -11,6 +11,9 @@ import PageTitle from "@/components/page-title";
 import { useBusinessType } from "@/lib/use-business-type";
 import ModifierGroupsEditor from "@/components/modifier-groups-editor";
 import { CAFE_MENU_CATEGORIES, RESTAURANT_MENU_CATEGORIES, getModifierGroups } from "@/lib/menu";
+import { costPercent, recipeCandidates, recipeCost, refreshRecipeCosts, stockLevel, tracksStock } from "@/lib/stock";
+import RecipeEditor from "@/components/recipe-editor";
+import type { RecipeLine } from "@/lib/types";
 import {
   Search, X, Plus, AlertTriangle, Package, ChevronDown,
   Edit2, Trash2, Bell, Copy, CheckCircle, TrendingDown,
@@ -64,10 +67,18 @@ function catOf(item: InventoryItem) {
   return CATEGORY_CONFIG[item.category] ?? CATEGORY_CONFIG.other;
 }
 
+/** Made-to-order items (with a recipe) have no stock of their own and never alert. */
 function stockStatus(item: InventoryItem): "out" | "low" | "ok" {
-  if (item.currentStock === 0)              return "out";
-  if (item.currentStock <= item.minStock)   return "low";
-  return "ok";
+  return stockLevel(item);
+}
+
+/** Stocked but never sold — an ingredient, which restaurant mode keeps on the Inventory page. */
+function isIngredient(item: InventoryItem): boolean {
+  return tracksStock(item) && !((item.retailPrice ?? 0) > 0) && !item.variablePrice;
+}
+
+function stockText(item: InventoryItem): string {
+  return tracksStock(item) ? `${item.currentStock} ${item.unit}` : "Made to order";
 }
 
 const STATUS_BADGE = {
@@ -162,6 +173,8 @@ type ItemForm = {
   variablePrice: boolean; priceRangeMin: string; priceRangeMax: string;
   menuCategory: string; modifierGroupIds: string[];
   takeawayPrice: string; deliveryPrice: string;
+  /** Restaurant mode: made to order from a recipe — no stock of its own. */
+  useRecipe: boolean; recipe: RecipeLine[];
 };
 
 type FormValue = ItemForm[keyof ItemForm];
@@ -173,6 +186,7 @@ const EMPTY_FORM: ItemForm = {
   variablePrice: false, priceRangeMin: "", priceRangeMax: "",
   menuCategory: "", modifierGroupIds: [],
   takeawayPrice: "", deliveryPrice: "",
+  useRecipe: false, recipe: [],
 };
 
 function itemToForm(item: InventoryItem): ItemForm {
@@ -190,10 +204,14 @@ function itemToForm(item: InventoryItem): ItemForm {
     modifierGroupIds: item.modifierGroupIds ?? [],
     takeawayPrice: item.takeawayPrice ? String(item.takeawayPrice) : "",
     deliveryPrice: item.deliveryPrice ? String(item.deliveryPrice) : "",
+    useRecipe: !!item.recipe?.length,
+    recipe: item.recipe ?? [],
   };
 }
 
-function formToItem(form: ItemForm, existing?: InventoryItem): InventoryItem {
+function formToItem(form: ItemForm, existing: InventoryItem | undefined, items: InventoryItem[]): InventoryItem {
+  const recipe = form.useRecipe ? form.recipe.filter((l) => l.itemId && l.qty > 0) : [];
+  const madeToOrder = recipe.length > 0;
   return {
     // Keeps what this form doesn't edit — the 86 flag, the kitchen station.
     ...existing,
@@ -202,9 +220,11 @@ function formToItem(form: ItemForm, existing?: InventoryItem): InventoryItem {
     category: form.category as InventoryCategory,
     section: form.section || undefined,
     unit: form.unit,
-    currentStock: Number(form.currentStock),
-    minStock: Number(form.minStock),
-    costPrice: Number(form.costPrice),
+    // A made-to-order item keeps no stock; its cost is its recipe's.
+    currentStock: madeToOrder ? 0 : Number(form.currentStock),
+    minStock: madeToOrder ? 0 : Number(form.minStock),
+    costPrice: madeToOrder ? Math.round(recipeCost(recipe, items) * 100) / 100 : Number(form.costPrice),
+    recipe: madeToOrder ? recipe : undefined,
     retailPrice: form.variablePrice
       ? (form.priceRangeMin ? Number(form.priceRangeMin) : undefined)
       : (form.retailPrice ? Number(form.retailPrice) : undefined),
@@ -223,7 +243,7 @@ function formToItem(form: ItemForm, existing?: InventoryItem): InventoryItem {
   };
 }
 
-function ItemFormFields({ form, set, items }: { form: ItemForm; set: (k: keyof ItemForm, v: FormValue) => void; items: InventoryItem[] }) {
+function ItemFormFields({ form, set, items, selfId }: { form: ItemForm; set: (k: keyof ItemForm, v: FormValue) => void; items: InventoryItem[]; selfId?: string }) {
   const [imageError, setImageError] = useState("");
   const [reading, setReading] = useState(false);
   const businessType = useBusinessType();
@@ -336,12 +356,19 @@ function ItemFormFields({ form, set, items }: { form: ItemForm; set: (k: keyof I
           {getSectionOptions(items).map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
       </Field>
+      {businessType.restaurantMode && (
+        <RecipeSection form={form} set={set} items={items} selfId={selfId} />
+      )}
+      {!(businessType.restaurantMode && form.useRecipe) && (
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Current Stock *"><input type="number" min="0" value={form.currentStock} onChange={(e) => set("currentStock", e.target.value)} placeholder="0" style={INP} /></Field>
         <Field label="Min Stock (alert threshold) *"><input type="number" min="0" value={form.minStock} onChange={(e) => set("minStock", e.target.value)} placeholder="0" style={INP} /></Field>
       </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label={`Cost Price (${cur()}) *`}><input type="number" min="0" value={form.costPrice} onChange={(e) => set("costPrice", e.target.value)} placeholder="0" style={INP} /></Field>
+        {!(businessType.restaurantMode && form.useRecipe) && (
+          <Field label={`Cost Price (${cur()}) *`}><input type="number" min="0" value={form.costPrice} onChange={(e) => set("costPrice", e.target.value)} placeholder="0" style={INP} /></Field>
+        )}
         {!form.variablePrice && (
           <Field
             label={`Selling Price (${cur()})`}
@@ -379,6 +406,52 @@ function ItemFormFields({ form, set, items }: { form: ItemForm; set: (k: keyof I
       <Field label="Notes"><textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Any notes…" rows={2} style={{ ...INP, resize: "none", lineHeight: 1.5 }} /></Field>
     </div>
   );
+}
+
+/** "Made from a recipe" switch, the recipe itself, and what the item costs to make. */
+function RecipeSection({ form, set, items, selfId }: { form: ItemForm; set: (k: keyof ItemForm, v: FormValue) => void; items: InventoryItem[]; selfId?: string }) {
+  const candidates = recipeCandidates(items, selfId);
+  const cost = recipeCost(form.recipe.filter((l) => l.qty > 0), items);
+  const price = Number(form.retailPrice) || 0;
+  const pct = costPercent(cost, price);
+  return (
+    <div style={{ border: "1px solid #ecebf3", borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 10, background: form.useRecipe ? "#fcfcfe" : "#fff" }}>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={form.useRecipe} onChange={(e) => set("useRecipe", e.target.checked)} style={{ marginTop: 2, accentColor: "#EA580C" }} />
+        <span>
+          <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#1a1a2e" }}>Made to order from a recipe</span>
+          <span style={{ display: "block", fontSize: 11, color: "#9898b0", marginTop: 2 }}>
+            Selling it takes the ingredients out of stock, so it has no stock count of its own.
+          </span>
+        </span>
+      </label>
+      {form.useRecipe && (
+        <>
+          <RecipeEditor lines={form.recipe} onChange={(next) => set("recipe", next)} items={candidates} money={fmt}
+            emptyHint="Add what one serving uses — e.g. 18 g coffee beans, 250 ml milk, 1 cup, 1 lid." />
+          {cost > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {[
+                ["Cost / serving", fmt(Math.round(cost))],
+                ["Gross profit", price > 0 ? fmt(Math.round(price - cost)) : "—"],
+                ["Food cost", pct !== null ? `${pct}%` : "—"],
+              ].map(([label, value]) => (
+                <div key={label} style={{ padding: "8px 10px", borderRadius: 9, background: "#f6f6fa" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#9898b0", textTransform: "uppercase" }}>{label}</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: label === "Food cost" && pct !== null && pct > 35 ? "#d97706" : "#1a1a2e", marginTop: 2 }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function stockFieldsValid(form: ItemForm): boolean {
+  if (form.useRecipe) return form.recipe.some((l) => l.itemId && l.qty > 0);
+  return Boolean(form.currentStock && form.minStock && form.costPrice);
 }
 
 function priceFieldsValid(form: ItemForm): boolean {
@@ -676,7 +749,7 @@ function AddModal({ onClose, onAdd, items }: { onClose: () => void; onAdd: (item
   const [done, setDone] = useState(false);
   const { productLabel } = useBusinessType();
   const set = useCallback((k: keyof ItemForm, v: FormValue) => setForm((f) => ({ ...f, [k]: v })), []);
-  const canSubmit = form.name && form.category && form.currentStock && form.minStock && form.costPrice && priceFieldsValid(form);
+  const canSubmit = form.name && form.category && stockFieldsValid(form) && priceFieldsValid(form);
 
   if (done) return (
     <Overlay onClose={onClose}>
@@ -700,7 +773,7 @@ function AddModal({ onClose, onAdd, items }: { onClose: () => void; onAdd: (item
         <ItemFormFields form={form} set={set} items={items} />
         <div style={{ display: "flex", gap: 10, paddingTop: 18, marginTop: 6, borderTop: "1px solid #f0f0f8" }}>
           <button onClick={onClose} style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "1px solid #e8e8f0", background: "#fff", fontSize: 13, fontWeight: 600, color: "#6b6b8a", cursor: "pointer" }}>Cancel</button>
-          <button onClick={() => { if (canSubmit) { onAdd(formToItem(form)); setDone(true); } }} style={{ flex: 2, padding: "11px 0", borderRadius: 10, border: "none", background: canSubmit ? "linear-gradient(135deg, #9A3412, #F97316)" : "#e8e8f0", fontSize: 13, fontWeight: 600, color: canSubmit ? "#fff" : "#b0b0c8", cursor: canSubmit ? "pointer" : "not-allowed" }}>
+          <button onClick={() => { if (canSubmit) { onAdd(formToItem(form, undefined, items)); setDone(true); } }} style={{ flex: 2, padding: "11px 0", borderRadius: 10, border: "none", background: canSubmit ? "linear-gradient(135deg, #9A3412, #F97316)" : "#e8e8f0", fontSize: 13, fontWeight: 600, color: canSubmit ? "#fff" : "#b0b0c8", cursor: canSubmit ? "pointer" : "not-allowed" }}>
             Add Item
           </button>
         </div>
@@ -714,7 +787,7 @@ function EditModal({ item, onClose, onSave, items }: { item: InventoryItem; onCl
   const [form, setForm] = useState<ItemForm>(() => itemToForm(item));
   const [saved, setSaved] = useState(false);
   const set = useCallback((k: keyof ItemForm, v: FormValue) => setForm((f) => ({ ...f, [k]: v })), []);
-  const canSubmit = form.name && form.category && form.currentStock && form.minStock && form.costPrice && priceFieldsValid(form);
+  const canSubmit = form.name && form.category && stockFieldsValid(form) && priceFieldsValid(form);
 
   if (saved) return (
     <Overlay onClose={onClose}>
@@ -731,11 +804,11 @@ function EditModal({ item, onClose, onSave, items }: { item: InventoryItem; onCl
     <Overlay onClose={onClose}>
       <ModalHeader title={`Edit — ${item.name}`} onClose={onClose} />
       <div style={{ padding: "22px 24px" }}>
-        <ItemFormFields form={form} set={set} items={items} />
+        <ItemFormFields form={form} set={set} items={items} selfId={item.id} />
         <div style={{ display: "flex", gap: 10, paddingTop: 18, marginTop: 6, borderTop: "1px solid #f0f0f8" }}>
           <button onClick={onClose} style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "1px solid #e8e8f0", background: "#fff", fontSize: 13, fontWeight: 600, color: "#6b6b8a", cursor: "pointer" }}>Cancel</button>
           <button
-            onClick={() => { if (canSubmit) { onSave(formToItem(form, item)); setSaved(true); } }}
+            onClick={() => { if (canSubmit) { onSave(formToItem(form, item, items)); setSaved(true); } }}
             style={{ flex: 2, padding: "11px 0", borderRadius: 10, border: "none", background: canSubmit ? "linear-gradient(135deg, #9A3412, #F97316)" : "#e8e8f0", fontSize: 13, fontWeight: 600, color: canSubmit ? "#fff" : "#b0b0c8", cursor: canSubmit ? "pointer" : "not-allowed" }}
           >
             Save Changes
@@ -908,10 +981,10 @@ function ItemRow({ item, isLast, onEdit, onDelete }: {
       {/* Stock */}
       <div>
         <span style={{ fontSize: 13, fontWeight: 700, color: status === "out" ? "#dc2626" : status === "low" ? "#d97706" : "#1a1a2e" }}>
-          {item.currentStock} {item.unit}
+          {stockText(item)}
         </span>
         <div style={{ fontSize: 10, color: "#b0b0c8", marginTop: 1 }}>
-          Min: {item.minStock} {item.unit}
+          {tracksStock(item) ? `Min: ${item.minStock} ${item.unit}` : "Recipe"}
         </div>
       </div>
 
@@ -978,7 +1051,9 @@ export default function ProductsPage() {
     return subscribeToStoredData(() => setItems(getStoredInventory()));
   }, []);
 
-  const persist = useCallback((updated: InventoryItem[]) => {
+  const persist = useCallback((list: InventoryItem[]) => {
+    // An ingredient's cost may have changed — keep recipe items' costs in step.
+    const updated = refreshRecipeCosts(list);
     setItems(updated);
     saveInventory(updated);
   }, []);
@@ -1008,19 +1083,26 @@ export default function ProductsPage() {
     return { added, updated, skipped, errors: [] };
   }, [items, persist]);
 
-  const retailItems = useMemo(() => items.filter(i => (i.retailPrice ?? 0) > 0), [items]);
+  // Restaurant mode: pure ingredients (stocked, never sold) live on the
+  // Inventory page, so the menu lists only what's sold or made to order.
+  const listItems = useMemo(
+    () => businessType.restaurantMode ? items.filter((i) => !isIngredient(i)) : items,
+    [items, businessType],
+  );
+  const hiddenIngredients = items.length - listItems.length;
+  const retailItems = useMemo(() => listItems.filter(i => (i.retailPrice ?? 0) > 0), [listItems]);
   const categoryChoices = useMemo(
     () => categoryOptions(businessType.categories, items.map((i) => i.category)),
     [businessType, items],
   );
 
-  const totalValue = useMemo(() => items.reduce((s, i) => s + i.costPrice * i.currentStock, 0), [items]);
-  const alertItems = useMemo(() => items.filter((i) => stockStatus(i) !== "ok"), [items]);
+  const totalValue = useMemo(() => listItems.reduce((s, i) => s + i.costPrice * i.currentStock, 0), [listItems]);
+  const alertItems = useMemo(() => listItems.filter((i) => stockStatus(i) !== "ok"), [listItems]);
   const lowCount   = alertItems.filter((i) => stockStatus(i) === "low").length;
   const outCount   = alertItems.filter((i) => stockStatus(i) === "out").length;
 
   const filtered = useMemo(() => {
-    return items.filter((item) => {
+    return listItems.filter((item) => {
       if (catFilter !== "all" && item.category !== catFilter) return false;
       if (statusFilter !== "all" && stockStatus(item) !== statusFilter) return false;
       if (!inSection(item, sectionFilter)) return false;
@@ -1036,7 +1118,7 @@ export default function ProductsPage() {
       }
       return true;
     });
-  }, [items, search, catFilter, statusFilter, sectionFilter]);
+  }, [listItems, search, catFilter, statusFilter, sectionFilter]);
 
   const activeFilters = [catFilter !== "all", statusFilter !== "all", getActiveSection() === "all" && sectionFilter !== "all"].filter(Boolean).length;
 
@@ -1063,7 +1145,7 @@ export default function ProductsPage() {
       <MobilePageHeader
         title={businessType.productsLabel}
         subtitle={tab === "stock"
-          ? `${items.length} items · ${fmtV(totalValue)}`
+          ? `${listItems.length} items · ${fmtV(totalValue)}`
           : `${retailItems.length} in POS`}
         action={{ label: "+ Add", onClick: () => setShowAdd(true) }}
       />
@@ -1084,7 +1166,7 @@ export default function ProductsPage() {
             <div>
               <div className="mobile-hero-label">Stock Value</div>
               <div className="mobile-hero-value">{fmtV(totalValue)}</div>
-              <div className="mobile-hero-sub">{items.length} item{items.length !== 1 ? "s" : ""} tracked</div>
+              <div className="mobile-hero-sub">{listItems.length} item{listItems.length !== 1 ? "s" : ""} tracked</div>
             </div>
             {alertItems.length > 0 && !alertDismissed && (
               <button
@@ -1191,9 +1273,9 @@ export default function ProductsPage() {
           {filtered.length === 0 ? (
             <div className="mobile-empty">
               <div className="mobile-empty-icon"><Package size={26} color="#c8c8e0" /></div>
-              <div className="mobile-empty-title">{items.length === 0 ? "No products yet" : "No items match"}</div>
+              <div className="mobile-empty-title">{listItems.length === 0 ? "No products yet" : "No items match"}</div>
               <div className="mobile-empty-sub">
-                {items.length === 0
+                {listItems.length === 0
                   ? "Tap + Add to add your first product."
                   : "Try adjusting your search or filters."}
               </div>
@@ -1228,7 +1310,7 @@ export default function ProductsPage() {
                     </div>
                     <div className="mobile-list-right">
                       <div className="mobile-list-amount" style={{ fontSize: 13, color: status === "out" ? "#dc2626" : status === "low" ? "#d97706" : "#1a1a2e" }}>
-                        {item.currentStock} {item.unit}
+                        {stockText(item)}
                       </div>
                       <span className="mobile-badge" style={{ background: badge.bg, color: badge.color }}>{badge.label}</span>
                     </div>
@@ -1242,7 +1324,7 @@ export default function ProductsPage() {
           {filtered.length > 0 && (
             <div style={{ padding: "12px 16px 8px", textAlign: "center" }}>
               <span style={{ fontSize: 11, color: "#b0b0c8", fontWeight: 600 }}>
-                {filtered.length} of {items.length} items · {fmtV(filtered.reduce((s, i) => s + i.costPrice * i.currentStock, 0))}
+                {filtered.length} of {listItems.length} items · {fmtV(filtered.reduce((s, i) => s + i.costPrice * i.currentStock, 0))}
               </span>
             </div>
           )}
@@ -1264,8 +1346,8 @@ export default function ProductsPage() {
           <div className="mobile-stat-scroll">
             {[
               { label: "In POS",    value: String(retailItems.length), color: "#EA580C" },
-              { label: "Not Listed", value: String(items.filter(i => !(i.retailPrice ?? 0)).length), color: "#9898b0" },
-              { label: "Low/Out",   value: String(retailItems.filter(i => i.currentStock <= i.minStock).length), color: "#dc2626" },
+              { label: "Not Listed", value: String(listItems.filter(i => !(i.retailPrice ?? 0)).length), color: "#9898b0" },
+              { label: "Low/Out",   value: String(retailItems.filter(i => stockStatus(i) !== "ok").length), color: "#dc2626" },
               { label: "Retail Value", value: fmtV(retailItems.reduce((s, i) => s + (i.retailPrice ?? 0) * i.currentStock, 0)), color: "#059669" },
             ].map(s => (
               <div key={s.label} className="mobile-stat-card">
@@ -1276,7 +1358,7 @@ export default function ProductsPage() {
           </div>
 
           {/* Retail list */}
-          {items.length === 0 ? (
+          {listItems.length === 0 ? (
             <div className="mobile-empty">
               <div className="mobile-empty-icon"><Tag size={26} color="#c8c8e0" /></div>
               <div className="mobile-empty-title">No items yet</div>
@@ -1284,10 +1366,10 @@ export default function ProductsPage() {
             </div>
           ) : (
             <div className="mobile-list">
-              {items.map((item) => {
+              {listItems.map((item) => {
                 const isRetail = (item.retailPrice ?? 0) > 0;
                 const cat      = catOf(item);
-                const isLow    = item.currentStock <= item.minStock;
+                const isLow    = stockStatus(item) !== "ok";
                 const margin   = isRetail && item.costPrice ? Math.round(((item.retailPrice! - item.costPrice) / item.retailPrice!) * 100) : null;
                 return (
                   <div key={item.id} className="mobile-list-card">
@@ -1300,7 +1382,7 @@ export default function ProductsPage() {
                     <div className="mobile-list-body">
                       <div className="mobile-list-title">{item.name}</div>
                       <div className="mobile-list-sub">
-                        {item.brand} · {item.currentStock} {item.unit}{isLow ? " ⚠️" : ""}
+                        {item.brand} · {stockText(item)}{isLow ? " ⚠️" : ""}
                         {isRetail
                           ? ` · ${priceLabel(item)}${margin !== null ? ` (${margin}%)` : ""}`
                           : " · Not listed"}
@@ -1324,10 +1406,10 @@ export default function ProductsPage() {
             </div>
           )}
 
-          {items.length > 0 && (
+          {listItems.length > 0 && (
             <div style={{ padding: "12px 16px 8px", textAlign: "center" }}>
               <span style={{ fontSize: 11, color: "#b0b0c8", fontWeight: 600 }}>
-                {retailItems.length} of {items.length} items enabled for POS
+                {retailItems.length} of {listItems.length} items enabled for POS
               </span>
             </div>
           )}
@@ -1344,8 +1426,8 @@ export default function ProductsPage() {
             subtitle={
               <>
                 {tab === "stock"
-                  ? `${items.length} items · ${fmtV(totalValue)} total value`
-                  : `${retailItems.length} products available in POS · ${items.filter(i => !(i.retailPrice ?? 0)).length} not listed`}
+                  ? `${listItems.length} items · ${fmtV(totalValue)} total value`
+                  : `${retailItems.length} products available in POS · ${listItems.filter(i => !(i.retailPrice ?? 0)).length} not listed`}
                 {tab === "stock" && alertItems.length > 0 && (
                   <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 750, background: outCount > 0 ? "#fef2f2" : "#fffbeb", color: outCount > 0 ? "#dc2626" : "#d97706", border: `1px solid ${outCount > 0 ? "#fecaca" : "#fed7aa"}`, borderRadius: 20, padding: "3px 10px", boxShadow: `0 2px 8px ${outCount > 0 ? "rgba(220,38,38,0.1)" : "rgba(217,119,6,0.1)"}` }}>
                     {alertItems.length} alert{alertItems.length !== 1 ? "s" : ""}
@@ -1444,8 +1526,8 @@ export default function ProductsPage() {
             <div className="stats-grid-4">
               {[
                 { label: "Listed in POS",   value: retailItems.length,  iconColor: "var(--accent)", bg: "rgba(234, 88, 12, 0.08)" },
-                { label: "Not Listed",      value: items.filter(i => !(i.retailPrice ?? 0)).length, iconColor: "#6b6b8a", bg: "#f4f4f8" },
-                { label: "Low/Out Stock",   value: retailItems.filter(i => i.currentStock <= i.minStock).length, iconColor: "#dc2626", bg: "#fef2f2" },
+                { label: "Not Listed",      value: listItems.filter(i => !(i.retailPrice ?? 0)).length, iconColor: "#6b6b8a", bg: "#f4f4f8" },
+                { label: "Low/Out Stock",   value: retailItems.filter(i => stockStatus(i) !== "ok").length, iconColor: "#dc2626", bg: "#fef2f2" },
                 { label: "Retail Value",    value: fmtV(retailItems.reduce((s, i) => s + (i.retailPrice ?? 0) * i.currentStock, 0)), iconColor: "#059669", bg: "#ecfdf5" },
               ].map(({ label, value, iconColor, bg }) => (
                 <div key={label} style={{ background: "#fff", borderRadius: 16, border: "1px solid rgba(226,223,235,0.8)", padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, boxShadow: "0 4px 12px rgba(0,0,0,0.02)" }}>
@@ -1469,22 +1551,22 @@ export default function ProductsPage() {
                     ))}
                   </div>
 
-                  {items.length === 0 ? (
+                  {listItems.length === 0 ? (
                     <div style={{ padding: "56px 20px", textAlign: "center" }}>
                       <Package size={32} color="#e0e0f0" style={{ marginBottom: 12 }} />
                       <div style={{ fontSize: 14, color: "#b0b0c8", fontWeight: 600 }}>No products yet</div>
                       <div style={{ fontSize: 12, color: "#c8c8d8", marginTop: 4 }}>Add a product first, then switch it on for the POS</div>
                     </div>
                   ) : (
-                    items.map((item, i) => {
+                    listItems.map((item, i) => {
                       const isRetail = (item.retailPrice ?? 0) > 0;
                       const margin   = isRetail && item.costPrice ? Math.round(((item.retailPrice! - item.costPrice) / item.retailPrice!) * 100) : null;
-                      const isLow    = item.currentStock <= item.minStock;
+                      const isLow    = stockStatus(item) !== "ok";
                       const cat      = catOf(item);
                       return (
                         <div key={item.id}
                           className="hover-bg-row"
-                          style={{ display: "grid", gridTemplateColumns: "1fr 110px 90px 110px 120px 110px 100px", padding: "14px 20px", borderBottom: i < items.length - 1 ? "1px solid #f8f8fc" : "none", alignItems: "center", background: isRetail ? "#fafffe" : "transparent", transition: "background 0.2s" }}
+                          style={{ display: "grid", gridTemplateColumns: "1fr 110px 90px 110px 120px 110px 100px", padding: "14px 20px", borderBottom: i < listItems.length - 1 ? "1px solid #f8f8fc" : "none", alignItems: "center", background: isRetail ? "#fafffe" : "transparent", transition: "background 0.2s" }}
                         >
                           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                             <ProductThumb item={item} size={38} />
@@ -1495,7 +1577,7 @@ export default function ProductsPage() {
                           </div>
                           <span style={{ fontSize: 10, fontWeight: 750, color: cat.color, background: cat.bg, borderRadius: 10, padding: "2px 8px", width: "fit-content", textTransform: "uppercase", letterSpacing: "0.03em" }}>{cat.label}</span>
                           <div style={{ fontSize: 13, fontWeight: 750, color: isLow ? "#dc2626" : "#1a1a2e" }}>
-                            {item.currentStock} {item.unit}
+                            {stockText(item)}
                             {isLow && <div style={{ fontSize: 10, color: "#dc2626", fontWeight: 800, marginTop: 2 }}>Low</div>}
                           </div>
                           <div style={{ fontSize: 13, color: "#6b7280", fontWeight: 600 }}>{item.costPrice ? fmt(item.costPrice) : "—"}</div>
@@ -1526,9 +1608,9 @@ export default function ProductsPage() {
                     })
                   )}
 
-                  {items.length > 0 && (
+                  {listItems.length > 0 && (
                     <div style={{ padding: "12px 20px", borderTop: "1px solid #f0f0f5", background: "#faf9fd", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontSize: 12, color: "#9898b0", fontWeight: 600 }}>{retailItems.length} of {items.length} items enabled for POS</span>
+                      <span style={{ fontSize: 12, color: "#9898b0", fontWeight: 600 }}>{retailItems.length} of {listItems.length} items enabled for POS</span>
                       <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent)" }}>Retail value: {fmtV(retailItems.reduce((s, i) => s + (i.retailPrice ?? 0) * i.currentStock, 0))}</span>
                     </div>
                   )}
@@ -1538,11 +1620,17 @@ export default function ProductsPage() {
           </>
         )}
 
+        {hiddenIngredients > 0 && (
+          <a href="/dashboard/inventory" style={{ alignSelf: "flex-start", fontSize: 12.5, fontWeight: 700, color: "#c2410c", textDecoration: "none", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 20, padding: "5px 12px" }}>
+            {hiddenIngredients} ingredient{hiddenIngredients === 1 ? "" : "s"} tracked on the Inventory page →
+          </a>
+        )}
+
         {/* ── Stock Tab ── */}
         {tab === "stock" && <>
           <div className="stats-grid-4">
             {[
-              { label: "Total Items",  value: items.length,     icon: Package,       iconColor: "var(--accent)", bg: "rgba(234, 88, 12, 0.08)", valColor: "var(--accent)" },
+              { label: "Total Items",  value: listItems.length,     icon: Package,       iconColor: "var(--accent)", bg: "rgba(234, 88, 12, 0.08)", valColor: "var(--accent)" },
               { label: "Total Value",  value: fmtV(totalValue), icon: DollarSign,    iconColor: "#059669", bg: "#ecfdf5", valColor: "#059669", small: true },
               { label: "Low Stock",    value: lowCount,         icon: TrendingDown,  iconColor: "#d97706", bg: "#fffbeb", valColor: "#d97706" },
               { label: "Out of Stock", value: outCount,         icon: AlertTriangle, iconColor: "#dc2626", bg: "#fef2f2", valColor: "#dc2626" },
@@ -1715,7 +1803,7 @@ export default function ProductsPage() {
                 {filtered.length > 0 && (
                   <div style={{ padding: "12px 20px", borderTop: "1px solid #f0f0f5", background: "#faf9fd", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 12, color: "#9898b0", fontWeight: 600 }}>
-                      Showing {filtered.length} of {items.length} items
+                      Showing {filtered.length} of {listItems.length} items
                     </span>
                     <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent)" }}>
                       Total value: {fmtV(filtered.reduce((s, i) => s + i.costPrice * i.currentStock, 0))}

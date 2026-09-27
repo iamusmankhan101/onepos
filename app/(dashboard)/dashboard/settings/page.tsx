@@ -39,6 +39,7 @@ const PERMISSION_OPTIONS: { key: string; label: string; restaurantOnly?: boolean
   { key: "tables",    label: "Tables",  restaurantOnly: true },
   { key: "kitchen",   label: "Kitchen", restaurantOnly: true },
   { key: "products",  label: "Products"  },
+  { key: "inventory", label: "Inventory", restaurantOnly: true },
   { key: "clients",   label: "Clients"   },
   { key: "loyalty",   label: "Loyalty"   },
   { key: "invoices",  label: "Invoices"  },

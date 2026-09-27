@@ -178,6 +178,14 @@ export type InventoryCategory =
   | "general" | "food" | "drinks" | "apparel" | "electronics" | "supplies" | "tools" | "other";
 export type InventoryUnit = "pcs" | "pack" | "box" | "kg" | "g" | "l" | "ml" | "bottle";
 
+/** One ingredient in a recipe (lib/stock.ts). */
+export interface RecipeLine {
+  itemId: string;
+  /** In `unit`. May be negative on a menu option — "uses 250 ml less full-cream milk". */
+  qty: number;
+  unit: InventoryUnit;
+}
+
 export interface InventoryItem {
   id: string;
   name: string;
@@ -224,4 +232,12 @@ export interface InventoryItem {
   deliveryPrice?: number;
   /** Restaurant mode: option groups (lib/menu.ts) the POS asks for, in this order. */
   modifierGroupIds?: string[];
+  /**
+   * Restaurant mode: what one of this item is made from (lib/stock.ts). An item
+   * with a recipe is made to order — it has no stock of its own, and selling
+   * it takes these ingredients out of stock instead.
+   */
+  recipe?: RecipeLine[];
+  /** Earliest expiry date of the stock on hand (YYYY-MM-DD), set when a delivery is received. */
+  expiresOn?: string;
 }

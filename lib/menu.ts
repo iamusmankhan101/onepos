@@ -17,7 +17,7 @@
 
 import { persistEntity } from "./turso-sync";
 import { entityStorageKey } from "./sync-records";
-import type { InventoryItem } from "./types";
+import type { InventoryItem, RecipeLine } from "./types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,6 +26,11 @@ export interface ModifierOption {
   name: string;
   /** Added to the item's price per unit; 0 for a free choice, never negative. */
   price: number;
+  /**
+   * Ingredients this choice adds to the item's recipe (lib/stock.ts). A
+   * negative quantity takes some back — oat milk removes the full-cream milk.
+   */
+  recipe?: RecipeLine[];
 }
 
 export interface ModifierGroup {

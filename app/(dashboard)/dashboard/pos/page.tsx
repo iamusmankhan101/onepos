@@ -22,6 +22,7 @@ import {
   type ChosenModifier, type ModifierGroup,
 } from "@/lib/menu";
 import { billCharges, getChargeSettings } from "@/lib/charges";
+import { recordMovement, saleChanges, tracksStock } from "@/lib/stock";
 import {
   ORDER_TYPE_LABEL, fireOrder, getOpenOrders, getOrder, getTables, markOrderPaid, newId,
   nextOrderNumber, orderRef, orderSubtotal, saveOrder, stationFor, tableNames, voidLine,
@@ -32,7 +33,7 @@ import InvoicePrint from "@/components/invoice-print";
 import InvoiceEdit from "@/components/invoice-edit";
 import {
   getStoredServices, getStoredClients, getStoredInventory,
-  getStoredStaff, getStoredAppointments, saveAppointments, saveClients, saveInventory, subscribeToStoredData,
+  getStoredStaff, getStoredAppointments, saveAppointments, saveClients, subscribeToStoredData,
 } from "@/lib/storage";
 import {
   createInvoice, calcTotals,
@@ -474,7 +475,7 @@ export default function POSPage() {
       setScanFeedback({ ok: false, message: `${product.name} needs a retail price before it can be sold.` });
       return;
     }
-    if (product.currentStock <= 0) {
+    if (tracksStock(product) && product.currentStock <= 0) {
       setScanFeedback({ ok: false, message: `${product.name} is out of stock.` });
       return;
     }
@@ -815,13 +816,15 @@ export default function POSPage() {
 
       const soldProducts = cart.filter(e => e.type === "product");
       if (soldProducts.length > 0) {
-        const updated = inventory.map(item => {
-          // One item can be on several lines (a small and a large latte).
-          const soldQty = soldProducts.filter(e => e.itemId === item.id).reduce((n, e) => n + e.qty, 0);
-          return soldQty > 0 ? { ...item, currentStock: Math.max(0, item.currentStock - soldQty) } : item;
-        });
-        setInventory(updated);
-        saveInventory(updated);
+        // A plain product comes off its own stock; a made-to-order item (one
+        // with a recipe) takes its ingredients — options included — instead.
+        // Recorded as a stock movement against the invoice (lib/stock.ts).
+        const changes = saleChanges(
+          soldProducts.map(e => ({ itemId: e.itemId, qty: e.qty, modifiers: e.modifiers })),
+          getStoredInventory(), modifierGroups,
+        );
+        await recordMovement("sale", changes, { ref: invoice.number, by: staffMember?.name || undefined });
+        setInventory(getStoredInventory());
       }
 
       if (selectedClient?.id) {
