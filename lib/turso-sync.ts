@@ -10,8 +10,14 @@ import {
   sameRecordContent,
 } from "./sync-records";
 
-const ENTITIES = ["clients", "appointments", "staff", "services", "inventory", "invoices", "expenses", "attendance", "payouts", "cash_flow_income", DELETED_RECORDS_ENTITY] as const;
-type Entity = typeof ENTITIES[number];
+const ENTITIES = [
+  "clients", "appointments", "staff", "services", "inventory", "invoices", "expenses", "attendance", "payouts", "cash_flow_income",
+  // Restaurant mode (lib/restaurant.ts). Synced for every account — they are
+  // simply empty arrays for a business that never opens a table.
+  "dining_tables", "restaurant_orders", "kitchen_tickets",
+  DELETED_RECORDS_ENTITY,
+] as const;
+export type Entity = typeof ENTITIES[number];
 
 /**
  * Fired on `window` after syncFromDB() has finished rewriting localStorage.
@@ -31,121 +37,7 @@ export async function syncFromDB(): Promise<void> {
   const locationId = getActiveLocationFilter();
 
   // Sync core entities (clients, appointments, staff, services, inventory)
-  await Promise.all(
-    ENTITIES.map(async (entity) => {
-      try {
-        const res = await fetch(
-          `/api/db?entity=${entity}&userId=${encodeURIComponent(dataOwnerId)}&locationId=${encodeURIComponent(locationId)}`,
-        );
-        if (!res.ok) return;
-        const incoming = await res.json() as unknown[];
-        if (!Array.isArray(incoming) || incoming.length === 0) {
-          // Turso has nothing for this entity yet on this account/location — if this
-          // browser is holding local data that predates sync support (e.g. expenses,
-          // which only started syncing after this check was added), push it up now
-          // instead of waiting for the next add/edit to trigger a save. Awaited so a
-          // later syncFromDB() can't race ahead and see the still-empty DB row.
-          try {
-            const lsRaw = localStorage.getItem(locationUserKey(`pointly_${entity}`, locationId));
-            const local = lsRaw ? JSON.parse(lsRaw) as unknown[] : [];
-            if (Array.isArray(local) && local.length > 0) {
-              await fetch("/api/db", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ entity, data: local, userId: dataOwnerId, locationId }),
-              }).catch(() => {});
-            }
-          } catch { /* ignore */ }
-          return;
-        }
-
-        // Merge by id instead of blindly overwriting: any record that exists only in
-        // localStorage (e.g. added while offline, or not yet pushed to Turso) is kept
-        // rather than dropped just because the DB's copy didn't have it. Without this,
-        // a DB row that is behind (or was raced by a smaller concurrent save) silently
-        // truncates whatever the browser already had — this is how the expenses total
-        // dropped from 400k+ to a handful of recent entries.
-        const lsRaw = localStorage.getItem(entityStorageKey(entity, locationId));
-        const localList: Record<string, unknown>[] = [];
-        if (lsRaw) {
-          try { localList.push(...(JSON.parse(lsRaw) as Record<string, unknown>[])); } catch { /* ignore */ }
-        }
-        const incomingIds = new Set((incoming as Record<string, unknown>[]).map(recordId));
-        const localOnly = localList.filter(r => !incomingIds.has(recordId(r)));
-        const localIds = new Set(localList.map(recordId));
-
-        // Ids this sync is pulling in from another device. reconcileSave() must
-        // not read them as deletes when a page that snapshotted its state
-        // before they landed saves that older list back (see lib/sync-records.ts).
-        noteSyncedArrivals(
-          entity,
-          (incoming as Record<string, unknown>[]).map(recordId).filter(id => id && !localIds.has(id)),
-          locationId,
-        );
-
-        // True once the merge below has kept a local copy that differs from the
-        // DB's, i.e. this browser holds an edit Turso has not got yet.
-        let localWon = false;
-        let merged: Record<string, unknown>[];
-
-        if (entity === "clients") {
-          // Additionally: never overwrite a client's numeric progress (loyalty pts,
-          // visits, spend) with a staler value from DB — guards against the race where
-          // a POS save completes after syncFromDB already started its fetch.
-          const localById: Record<string, Record<string, unknown>> = {};
-          localList.forEach(c => { localById[recordId(c)] = c; });
-          merged = (incoming as Record<string, unknown>[]).map(dbClient => {
-            const lc = localById[recordId(dbClient)];
-            if (!lc) return dbClient;
-            const base = pickNewer(lc, dbClient);
-            if (base === lc && !sameRecordContent(lc, dbClient)) localWon = true;
-            return {
-              ...base,
-              loyaltyPoints:       Math.max(Number(lc.loyaltyPoints       ?? 0), Number(dbClient.loyaltyPoints       ?? 0)),
-              loyaltyPointsEarned: Math.max(Number(lc.loyaltyPointsEarned ?? 0), Number(dbClient.loyaltyPointsEarned ?? 0)),
-              totalVisits:         Math.max(Number(lc.totalVisits          ?? 0), Number(dbClient.totalVisits          ?? 0)),
-              totalSpend:          Math.max(Number(lc.totalSpend           ?? 0), Number(dbClient.totalSpend           ?? 0)),
-            };
-          });
-        } else {
-          // For a record both sides hold, keep whichever copy was edited last
-          // (`_updatedAt`, stamped by reconcileSave on every save). This used to
-          // prefer the local copy unconditionally, which protected an
-          // in-flight save from being reverted by the pre-edit DB row — but it
-          // also meant an edit made on another PC could never arrive here, and
-          // syncLocalDataToDB() then pushed this browser's stale copy back over
-          // it. Ties still go local, so a locally-saved edit whose push failed
-          // (stamped now) beats the DB's older copy, and legacy records that
-          // predate stamping behave exactly as they did before.
-          const localById: Record<string, Record<string, unknown>> = {};
-          localList.forEach(r => { localById[recordId(r)] = r; });
-          merged = (incoming as Record<string, unknown>[]).map(dbRecord => {
-            const lc = localById[recordId(dbRecord)];
-            if (!lc) return dbRecord;
-            const winner = pickNewer(lc, dbRecord);
-            if (winner === lc && !sameRecordContent(lc, dbRecord)) localWon = true;
-            return winner;
-          });
-        }
-
-        const union = [...merged, ...localOnly];
-        localStorage.setItem(entityStorageKey(entity, locationId), JSON.stringify(union));
-
-        if (localOnly.length > 0 || localWon) {
-          // Push the reconciled (union) list back up so Turso stops being behind.
-          // It has to be the *merged* list, not the DB's own rows: this browser
-          // is holding either records Turso has never seen or a newer copy of
-          // one it has, and pushing `incoming` back would just echo the stale
-          // version straight back at it.
-          fetch("/api/db", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ entity, data: union, userId: dataOwnerId, locationId }),
-          }).catch(() => {});
-        }
-      } catch { /* keep localStorage */ }
-    }),
-  );
+  await Promise.all(ENTITIES.map((entity) => pullEntity(entity, dataOwnerId, locationId)));
 
   // Deletes have to survive the union merge above. A record deleted on this
   // device still exists in every other device's localStorage (and, for
@@ -236,6 +128,141 @@ export async function syncFromDB(): Promise<void> {
   // terminal that has been sitting on the same screen since this morning — so
   // tell them to re-read. Without it those pages keep rendering (and saving
   // from) a snapshot that is missing everything added on any other device.
+  window.dispatchEvent(new Event(DATA_SYNCED_EVENT));
+}
+
+/**
+ * Pulls one entity from Turso and merges it into this browser's copy — the
+ * per-entity half of syncFromDB(), also used on its own by screens that poll a
+ * couple of fast-moving entities (the kitchen display) without re-pulling the
+ * whole business every few seconds.
+ */
+async function pullEntity(entity: Entity, dataOwnerId: string, locationId: string): Promise<void> {
+  try {
+    const res = await fetch(
+      `/api/db?entity=${entity}&userId=${encodeURIComponent(dataOwnerId)}&locationId=${encodeURIComponent(locationId)}`,
+    );
+    if (!res.ok) return;
+    const incoming = await res.json() as unknown[];
+    if (!Array.isArray(incoming) || incoming.length === 0) {
+      // Turso has nothing for this entity yet on this account/location — if this
+      // browser is holding local data that predates sync support (e.g. expenses,
+      // which only started syncing after this check was added), push it up now
+      // instead of waiting for the next add/edit to trigger a save. Awaited so a
+      // later syncFromDB() can't race ahead and see the still-empty DB row.
+      try {
+        const lsRaw = localStorage.getItem(locationUserKey(`pointly_${entity}`, locationId));
+        const local = lsRaw ? JSON.parse(lsRaw) as unknown[] : [];
+        if (Array.isArray(local) && local.length > 0) {
+          await fetch("/api/db", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entity, data: local, userId: dataOwnerId, locationId }),
+          }).catch(() => {});
+        }
+      } catch { /* ignore */ }
+      return;
+    }
+
+    // Merge by id instead of blindly overwriting: any record that exists only in
+    // localStorage (e.g. added while offline, or not yet pushed to Turso) is kept
+    // rather than dropped just because the DB's copy didn't have it. Without this,
+    // a DB row that is behind (or was raced by a smaller concurrent save) silently
+    // truncates whatever the browser already had — this is how the expenses total
+    // dropped from 400k+ to a handful of recent entries.
+    const lsRaw = localStorage.getItem(entityStorageKey(entity, locationId));
+    const localList: Record<string, unknown>[] = [];
+    if (lsRaw) {
+      try { localList.push(...(JSON.parse(lsRaw) as Record<string, unknown>[])); } catch { /* ignore */ }
+    }
+    const incomingIds = new Set((incoming as Record<string, unknown>[]).map(recordId));
+    const localOnly = localList.filter(r => !incomingIds.has(recordId(r)));
+    const localIds = new Set(localList.map(recordId));
+
+    // Ids this sync is pulling in from another device. reconcileSave() must
+    // not read them as deletes when a page that snapshotted its state
+    // before they landed saves that older list back (see lib/sync-records.ts).
+    noteSyncedArrivals(
+      entity,
+      (incoming as Record<string, unknown>[]).map(recordId).filter(id => id && !localIds.has(id)),
+      locationId,
+    );
+
+    // True once the merge below has kept a local copy that differs from the
+    // DB's, i.e. this browser holds an edit Turso has not got yet.
+    let localWon = false;
+    let merged: Record<string, unknown>[];
+
+    if (entity === "clients") {
+      // Additionally: never overwrite a client's numeric progress (loyalty pts,
+      // visits, spend) with a staler value from DB — guards against the race where
+      // a POS save completes after syncFromDB already started its fetch.
+      const localById: Record<string, Record<string, unknown>> = {};
+      localList.forEach(c => { localById[recordId(c)] = c; });
+      merged = (incoming as Record<string, unknown>[]).map(dbClient => {
+        const lc = localById[recordId(dbClient)];
+        if (!lc) return dbClient;
+        const base = pickNewer(lc, dbClient);
+        if (base === lc && !sameRecordContent(lc, dbClient)) localWon = true;
+        return {
+          ...base,
+          loyaltyPoints:       Math.max(Number(lc.loyaltyPoints       ?? 0), Number(dbClient.loyaltyPoints       ?? 0)),
+          loyaltyPointsEarned: Math.max(Number(lc.loyaltyPointsEarned ?? 0), Number(dbClient.loyaltyPointsEarned ?? 0)),
+          totalVisits:         Math.max(Number(lc.totalVisits          ?? 0), Number(dbClient.totalVisits          ?? 0)),
+          totalSpend:          Math.max(Number(lc.totalSpend           ?? 0), Number(dbClient.totalSpend           ?? 0)),
+        };
+      });
+    } else {
+      // For a record both sides hold, keep whichever copy was edited last
+      // (`_updatedAt`, stamped by reconcileSave on every save). This used to
+      // prefer the local copy unconditionally, which protected an
+      // in-flight save from being reverted by the pre-edit DB row — but it
+      // also meant an edit made on another PC could never arrive here, and
+      // syncLocalDataToDB() then pushed this browser's stale copy back over
+      // it. Ties still go local, so a locally-saved edit whose push failed
+      // (stamped now) beats the DB's older copy, and legacy records that
+      // predate stamping behave exactly as they did before.
+      const localById: Record<string, Record<string, unknown>> = {};
+      localList.forEach(r => { localById[recordId(r)] = r; });
+      merged = (incoming as Record<string, unknown>[]).map(dbRecord => {
+        const lc = localById[recordId(dbRecord)];
+        if (!lc) return dbRecord;
+        const winner = pickNewer(lc, dbRecord);
+        if (winner === lc && !sameRecordContent(lc, dbRecord)) localWon = true;
+        return winner;
+      });
+    }
+
+    const union = [...merged, ...localOnly];
+    localStorage.setItem(entityStorageKey(entity, locationId), JSON.stringify(union));
+
+    if (localOnly.length > 0 || localWon) {
+      // Push the reconciled (union) list back up so Turso stops being behind.
+      // It has to be the *merged* list, not the DB's own rows: this browser
+      // is holding either records Turso has never seen or a newer copy of
+      // one it has, and pushing `incoming` back would just echo the stale
+      // version straight back at it.
+      fetch("/api/db", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entity, data: union, userId: dataOwnerId, locationId }),
+      }).catch(() => {});
+    }
+  } catch { /* keep localStorage */ }
+}
+
+/**
+ * Pulls just `entities` (plus tombstones) and tells open pages to re-read.
+ * Resolves once localStorage holds the merged result.
+ */
+export async function syncEntitiesFromDB(entities: Entity[]): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) return;
+  const dataOwnerId = user.businessOwnerId || user.id;
+  const locationId = getActiveLocationFilter();
+  const wanted = Array.from(new Set<Entity>([...entities, DELETED_RECORDS_ENTITY]));
+  await Promise.all(wanted.map((entity) => pullEntity(entity, dataOwnerId, locationId)));
+  applyDeletions(locationId);
   window.dispatchEvent(new Event(DATA_SYNCED_EVENT));
 }
 

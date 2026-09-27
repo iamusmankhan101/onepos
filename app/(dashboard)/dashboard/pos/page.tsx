@@ -9,7 +9,17 @@ import {
   MessageSquare, RefreshCw, User, ChevronRight, Sparkles,
   Clock, AlertCircle, Gift,
   ScanBarcode, Lock,
+  Send, Pause, StickyNote, ListOrdered, Bike, ShoppingBag, UtensilsCrossed, Flame, ChefHat,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useBusinessType } from "@/lib/use-business-type";
+import KotPrint from "@/components/kot-print";
+import ManagerApproval from "@/components/manager-approval";
+import {
+  ORDER_TYPE_LABEL, fireOrder, getOpenOrders, getOrder, getTables, markOrderPaid, newId,
+  nextOrderNumber, orderRef, orderSubtotal, saveOrder, stationFor, tableNames, voidLine,
+  type Approval, type DiningTable, type KitchenTicket, type OrderLine, type OrderType, type RestaurantOrder,
+} from "@/lib/restaurant";
 import { awardPoints, loyaltyActive, redeemPoints, type LoyaltySettings } from "@/lib/loyalty";
 import InvoicePrint from "@/components/invoice-print";
 import InvoiceEdit from "@/components/invoice-edit";
@@ -47,6 +57,8 @@ interface CatalogItem {
   variablePrice?: boolean;
   priceRangeMin?: number;
   priceRangeMax?: number;
+  /** 86'd — off the menu for now (restaurant mode). */
+  unavailable?: boolean;
 }
 
 interface CartEntry {
@@ -60,6 +72,13 @@ interface CartEntry {
   variablePrice?: boolean;
   priceRangeMin?: number;
   priceRangeMax?: number;
+  // Restaurant mode — see lib/restaurant.ts. A line keeps its order-line id so
+  // saving the order again updates it rather than duplicating it.
+  lineId?: string;
+  /** Sent to the kitchen: quantity and removal are locked from here on. */
+  firedAt?: string;
+  /** Kitchen note — "no onions". */
+  note?: string;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -222,6 +241,31 @@ export default function POSPage() {
   // otherwise sales were silently defaulting to "cash" even when no one confirmed that.
   const [payMethod,     setPayMethod]     = useState<PaymentMethod | null>(null);
 
+  // ── Restaurant mode ───────────────────────────────────────────────────────
+  // Only live for a restaurant or café (lib/business-types.ts). The cart then
+  // belongs to an order: it can be held, sent to the kitchen in rounds, and
+  // settled later from here or from the floor plan.
+  const router = useRouter();
+  const businessType = useBusinessType();
+  const restaurant = businessType.restaurantMode;
+  const [activeOrder,   setActiveOrder]   = useState<RestaurantOrder | null>(null);
+  const [orderType,     setOrderType]     = useState<OrderType>("takeaway");
+  const [orderTableIds, setOrderTableIds] = useState<string[]>([]);
+  const [guests,        setGuests]        = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [rush,          setRush]          = useState(false);
+  const [diningTables,  setDiningTables]  = useState<DiningTable[]>([]);
+  const [openOrders,    setOpenOrders]    = useState<RestaurantOrder[]>([]);
+  const [showOpenOrders, setShowOpenOrders] = useState(false);
+  const [noteFor,       setNoteFor]       = useState<string | null>(null);
+  const [voidFor,       setVoidFor]       = useState<CartEntry | null>(null);
+  const [kotTickets,    setKotTickets]    = useState<KitchenTicket[] | null>(null);
+  const [orderNotice,   setOrderNotice]   = useState<string | null>(null);
+  const [sendingOrder,  setSendingOrder]  = useState(false);
+  const [autoPrintKot,  setAutoPrintKot]  = useState(false);
+  /** Line ids the loaded order had, to tell "removed here" from "added on another till". */
+  const knownLineIds = useRef<Set<string>>(new Set());
+
   // ── Mobile tab ───────────────────────────────────────────────────────────
   const [posTab, setPosTab] = useState<"customer" | "catalog" | "cart">("catalog");
 
@@ -258,6 +302,7 @@ export default function POSPage() {
         id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`, price: i.retailPrice ?? 0,
         category: i.category, section: i.section, stock: i.currentStock, unit: i.unit, barcode: i.barcode, image: i.image,
         variablePrice: i.variablePrice, priceRangeMin: i.priceRangeMin, priceRangeMax: i.priceRangeMax,
+        unavailable: i.unavailable,
       }));
     return [...svc, ...prod];
   }, [services, inventory, catalogTab, catalogSearch, catalogSectionFilter]);
@@ -296,8 +341,10 @@ export default function POSPage() {
   // ── Cart ops ──────────────────────────────────────────────────────────────
   const addToCart = useCallback((item: CatalogItem) => {
     setCart(prev => {
-      const hit = prev.find(e => e.itemId === item.id);
-      if (hit) return prev.map(e => e.itemId === item.id ? { ...e, qty: e.qty + 1, total: (e.qty + 1) * e.unitPrice } : e);
+      // A line the kitchen already has, or one with its own note, is its own
+      // line — another of the same dish starts a fresh one.
+      const hit = prev.find(e => e.itemId === item.id && !e.firedAt && !e.note);
+      if (hit) return prev.map(e => e.cartId === hit.cartId ? { ...e, qty: e.qty + 1, total: (e.qty + 1) * e.unitPrice } : e);
       return [...prev, {
         cartId: crypto.randomUUID(), itemId: item.id, type: item.type, name: item.name, qty: 1,
         unitPrice: item.price, total: item.price, variablePrice: item.variablePrice,
@@ -367,7 +414,7 @@ export default function POSPage() {
   function updateQty(cartId: string, delta: number) {
     setCart(prev => {
       const entry = prev.find(e => e.cartId === cartId);
-      if (!entry) return prev;
+      if (!entry || entry.firedAt) return prev;
       const nextQty = entry.qty + delta;
       if (nextQty < 1) return prev.filter(e => e.cartId !== cartId);
       return prev.map(e => e.cartId === cartId ? { ...e, qty: nextQty, total: nextQty * e.unitPrice } : e);
@@ -407,7 +454,166 @@ export default function POSPage() {
     setSelectedClient(null); setClientQ(""); setSelectedStaffId("");
     setCompleted(false); setLastInvoice(null); setWaStatus("idle"); setIsCredit(false);
     setSyncFailed(false);
+    clearOrder();
   }
+
+  // ── Restaurant orders ─────────────────────────────────────────────────────
+  function refreshRestaurant() {
+    setDiningTables(getTables());
+    setOpenOrders(getOpenOrders());
+  }
+
+  function clearOrder() {
+    setActiveOrder(null);
+    setOrderTableIds([]); setGuests(""); setDeliveryAddress(""); setRush(false);
+    setNoteFor(null);
+    knownLineIds.current = new Set();
+    if (window.location.search.includes("order=")) router.replace("/dashboard/pos");
+  }
+
+  /** Puts an order into the cart — resuming a held tab, or adding to a table's order. */
+  function loadOrder(order: RestaurantOrder) {
+    setActiveOrder(order);
+    setOrderType(order.type);
+    setOrderTableIds(order.tableIds);
+    setGuests(order.guests ? String(order.guests) : "");
+    setDeliveryAddress(order.deliveryAddress ?? "");
+    setRush(!!order.rush);
+    setSaleNotes(order.notes ?? "");
+    setSelectedStaffId(order.waiterId ?? "");
+    knownLineIds.current = new Set(order.lines.map(l => l.id));
+    setCart(order.lines.filter(l => !l.voided).map(l => ({
+      cartId: l.id, lineId: l.id, itemId: l.itemId, type: "product" as const, name: l.name,
+      qty: l.qty, unitPrice: l.unitPrice, total: l.qty * l.unitPrice, firedAt: l.firedAt, note: l.note,
+    })));
+    const client = order.clientId ? getStoredClients().find(c => c.id === order.clientId) : undefined;
+    setSelectedClient(client ?? (order.clientName ? { id: "", name: order.clientName, phone: order.clientPhone ?? "", tags: [], source: "walk-in", createdAt: "", totalVisits: 0, totalSpend: 0 } : null));
+    setShowOpenOrders(false);
+  }
+
+  /**
+   * The order as this screen has it now, merged over the stored copy: voided
+   * lines and lines another terminal added since this one loaded the order
+   * are kept, lines removed here (only possible before they were sent) go.
+   */
+  function buildOrder(): RestaurantOrder {
+    const stored = activeOrder ? getOrder(activeOrder.id) ?? activeOrder : null;
+    const staffMember = staff.find(s => s.id === selectedStaffId);
+    const cartLines: OrderLine[] = cart.map(e => {
+      const item = inventory.find(i => i.id === e.itemId);
+      return {
+        id: e.lineId ?? e.cartId,
+        itemId: e.itemId,
+        name: e.name,
+        qty: e.qty,
+        unitPrice: wholePkr(e.unitPrice),
+        note: e.note?.trim() || undefined,
+        station: stationFor(item),
+        firedAt: e.firedAt,
+      };
+    });
+    const cartIds = new Set(cartLines.map(l => l.id));
+    const kept = (stored?.lines ?? []).filter(l => !cartIds.has(l.id) && (l.voided || !knownLineIds.current.has(l.id)));
+    return {
+      id: stored?.id ?? newId("ord"),
+      number: stored?.number ?? nextOrderNumber(),
+      status: "open",
+      createdAt: stored?.createdAt ?? new Date().toISOString(),
+      ...stored,
+      type: orderType,
+      tableIds: orderType === "dine-in" ? orderTableIds : [],
+      guests: parseInt(guests, 10) || undefined,
+      deliveryAddress: orderType === "delivery" ? deliveryAddress.trim() || undefined : undefined,
+      rush,
+      waiterId: staffMember?.id,
+      waiterName: staffMember?.name,
+      clientId: selectedClient?.id || undefined,
+      clientName: selectedClient?.name || undefined,
+      clientPhone: selectedClient?.phone || undefined,
+      notes: saleNotes.trim() || undefined,
+      lines: [...kept, ...cartLines],
+    };
+  }
+
+  function orderProblem(): string | null {
+    if (orderType === "dine-in" && orderTableIds.length === 0) return "Pick a table for a dine-in order.";
+    if (orderType === "delivery" && !deliveryAddress.trim()) return "Add the delivery address.";
+    return null;
+  }
+
+  /** Send to kitchen (fire = true) or hold the order for later (fire = false), then clear the till. */
+  async function saveCurrentOrder(fire: boolean) {
+    const problem = orderProblem();
+    if (problem) { setOrderNotice(problem); return; }
+    if (cart.length === 0) return;
+    setSendingOrder(true);
+    try {
+      const order = buildOrder();
+      if (fire) {
+        const { tickets } = await fireOrder(order);
+        setOrderNotice(tickets.length
+          ? `${orderRef(order)} sent to ${tickets.map(t => t.station).join(" & ")}`
+          : `${orderRef(order)} saved — nothing new to send`);
+        if (tickets.length && autoPrintKot) setKotTickets(tickets);
+      } else {
+        await saveOrder(order);
+        setOrderNotice(`${orderRef(order)} on hold`);
+      }
+      setCart([]); setDiscount(0); setDiscount2(0); setLoyaltyRedeem(0); setSaleNotes(""); setPayMethod(null);
+      setSelectedClient(null); setClientQ(""); setSelectedStaffId(""); setIsCredit(false);
+      clearOrder();
+      refreshRestaurant();
+    } finally {
+      setSendingOrder(false);
+    }
+  }
+
+  async function approveVoid(entry: CartEntry, approval: Approval) {
+    if (!activeOrder || !entry.lineId) return;
+    // Save what's on screen first so the void lands on the current lines.
+    const current = buildOrder();
+    const next = await voidLine(current, entry.lineId, approval);
+    setActiveOrder(next);
+    knownLineIds.current = new Set(next.lines.map(l => l.id));
+    setCart(prev => prev.filter(e => e.cartId !== entry.cartId));
+    setVoidFor(null);
+  }
+
+  function removeEntry(entry: CartEntry) {
+    if (entry.firedAt) { setVoidFor(entry); return; }
+    setCart(prev => prev.filter(e => e.cartId !== entry.cartId));
+  }
+
+  function setEntryNote(cartId: string, note: string) {
+    setCart(prev => prev.map(e => e.cartId === cartId ? { ...e, note } : e));
+  }
+
+  // Restaurant setup: tables and open orders, ?order= from the floor plan, and
+  // the per-terminal "print kitchen tickets" preference.
+  useEffect(() => {
+    if (!restaurant) return;
+    const t = window.setTimeout(() => {
+      refreshRestaurant();
+      try { setAutoPrintKot(localStorage.getItem("pointly_pos_autoprint_kot") === "on"); } catch { /* storage blocked */ }
+      const params = new URLSearchParams(window.location.search);
+      const orderId = params.get("order");
+      const order = orderId ? getOrder(orderId) : undefined;
+      if (order && order.status === "open") {
+        loadOrder(order);
+        if (params.get("checkout")) setPosTab("cart");
+      } else {
+        setOrderType("takeaway");
+      }
+    }, 0);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once the business type is known
+  }, [restaurant]);
+
+  useEffect(() => {
+    if (!orderNotice) return;
+    const t = window.setTimeout(() => setOrderNotice(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [orderNotice]);
 
   // ── Complete sale ─────────────────────────────────────────────────────────
   async function completeSale() {
@@ -415,8 +621,20 @@ export default function POSPage() {
     // Mirrors the Complete Sale button's disabled condition — a payment method (or
     // explicit Pay Later/Credit) must be chosen, never silently defaulted.
     if (!isCredit && !payMethod) return;
+    if (restaurant) {
+      const problem = orderProblem();
+      if (problem) { setOrderNotice(problem); return; }
+    }
     setCompleting(true);
     try {
+      // Restaurant mode: anything not yet sent goes to the kitchen now (a café
+      // takes payment first), and the order is closed against the invoice below.
+      let settledOrder: RestaurantOrder | null = null;
+      if (restaurant) {
+        const { order, tickets } = await fireOrder(buildOrder());
+        settledOrder = order;
+        if (tickets.length && autoPrintKot) setKotTickets(tickets);
+      }
       const today = localDateKey();
       const staffMember = staff.find(s => s.id === selectedStaffId);
       // Prefer the assigned staff member's section; with no staff chosen, fall
@@ -441,9 +659,20 @@ export default function POSPage() {
         subtotal, discountAmount: wholePkr(discountAmount + loyaltyDiscount), discount2Amount: discountAmount2, taxAmount, total,
         paymentMethod: isCredit ? "" : (payMethod as PaymentMethod),
         date: today, status: isCredit ? "unpaid" : "paid",
-        notes: saleNotes.trim(),
+        notes: settledOrder
+          ? [orderRef(settledOrder), saleNotes.trim()].filter(Boolean).join(" · ")
+          : saleNotes.trim(),
         source: "pos",
+        ...(settledOrder ? {
+          orderId: settledOrder.id,
+          orderType: settledOrder.type,
+          tableNames: tableNames(settledOrder.tableIds).join(" + ") || undefined,
+        } : {}),
       });
+      if (settledOrder) {
+        await markOrderPaid(settledOrder.id, invoice);
+        refreshRestaurant();
+      }
       // The sale is already final (payment collected, receipt about to send) so a
       // failed sync doesn't block checkout — but it must not go unnoticed the way
       // it did before, silently leaving the invoice missing on every other device.
@@ -640,6 +869,20 @@ export default function POSPage() {
 
         <div style={{ flex: 1 }} />
 
+        {restaurant && orderNotice && (
+          <div role="status" style={{ display: "flex", alignItems: "center", gap: 6, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 20, padding: "5px 14px", fontSize: 12, fontWeight: 700, color: "#047857", maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <ChefHat size={13} /> {orderNotice}
+          </div>
+        )}
+
+        {restaurant && (
+          <button type="button" onClick={() => { refreshRestaurant(); setShowOpenOrders(true); }}
+            style={{ display: "flex", alignItems: "center", gap: 6, border: "1.5px solid #fed7aa", borderRadius: 10, padding: "8px 14px", background: "#fff", color: "#c2410c", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+            <ListOrdered size={14} /> Open orders
+            {openOrders.length > 0 && <span style={{ background: "#EA580C", color: "#fff", borderRadius: 20, padding: "0 7px", fontSize: 11 }}>{openOrders.length}</span>}
+          </button>
+        )}
+
         {/* Cart badge pill */}
         {totalQty > 0 && !completed && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 20, padding: "5px 14px" }}>
@@ -760,6 +1003,71 @@ export default function POSPage() {
           </div>
 
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+
+            {restaurant && (
+              <div style={{ padding: 12, borderRadius: 12, border: "1.5px solid #fed7aa", background: "#fffaf5", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: "#9A3412", textTransform: "uppercase", letterSpacing: "0.07em", flex: 1 }}>
+                    {activeOrder ? `Order #${activeOrder.number}` : "New order"}
+                  </span>
+                  {activeOrder && (
+                    <button type="button" onClick={() => { setCart([]); setSelectedClient(null); setSelectedStaffId(""); setSaleNotes(""); clearOrder(); }}
+                      title="Put this order back and start a new one"
+                      style={{ border: "none", background: "none", color: "#9999b0", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                      Close
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4 }}>
+                  {([
+                    { id: "dine-in",  icon: UtensilsCrossed },
+                    { id: "takeaway", icon: ShoppingBag },
+                    { id: "delivery", icon: Bike },
+                  ] as { id: OrderType; icon: React.ElementType }[]).map(({ id, icon: Icon }) => {
+                    const on = orderType === id;
+                    return (
+                      <button key={id} type="button" onClick={() => setOrderType(id)} aria-pressed={on}
+                        style={{ padding: "7px 2px", borderRadius: 9, border: `1.5px solid ${on ? "#EA580C" : "#ececf4"}`, background: on ? "#fff7ed" : "#fff", color: on ? "#EA580C" : "#8a8aa6", fontSize: 11, fontWeight: 800, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                        <Icon size={14} /> {ORDER_TYPE_LABEL[id]}
+                      </button>
+                    );
+                  })}
+                </div>
+                {orderType === "dine-in" && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 70px", gap: 6 }}>
+                    <select value={orderTableIds[0] ?? ""} onChange={e => setOrderTableIds(e.target.value ? [e.target.value] : [])} aria-label="Table"
+                      style={{ height: 36, padding: "0 8px", borderRadius: 9, border: "1.5px solid #e8e8f4", fontSize: 12, background: "#fff", color: "#1d1d2f" }}>
+                      <option value="">{diningTables.length ? "Choose table…" : "No tables — add them on Tables"}</option>
+                      {diningTables.map(t => {
+                        const busy = openOrders.some(o => o.id !== activeOrder?.id && o.tableIds.includes(t.id));
+                        return <option key={t.id} value={t.id} disabled={busy}>{t.name}{t.area ? ` · ${t.area}` : ""}{busy ? " (occupied)" : ""}</option>;
+                      })}
+                    </select>
+                    <input type="number" min={1} value={guests} onChange={e => setGuests(e.target.value)} placeholder="Guests" aria-label="Guests"
+                      style={{ height: 36, padding: "0 8px", borderRadius: 9, border: "1.5px solid #e8e8f4", fontSize: 12, background: "#fff", boxSizing: "border-box", width: "100%" }} />
+                  </div>
+                )}
+                {orderType === "dine-in" && orderTableIds.length > 1 && (
+                  <div style={{ fontSize: 11, color: "#9999b0" }}>Merged: {tableNames(orderTableIds, diningTables).join(" + ")}</div>
+                )}
+                {orderType === "delivery" && (
+                  <textarea value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} rows={2} placeholder="Delivery address *"
+                    style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #e8e8f4", fontSize: 12, background: "#fff", resize: "vertical", fontFamily: "inherit" }} />
+                )}
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: rush ? "#dc2626" : "#8a8aa6", cursor: "pointer" }}>
+                    <input type="checkbox" checked={rush} onChange={e => setRush(e.target.checked)} style={{ accentColor: "#dc2626" }} />
+                    <Flame size={12} /> Rush
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#8a8aa6", cursor: "pointer" }}
+                    title="Opens the kitchen ticket to print every time an order is sent from this till">
+                    <input type="checkbox" checked={autoPrintKot} style={{ accentColor: "#EA580C" }}
+                      onChange={e => { setAutoPrintKot(e.target.checked); try { localStorage.setItem("pointly_pos_autoprint_kot", e.target.checked ? "on" : "off"); } catch { /* storage blocked */ } }} />
+                    Print KOT
+                  </label>
+                </div>
+              </div>
+            )}
 
             {!selectedClient ? (
               <>
@@ -915,17 +1223,17 @@ export default function POSPage() {
 
             {/* Staff selector */}
             <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 6 }}>Assigned Staff</label>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 6 }}>{restaurant ? "Waiter" : "Assigned Staff"}</label>
               <select value={selectedStaffId} onChange={e => setSelectedStaffId(e.target.value)}
                 style={{ width: "100%", height: 38, padding: "0 12px", borderRadius: 10, border: "1.5px solid #e8e8f4", fontSize: 13, color: "#1d1d2f", outline: "none", background: "#fafafe", boxSizing: "border-box" }}>
-                <option value="">Any available staff</option>
+                <option value="">{restaurant ? "No waiter" : "Any available staff"}</option>
                 {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
 
             {/* Notes */}
             <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 6 }}>Sale Notes</label>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 6 }}>{restaurant ? "Order Notes" : "Sale Notes"}</label>
               <textarea value={saleNotes} onChange={e => setSaleNotes(e.target.value)} rows={3}
                 placeholder="Special instructions, preferences…"
                 style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: "1.5px solid #e8e8f4", fontSize: 12, color: "#1d1d2f", outline: "none", background: "#fafafe", resize: "vertical", lineHeight: 1.5, fontFamily: "inherit", boxSizing: "border-box" }} />
@@ -995,7 +1303,7 @@ export default function POSPage() {
               {([
                 { id: "all",      label: "All Items", icon: Sparkles },
                 { id: "services", label: "Services",  icon: Scissors },
-                { id: "products", label: "Products",  icon: Package  },
+                { id: "products", label: businessType.productsLabel, icon: Package  },
               ] as { id: CatalogTab; label: string; icon: React.ElementType }[]).map(t => {
                 const active = catalogTab === t.id;
                 const Icon = t.icon;
@@ -1050,7 +1358,11 @@ export default function POSPage() {
                 {catalogItems.map(item => {
                   const inCart  = cart.find(e => e.itemId === item.id);
                   const { fg, bg } = catColor(item.category, item.type);
-                  const outOfStock = item.type === "product" && (item.stock ?? 999) === 0;
+                  // A restaurant sells made-to-order dishes, so stock doesn't gate
+                  // them — the 86 list (kitchen display) does.
+                  const outOfStock = restaurant
+                    ? !!item.unavailable
+                    : item.type === "product" && (item.stock ?? 999) === 0;
                   return (
                     <button key={item.id} type="button" className={`pos-catalog-card${inCart ? " is-in-cart" : ""}${outOfStock ? " is-disabled" : ""}`}
                       onClick={() => !outOfStock && addToCart(item)}
@@ -1101,7 +1413,9 @@ export default function POSPage() {
                           <span style={{ padding: "2px 7px", borderRadius: 20, background: fg + "15", fontSize: 9, fontWeight: 800, color: fg, textTransform: "capitalize", letterSpacing: "0.03em" }}>
                             {item.type === "service" ? item.category : "product"}
                           </span>
-                          {item.type === "product" && item.stock !== undefined && (
+                          {restaurant ? (item.unavailable && (
+                            <span style={{ fontSize: 9, fontWeight: 800, color: "#dc2626" }}>86&apos;d</span>
+                          )) : item.type === "product" && item.stock !== undefined && (
                             <span style={{ fontSize: 9, fontWeight: 600, color: item.stock === 0 ? "#dc2626" : item.stock <= 3 ? "#d97706" : "#9999b0" }}>
                               {item.stock === 0 ? "Out of stock" : `${item.stock} left`}
                             </span>
@@ -1126,14 +1440,14 @@ export default function POSPage() {
               <ShoppingCart size={14} color={totalQty > 0 ? "#EA580C" : "#c0c0d8"} />
             </div>
             <span style={{ fontSize: 13, fontWeight: 800, color: "#1d1d2f", flex: 1 }}>
-              Cart
+              {restaurant && activeOrder ? orderRef(activeOrder, diningTables) : "Cart"}
               {totalQty > 0 && (
                 <span style={{ marginLeft: 8, background: "#EA580C", color: "#fff", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "2px 7px" }}>
                   {totalQty}
                 </span>
               )}
             </span>
-            {cart.length > 0 && (
+            {cart.length > 0 && !cart.some(e => e.firedAt) && (
               <button type="button" onClick={() => setCart([])}
                 style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid #fee2e2", borderRadius: 8, background: "#fff5f5", cursor: "pointer", padding: "5px 10px", fontSize: 11, fontWeight: 700, color: "#ef4444" }}>
                 <Trash2 size={11} /> Clear
@@ -1165,7 +1479,25 @@ export default function POSPage() {
                       {/* Name row */}
                       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, marginBottom: 14 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: "#1d1d2f", lineHeight: 1.3 }}>{entry.name}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "#1d1d2f", lineHeight: 1.3 }}>
+                            {entry.name}
+                            {entry.firedAt && (
+                              <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: "#059669", background: "#ecfdf5", borderRadius: 20, padding: "1px 7px", verticalAlign: "middle" }}>SENT</span>
+                            )}
+                          </div>
+                          {restaurant && (entry.firedAt ? (
+                            entry.note ? <div style={{ fontSize: 11, color: "#b45309", marginTop: 3 }}>» {entry.note}</div> : null
+                          ) : noteFor === entry.cartId ? (
+                            <input autoFocus value={entry.note ?? ""} onChange={e => setEntryNote(entry.cartId, e.target.value)}
+                              onBlur={() => setNoteFor(null)} onKeyDown={e => { if (e.key === "Enter") setNoteFor(null); }}
+                              placeholder="Kitchen note — no onions, extra spicy…" aria-label={`Kitchen note for ${entry.name}`}
+                              style={{ marginTop: 5, width: "100%", fontSize: 11, padding: "5px 8px", borderRadius: 7, border: "1px solid #fcd34d", outline: "none", background: "#fffbeb", boxSizing: "border-box" }} />
+                          ) : (
+                            <button type="button" onClick={() => setNoteFor(entry.cartId)}
+                              style={{ marginTop: 4, border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: 11, fontWeight: 700, color: entry.note ? "#b45309" : "#b0b0c8", display: "flex", alignItems: "center", gap: 4, textAlign: "left" }}>
+                              <StickyNote size={11} /> {entry.note || "Add note"}
+                            </button>
+                          ))}
                           {entry.variablePrice ? (
                             <div style={{ marginTop: 4 }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -1185,8 +1517,9 @@ export default function POSPage() {
                             <div style={{ fontSize: 11, color: "#b0b0c8", marginTop: 2 }}>{pkr(entry.unitPrice)} each</div>
                           )}
                         </div>
-                        <button type="button" onClick={() => setCart(prev => prev.filter(e => e.cartId !== entry.cartId))}
-                          style={{ border: "none", background: "#f8f4ff", borderRadius: 6, cursor: "pointer", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <button type="button" onClick={() => removeEntry(entry)}
+                          title={entry.firedAt ? "Void — needs a manager" : "Remove"}
+                          style={{ border: "none", background: entry.firedAt ? "#fef2f2" : "#f8f4ff", borderRadius: 6, cursor: "pointer", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                           <X size={12} color="#9999b0" />
                         </button>
                       </div>
@@ -1195,16 +1528,16 @@ export default function POSPage() {
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         {/* Qty controls */}
                         <div style={{ display: "flex", alignItems: "center", background: "#fff", border: "1.5px solid #e8e8f4", borderRadius: 10, overflow: "hidden" }}>
-                          <button type="button" onClick={() => updateQty(entry.cartId, -1)}
-                            style={{ width: 34, height: 34, border: "none", background: entry.qty === 1 ? "#fff5f5" : "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.1s" }}
+                          <button type="button" onClick={() => updateQty(entry.cartId, -1)} disabled={!!entry.firedAt}
+                            style={{ opacity: entry.firedAt ? 0.35 : 1, width: 34, height: 34, border: "none", background: entry.qty === 1 ? "#fff5f5" : "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.1s" }}
                             onMouseEnter={e => (e.currentTarget.style.background = entry.qty === 1 ? "#fee2e2" : "#f5f4ff")}
                             onMouseLeave={e => (e.currentTarget.style.background = entry.qty === 1 ? "#fff5f5" : "#fff")}
                           >
                             {entry.qty === 1 ? <Trash2 size={12} color="#ef4444" /> : <Minus size={12} color="#EA580C" />}
                           </button>
                           <div style={{ width: 36, textAlign: "center", fontSize: 14, fontWeight: 900, color: "#1d1d2f" }}>{entry.qty}</div>
-                          <button type="button" onClick={() => updateQty(entry.cartId, 1)}
-                            style={{ width: 34, height: 34, border: "none", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                          <button type="button" onClick={() => updateQty(entry.cartId, 1)} disabled={!!entry.firedAt}
+                            style={{ opacity: entry.firedAt ? 0.35 : 1, width: 34, height: 34, border: "none", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
                             onMouseEnter={e => (e.currentTarget.style.background = "#fff7ed")}
                             onMouseLeave={e => (e.currentTarget.style.background = "#fff")}
                           >
@@ -1317,6 +1650,20 @@ export default function POSPage() {
                 )}
 
               </div>
+
+              {restaurant && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8, marginBottom: 12 }}>
+                  <button type="button" onClick={() => saveCurrentOrder(false)} disabled={sendingOrder}
+                    title="Save the order without sending it to the kitchen"
+                    style={{ height: 42, borderRadius: 11, border: "1.5px solid #e8e8f4", background: "#fff", color: "#5a5a78", fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Pause size={14} /> Hold
+                  </button>
+                  <button type="button" onClick={() => saveCurrentOrder(true)} disabled={sendingOrder || !cart.some(e => !e.firedAt)}
+                    style={{ height: 42, borderRadius: 11, border: "none", background: cart.some(e => !e.firedAt) ? "#1d1d2f" : "#e8e8f0", color: cart.some(e => !e.firedAt) ? "#fff" : "#aaaabc", fontSize: 12, fontWeight: 800, cursor: cart.some(e => !e.firedAt) ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Send size={14} /> {sendingOrder ? "Sending…" : "Send to kitchen"}
+                  </button>
+                </div>
+              )}
 
               {/* Total box */}
               <div style={{ borderRadius: 13, background: "linear-gradient(135deg,#9A3412,#F97316)", padding: "12px 16px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "0 4px 16px rgba(154,52,18,0.3)" }}>
@@ -1448,6 +1795,45 @@ export default function POSPage() {
           onClose={() => { setPrintInvoice(null); startNewSale(); }}
           onEdit={() => setEditingInvoice(printInvoice)}
         />
+      )}
+      {kotTickets && <KotPrint tickets={kotTickets} onClose={() => setKotTickets(null)} />}
+      {voidFor && (
+        <ManagerApproval
+          title={`Void ${voidFor.qty} × ${voidFor.name}?`}
+          detail="The kitchen already has this item. It will show as void on the kitchen display and come off the bill."
+          confirmLabel="Void item"
+          onClose={() => setVoidFor(null)}
+          onApproved={(approval) => approveVoid(voidFor, approval)}
+        />
+      )}
+      {showOpenOrders && (
+        <div onClick={() => setShowOpenOrders(false)} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(15,15,30,.45)", display: "flex", justifyContent: "flex-end" }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 400, height: "100%", background: "#fff", padding: 20, overflowY: "auto", boxShadow: "-10px 0 40px rgba(0,0,0,.15)" }}>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ flex: 1, fontSize: 16, fontWeight: 900, color: "#1d1d2f" }}>Open orders</div>
+              <button type="button" onClick={() => setShowOpenOrders(false)} aria-label="Close" style={{ border: "none", background: "none", cursor: "pointer", color: "#9999b0" }}><X size={18} /></button>
+            </div>
+            {cart.length > 0 && !activeOrder && (
+              <div style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", borderRadius: 9, padding: "8px 10px", marginBottom: 10 }}>
+                The current cart isn&apos;t saved — Hold it first, or opening another order will replace it.
+              </div>
+            )}
+            {openOrders.length === 0 && <div style={{ fontSize: 13, color: "#9999b0" }}>No open orders.</div>}
+            {openOrders.map(o => (
+              <button key={o.id} type="button" onClick={() => loadOrder(o)}
+                style={{ width: "100%", textAlign: "left", padding: "11px 12px", borderRadius: 12, border: `1.5px solid ${o.id === activeOrder?.id ? "#EA580C" : "#ececf4"}`, background: "#fff", marginBottom: 8, cursor: "pointer", fontFamily: "inherit" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: "#1d1d2f", flex: 1 }}>{orderRef(o, diningTables)}</span>
+                </div>
+                <div style={{ fontSize: 11, color: "#9999b0", marginTop: 3 }}>
+                  {ORDER_TYPE_LABEL[o.type]} · {o.lines.filter(l => !l.voided).length} items · {pkr(orderSubtotal(o))}
+                  {o.lines.some(l => !l.voided && !l.firedAt) ? " · not all sent" : ""}
+                  {o.waiterName ? ` · ${o.waiterName}` : ""}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
       {editingInvoice && (
         <InvoiceEdit

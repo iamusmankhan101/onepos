@@ -44,6 +44,10 @@ export interface Invoice {
   source?: "pos" | "manual";
   /** Which business section this sale belongs to (e.g. "Men's", "Women's"). Free text, cosmetic only. */
   section?: string;
+  /** Restaurant mode: the order (lib/restaurant.ts) this invoice settled, and how it was served. */
+  orderId?: string;
+  orderType?: "dine-in" | "takeaway" | "delivery";
+  tableNames?: string;
 }
 
 // ─── Storage ──────────────────────────────────────────────────────────────────

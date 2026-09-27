@@ -5,7 +5,7 @@ import { backupExistingBusinessData } from "@/lib/data-backup";
 
 const DELETED_RECORDS_ENTITY = "deleted_records";
 
-const ALLOWED = new Set(["clients", "appointments", "staff", "services", "inventory", "invoices", "expenses", "attendance", "payouts", "cash_flow_income", DELETED_RECORDS_ENTITY]);
+const ALLOWED = new Set(["clients", "appointments", "staff", "services", "inventory", "invoices", "expenses", "attendance", "payouts", "cash_flow_income", "dining_tables", "restaurant_orders", "kitchen_tickets", DELETED_RECORDS_ENTITY]);
 
 async function ensureTable() {
   await db.execute(`

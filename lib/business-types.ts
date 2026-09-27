@@ -42,6 +42,11 @@ export interface BusinessTypeDefinition {
   roleSeed: string[];
   /** The skin/hair "Beauty Profile" on a client — salon-only. */
   beautyProfile: boolean;
+  /**
+   * Tables, open orders and the kitchen display (lib/restaurant.ts): the
+   * Tables and Kitchen screens, and order types / send-to-kitchen on the POS.
+   */
+  restaurantMode: boolean;
 }
 
 const ALL_CATEGORIES: InventoryCategory[] = [
@@ -64,6 +69,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     categories: ALL_CATEGORIES,
     roleSeed: SALON_ROLES,
     beautyProfile: true,
+    restaurantMode: false,
   },
   restaurant: {
     id: "restaurant",
@@ -76,6 +82,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     categories: ["food", "drinks", "supplies", "general", "other"],
     roleSeed: ["owner", "manager", "chef", "cook", "waiter", "cashier", "kitchen-helper"],
     beautyProfile: false,
+    restaurantMode: true,
   },
   cafe: {
     id: "cafe",
@@ -88,6 +95,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     categories: ["drinks", "food", "supplies", "general", "other"],
     roleSeed: ["owner", "manager", "barista", "baker", "cashier", "server"],
     beautyProfile: false,
+    restaurantMode: true,
   },
   retail: {
     id: "retail",
@@ -100,6 +108,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     categories: ALL_CATEGORIES,
     roleSeed: ["owner", "manager", "cashier", "sales-associate", "stock-keeper"],
     beautyProfile: false,
+    restaurantMode: false,
   },
   salon: {
     id: "salon",
@@ -112,6 +121,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     categories: ALL_CATEGORIES,
     roleSeed: SALON_ROLES,
     beautyProfile: true,
+    restaurantMode: false,
   },
 };
 

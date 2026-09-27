@@ -204,4 +204,11 @@ export interface InventoryItem {
   supplier?: string;
   lastRestocked?: string;
   notes?: string;
+  /**
+   * Restaurant mode: "86'd" — temporarily off the menu (sold out for the day,
+   * kitchen can't make it). The POS shows it greyed out; stock is untouched.
+   */
+  unavailable?: boolean;
+  /** Restaurant mode: which kitchen station gets this item's tickets. Unset = by category (drinks → bar). */
+  station?: "kitchen" | "bar";
 }

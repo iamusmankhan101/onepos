@@ -15,6 +15,7 @@ import { getStoredStaff } from "@/lib/storage";
 import type { Staff } from "@/lib/types";
 import { fillTemplate, sanitizeForLink } from "@/lib/whatsapp-link";
 import PageTitle from "@/components/page-title";
+import { useBusinessType } from "@/lib/use-business-type";
 
 const SECTIONS = [
   { id: "business",   label: "Business Profile", icon: Store },
@@ -28,8 +29,10 @@ const SECTIONS = [
 
 // Only the modules this build ships. "dashboard" is added server-side to every
 // staff login (it is what /dashboard itself resolves to), so it isn't listed.
-const PERMISSION_OPTIONS = [
+const PERMISSION_OPTIONS: { key: string; label: string; restaurantOnly?: boolean }[] = [
   { key: "pos",       label: "POS"       },
+  { key: "tables",    label: "Tables",  restaurantOnly: true },
+  { key: "kitchen",   label: "Kitchen", restaurantOnly: true },
   { key: "products",  label: "Products"  },
   { key: "clients",   label: "Clients"   },
   { key: "loyalty",   label: "Loyalty"   },
@@ -570,6 +573,17 @@ function buildAccessDrafts(staff: Staff[], users: AuthUser[], branchList: Busine
 }
 
 function StaffAccess() {
+  const businessType = useBusinessType();
+  // Restaurant screens only exist for a restaurant or café; the rest keep the
+  // business type's own names (a café's "Products" is its "Menu").
+  const permissionOptions = PERMISSION_OPTIONS
+    .filter((option) => !option.restaurantOnly || businessType.restaurantMode)
+    .map((option) => ({
+      ...option,
+      label: option.key === "products" ? businessType.productsLabel
+        : option.key === "clients" ? businessType.clientsLabel
+        : option.label,
+    }));
   const [staffList, setStaffList]   = useState<Staff[]>([]);
   const [locations, setLocations]   = useState<BusinessLocation[]>([]);
   const [loginUsers, setLoginUsers] = useState<AuthUser[]>([]);
@@ -715,7 +729,7 @@ function StaffAccess() {
               <div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#b0b0c8", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Modules</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {PERMISSION_OPTIONS.map(({ key, label }) => {
+                  {permissionOptions.map(({ key, label }) => {
                     const on = draft.permissions.includes(key);
                     return (
                       <button key={key} type="button" onClick={() => togglePermission(member.id, key)}

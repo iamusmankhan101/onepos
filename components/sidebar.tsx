@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   UserCog, BarChart3, Banknote, Settings, ReceiptText, ShoppingCart, Package, Users,
-  X, LogOut, ChevronDown, Shield, Gift,
+  X, LogOut, ChevronDown, Shield, Gift, LayoutGrid, ChefHat,
 } from "lucide-react";
 import { AuthUser, getCurrentUser, signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
@@ -14,12 +14,14 @@ import { useBusinessType } from "@/lib/use-business-type";
 
 const NAV_GROUPS: {
   label: string;
-  items: { href: string; icon: React.ElementType; label: string }[];
+  items: { href: string; icon: React.ElementType; label: string; restaurantOnly?: boolean }[];
 }[] = [
   {
     label: "Sales",
     items: [
       { href: "/dashboard/pos",      icon: ShoppingCart, label: "POS"      },
+      { href: "/dashboard/tables",   icon: LayoutGrid,   label: "Tables",  restaurantOnly: true },
+      { href: "/dashboard/kitchen",  icon: ChefHat,      label: "Kitchen", restaurantOnly: true },
       { href: "/dashboard/products", icon: Package,      label: "Products" },
       { href: "/dashboard/clients",  icon: Users,        label: "Clients"  },
       { href: "/dashboard/loyalty",  icon: Gift,         label: "Loyalty"  },
@@ -316,7 +318,8 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
         {/* ── Navigation ───────────────────────────────────── */}
         <nav className="sb-nav" style={{ flex: 1, padding: "6px 8px 8px", overflowY: "auto" }}>
           {NAV_GROUPS.map((group) => {
-            const visibleItems = group.items.filter((item) => canAccess(item.href));
+            const visibleItems = group.items.filter((item) =>
+              canAccess(item.href) && (!item.restaurantOnly || businessType.restaurantMode));
             if (visibleItems.length === 0) return null;
             return (
               <div key={group.label}>
