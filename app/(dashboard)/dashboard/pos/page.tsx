@@ -18,7 +18,7 @@ import ManagerApproval from "@/components/manager-approval";
 import CustomizeSheet from "@/components/customize-sheet";
 import {
   MENU_CHANGED_EVENT, defaultSelection, getModifierGroups, groupsForItem, lineDescription,
-  modifierSummary, modifiersTotal, sameModifiers, selectionFromModifiers,
+  modifierSummary, modifiersTotal, priceForOrderType, sameModifiers, selectionFromModifiers,
   type ChosenModifier, type ModifierGroup,
 } from "@/lib/menu";
 import { billCharges, getChargeSettings } from "@/lib/charges";
@@ -325,13 +325,15 @@ export default function POSPage() {
       .filter(i => !q || i.name.toLowerCase().includes(q) || i.brand.toLowerCase().includes(q))
       .filter(i => inSection(i, catalogSectionFilter))
       .map(i => ({
-        id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`, price: i.retailPrice ?? 0,
+        // Restaurant mode prices by how the order is served (takeaway/delivery prices).
+        id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`,
+        price: restaurant ? priceForOrderType(i, orderType) : i.retailPrice ?? 0,
         category: i.category, section: i.section, stock: i.currentStock, unit: i.unit, barcode: i.barcode, image: i.image,
         variablePrice: i.variablePrice, priceRangeMin: i.priceRangeMin, priceRangeMax: i.priceRangeMax,
         unavailable: i.unavailable, menuCategory: i.menuCategory?.trim() || undefined, modifierGroupIds: i.modifierGroupIds,
       }));
     return [...svc, ...prod];
-  }, [services, inventory, catalogTab, catalogSearch, catalogSectionFilter]);
+  }, [services, inventory, catalogTab, catalogSearch, catalogSectionFilter, restaurant, orderType]);
 
   // Restaurant mode: menu tabs (Coffee, Bakery…) from the items' menu sections.
   const menuCategories = useMemo(() => {
@@ -425,9 +427,25 @@ export default function POSPage() {
     const i = inventory.find(x => x.id === itemId);
     if (!i) return undefined;
     return {
-      id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`, price: i.retailPrice ?? 0,
+      id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`, price: priceForOrderType(i, orderType),
       category: i.category, modifierGroupIds: i.modifierGroupIds,
     };
+  }
+
+  /**
+   * Switches dine-in / takeaway / delivery and re-prices the lines not yet sent,
+   * since an item can cost more as takeaway or delivery. Sent lines keep the
+   * price they went to the kitchen at.
+   */
+  function changeOrderType(next: OrderType) {
+    setOrderType(next);
+    setCart(prev => prev.map(e => {
+      if (e.firedAt || e.type !== "product" || e.variablePrice) return e;
+      const item = inventory.find(i => i.id === e.itemId);
+      if (!item) return e;
+      const unitPrice = priceForOrderType(item, next) + modifiersTotal(e.modifiers);
+      return unitPrice === e.unitPrice ? e : { ...e, unitPrice, total: unitPrice * e.qty };
+    }));
   }
 
   function confirmCustomizing(modifiers: ChosenModifier[], qty: number, note: string) {
@@ -464,7 +482,8 @@ export default function POSPage() {
       id: product.id,
       type: "product",
       name: `${product.brand ? product.brand + " " : ""}${product.name}`,
-      price: product.retailPrice,
+      price: restaurant ? priceForOrderType(product, orderType) : product.retailPrice,
+      modifierGroupIds: product.modifierGroupIds,
       category: product.category,
       stock: product.currentStock,
       unit: product.unit,
@@ -473,7 +492,7 @@ export default function POSPage() {
     });
     setScanFeedback({ ok: true, message: `${product.name} added to cart.` });
     setBarcodeInput("");
-  }, [addToCart, inventory]);
+  }, [addToCart, inventory, orderType, restaurant]);
 
   useEffect(() => {
     function handleScannerKey(event: KeyboardEvent) {
@@ -1132,7 +1151,7 @@ export default function POSPage() {
                   ] as { id: OrderType; icon: React.ElementType }[]).map(({ id, icon: Icon }) => {
                     const on = orderType === id;
                     return (
-                      <button key={id} type="button" onClick={() => setOrderType(id)} aria-pressed={on}
+                      <button key={id} type="button" onClick={() => changeOrderType(id)} aria-pressed={on}
                         style={{ padding: "7px 2px", borderRadius: 9, border: `1.5px solid ${on ? "#EA580C" : "#ececf4"}`, background: on ? "#fff7ed" : "#fff", color: on ? "#EA580C" : "#8a8aa6", fontSize: 11, fontWeight: 800, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
                         <Icon size={14} /> {ORDER_TYPE_LABEL[id]}
                       </button>

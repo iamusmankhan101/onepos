@@ -216,6 +216,12 @@ export interface InventoryItem {
    * "Coffee", "Bakery", "Combos". Free text, finer than `category`.
    */
   menuCategory?: string;
+  /**
+   * Restaurant mode: what a takeaway or delivery order charges instead of
+   * retailPrice (packaging, delivery-app commission). Unset = retailPrice.
+   */
+  takeawayPrice?: number;
+  deliveryPrice?: number;
   /** Restaurant mode: option groups (lib/menu.ts) the POS asks for, in this order. */
   modifierGroupIds?: string[];
 }

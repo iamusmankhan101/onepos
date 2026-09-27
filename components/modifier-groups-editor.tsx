@@ -192,13 +192,13 @@ export default function ModifierGroupsEditor({ items, currency, onClose }: {
             </div>
 
             <div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 64px 90px", gap: 8, fontSize: 10, fontWeight: 800, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 84px 44px auto", gap: 8, fontSize: 10, fontWeight: 800, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
                 <span>Option</span><span>Extra ({currency})</span><span>Default</span><span />
               </div>
               {editing.options.map((o, i) => {
                 const isDefault = (editing.defaultOptionIds ?? []).includes(o.id);
                 return (
-                  <div key={o.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 64px 90px", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                  <div key={o.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 84px 44px auto", gap: 8, alignItems: "center", marginBottom: 6 }}>
                     <input value={o.name} onChange={(e) => patchOption(o.id, { name: e.target.value })} placeholder={i === 0 ? "e.g. Large" : "Option"} style={INP} aria-label="Option name" />
                     <input type="number" min={0} value={o.price || ""} onChange={(e) => patchOption(o.id, { price: Number(e.target.value) || 0 })} placeholder="0" style={INP} aria-label={`Extra price for ${o.name || "option"}`} />
                     <button type="button" onClick={() => toggleDefault(o.id)} aria-pressed={isDefault} title="Pre-selected when the item is added"

@@ -161,6 +161,7 @@ type ItemForm = {
   barcode: string; image: string;
   variablePrice: boolean; priceRangeMin: string; priceRangeMax: string;
   menuCategory: string; modifierGroupIds: string[];
+  takeawayPrice: string; deliveryPrice: string;
 };
 
 type FormValue = ItemForm[keyof ItemForm];
@@ -171,6 +172,7 @@ const EMPTY_FORM: ItemForm = {
   retailPrice: "", barcode: "", image: "", supplier: "", notes: "",
   variablePrice: false, priceRangeMin: "", priceRangeMax: "",
   menuCategory: "", modifierGroupIds: [],
+  takeawayPrice: "", deliveryPrice: "",
 };
 
 function itemToForm(item: InventoryItem): ItemForm {
@@ -186,6 +188,8 @@ function itemToForm(item: InventoryItem): ItemForm {
     priceRangeMax: item.priceRangeMax ? String(item.priceRangeMax) : "",
     menuCategory: item.menuCategory ?? "",
     modifierGroupIds: item.modifierGroupIds ?? [],
+    takeawayPrice: item.takeawayPrice ? String(item.takeawayPrice) : "",
+    deliveryPrice: item.deliveryPrice ? String(item.deliveryPrice) : "",
   };
 }
 
@@ -213,6 +217,8 @@ function formToItem(form: ItemForm, existing?: InventoryItem): InventoryItem {
     notes: form.notes || undefined,
     menuCategory: form.menuCategory.trim() || undefined,
     modifierGroupIds: form.modifierGroupIds.length ? form.modifierGroupIds : undefined,
+    takeawayPrice: !form.variablePrice && Number(form.takeawayPrice) > 0 ? Number(form.takeawayPrice) : undefined,
+    deliveryPrice: !form.variablePrice && Number(form.deliveryPrice) > 0 ? Number(form.deliveryPrice) : undefined,
     lastRestocked: existing?.lastRestocked ?? new Date().toLocaleDateString("en-CA"),
   };
 }
@@ -345,6 +351,16 @@ function ItemFormFields({ form, set, items }: { form: ItemForm; set: (k: keyof I
           </Field>
         )}
       </div>
+      {businessType.restaurantMode && !form.variablePrice && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label={`Takeaway Price (${cur()})`} hint="Empty = selling price.">
+            <input type="number" min="0" value={form.takeawayPrice} onChange={(e) => set("takeawayPrice", e.target.value)} placeholder={form.retailPrice || "0"} style={INP} />
+          </Field>
+          <Field label={`Delivery Price (${cur()})`} hint="Empty = selling price.">
+            <input type="number" min="0" value={form.deliveryPrice} onChange={(e) => set("deliveryPrice", e.target.value)} placeholder={form.retailPrice || "0"} style={INP} />
+          </Field>
+        </div>
+      )}
       <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
         <input type="checkbox" checked={form.variablePrice} onChange={(e) => set("variablePrice", e.target.checked)}
           style={{ width: 14, height: 14, accentColor: "#EA580C", cursor: "pointer" }} />
@@ -1051,6 +1067,15 @@ export default function ProductsPage() {
           : `${retailItems.length} in POS`}
         action={{ label: "+ Add", onClick: () => setShowAdd(true) }}
       />
+
+      {businessType.restaurantMode && (
+        <div className="mobile-only" style={{ padding: "0 16px", marginTop: 10 }}>
+          <button onClick={() => setShowOptions(true)}
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px 16px", borderRadius: 12, border: "1px solid #fed7aa", background: "#fff7ed", fontSize: 13, fontWeight: 750, color: "#c2410c", cursor: "pointer" }}>
+            <SlidersHorizontal size={15} /> Menu options
+          </button>
+        </div>
+      )}
 
       {/* Mobile hero card */}
       {tab === "stock" && (

@@ -84,6 +84,20 @@ export function newMenuId(prefix: string): string {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * An item's base price for an order type: its takeaway or delivery price when
+ * it has one, otherwise the ordinary selling price. Options are priced the
+ * same whichever way the order is served.
+ */
+export function priceForOrderType(
+  item: Pick<InventoryItem, "retailPrice" | "takeawayPrice" | "deliveryPrice">,
+  orderType?: string,
+): number {
+  if (orderType === "takeaway" && (item.takeawayPrice ?? 0) > 0) return item.takeawayPrice!;
+  if (orderType === "delivery" && (item.deliveryPrice ?? 0) > 0) return item.deliveryPrice!;
+  return item.retailPrice ?? 0;
+}
+
 /** The groups an item offers, in its own order, skipping any since deleted. */
 export function groupsForItem(item: Pick<InventoryItem, "modifierGroupIds"> | undefined, groups: ModifierGroup[]): ModifierGroup[] {
   if (!item?.modifierGroupIds?.length) return [];
