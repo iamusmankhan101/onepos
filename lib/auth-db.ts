@@ -497,6 +497,43 @@ export async function updateUser(
   return withoutPassword(updated);
 }
 
+/**
+ * Admin edit of an account's contact details. A business-name change on an
+ * owner is copied onto its team logins too — they carry their own copy of the
+ * name (upsertStaffUser), which the console and receipts read.
+ */
+export async function adminUpdateProfile(
+  id: string,
+  updates: { ownerName?: string; businessName?: string; phone?: string; email?: string },
+): Promise<AuthUser> {
+  await ensureAuthTables();
+  const user = await getUserById(id);
+  if (!user) throw new Error("Account not found.");
+
+  if (updates.email !== undefined) {
+    const email = updates.email.trim().toLowerCase();
+    if (email !== user.email) {
+      const taken = await getUserByEmail(email);
+      if (taken) throw new Error("Another account already uses that email.");
+      await db.execute({ sql: "UPDATE users SET email = ? WHERE id = ?", args: [email, id] });
+    }
+  }
+
+  const updated = await updateUser(id, {
+    ownerName: updates.ownerName,
+    businessName: updates.businessName,
+    phone: updates.phone,
+  });
+
+  if (updates.businessName !== undefined && !user.businessOwnerId) {
+    await db.execute({
+      sql: "UPDATE users SET business_name = ? WHERE business_owner_id = ?",
+      args: [updates.businessName.trim(), id],
+    });
+  }
+  return updated;
+}
+
 // ─── Sessions table ───────────────────────────────────────────────────────────
 
 async function ensureSessionsTable() {

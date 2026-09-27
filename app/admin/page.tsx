@@ -14,15 +14,21 @@ import {
   AlertTriangle, ArrowLeft, Building2, Check, Copy, Database, Download,
   KeyRound, LayoutGrid, Loader2, LogOut, MoreVertical, RefreshCw, Search, Shield,
   ShieldCheck, ShieldOff, Snowflake, Sparkles, Tag, Trash2, UserCheck, UserX, Users, Wallet, X, Zap,
+  Gauge, Pencil, UserPlus,
 } from "lucide-react";
 import type { AuditEntry, PlatformStats, PlatformUser } from "@/lib/admin-db";
 import type { AuthUser } from "@/lib/auth-db";
 import { signOut } from "@/lib/auth";
 import { Modal, Pill, StatCard } from "./ui";
 import BillingTab from "./billing-tab";
+import OverviewTab from "./overview-tab";
+import { CreateAccountModal, EditProfileModal } from "./account-modals";
+import type { OwnSubscription } from "@/lib/billing-db";
+import { cycleLabel } from "@/lib/billing";
 import Wordmark from "@/components/wordmark";
 import { normalizePlanId, planPriceLabel, PLANS, type PlanId } from "@/lib/plans";
 import { BUSINESS_TYPE_IDS, BUSINESS_TYPES, businessTypeFor, type BusinessTypeId } from "@/lib/business-types";
+import { PLAN_IDS } from "@/lib/plans";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,6 +45,8 @@ interface ActionResult { id: string; email?: string; ok: boolean; error?: string
 interface UserDetail {
   user: PlatformUser;
   team: AuthUser[];
+  /** Business owners only — the same view the business has in Settings → Subscription. */
+  subscription: OwnSubscription | null;
   dataOwnerId: string;
   breakdown: { locationId: string; entity: string; records: number; bytes: number; updatedAt: string }[];
   history: AuditEntry[];
@@ -114,6 +122,8 @@ const ACTION_LABEL: Record<string, string> = {
   "record-payment": "Recorded payment",
   "void-payment": "Voided payment",
   "set-billing-terms": "Changed pricing",
+  "create-account": "Created account",
+  "update-profile": "Edited details",
 };
 
 const PLAN_STYLE: Record<PlanId, { label: string; color: string; bg: string }> = {
@@ -132,13 +142,19 @@ export default function AdminConsolePage() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
 
-  const [tab, setTab] = useState<"accounts" | "billing" | "activity">("accounts");
+  const [tab, setTab] = useState<"overview" | "accounts" | "billing" | "activity">("overview");
   const [billingRefresh, setBillingRefresh] = useState(0);
   const [recordRequest, setRecordRequest] = useState<{ ownerId: string; nonce: number; kind?: "payment" | "terms" } | null>(null);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
+  const [typeFilter, setTypeFilter] = useState<BusinessTypeId | "all">("all");
+  const [planFilter, setPlanFilter] = useState<PlanId | "all">("all");
+  const [creating, setCreating] = useState(false);
+  const [editFor, setEditFor] = useState<PlatformUser | null>(null);
+  const [auditSearch, setAuditSearch] = useState("");
+  const [auditAction, setAuditAction] = useState("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [menuFor, setMenuFor] = useState<string | null>(null);
 
@@ -292,6 +308,10 @@ export default function AdminConsolePage() {
     const filtered = users.filter((user) => {
       if (roleFilter !== "all" && user.role !== roleFilter) return false;
       if (statusFilter !== "all" && statusOf(user) !== statusFilter) return false;
+      // Type and plan belong to the business, so a team login is matched on its owner's.
+      const owner = user.businessOwnerId ? users.find((u) => u.id === user.businessOwnerId) ?? user : user;
+      if (typeFilter !== "all" && businessTypeFor(owner).id !== typeFilter) return false;
+      if (planFilter !== "all" && normalizePlanId(owner.plan) !== planFilter) return false;
       if (!needle) return true;
       return [user.email, user.ownerName, user.businessName, user.phone, user.id, user.ownerBusinessName ?? ""]
         .some((field) => field.toLowerCase().includes(needle));
@@ -308,7 +328,7 @@ export default function AdminConsolePage() {
       }
     });
     return sorted;
-  }, [users, search, roleFilter, statusFilter, sortKey]);
+  }, [users, search, roleFilter, statusFilter, typeFilter, planFilter, sortKey]);
 
   const selectedUsers = useMemo(() => users.filter((user) => selected.has(user.id)), [users, selected]);
   const allVisibleSelected = visible.length > 0 && visible.every((user) => selected.has(user.id));
@@ -331,9 +351,10 @@ export default function AdminConsolePage() {
   }
 
   function exportCsv() {
-    const columns = ["Account ID", "Name", "Email", "Phone", "Business", "Role", "Status", "Freeze reason", "Team", "Sessions", "Branches", "Data", "Last activity", "Created"];
+    const columns = ["Account ID", "Name", "Email", "Phone", "Business", "Business type", "Plan", "Role", "Status", "Freeze reason", "Team", "Sessions", "Branches", "Data", "Last activity", "Created"];
     const rows = visible.map((user) => [
       user.id, user.ownerName, user.email, user.phone, user.businessName,
+      businessTypeFor(user).name, PLANS[normalizePlanId(user.plan)].name,
       user.role, STATUS_STYLE[statusOf(user)].label, user.freezeReason ?? "",
       user.teamSize, user.activeSessions, user.branches.join(" | "),
       user.storageBytes, user.lastActivity ?? "", user.createdAt,
@@ -348,6 +369,40 @@ export default function AdminConsolePage() {
     link.click();
     URL.revokeObjectURL(url);
   }
+
+  const auditVisible = useMemo(() => {
+    const needle = auditSearch.trim().toLowerCase();
+    return audit.filter((entry) =>
+      (auditAction === "all" || entry.action === auditAction)
+      && (!needle || [entry.actorEmail, entry.targetEmail ?? "", entry.detail ?? "", ACTION_LABEL[entry.action] ?? entry.action]
+        .some((field) => field.toLowerCase().includes(needle))));
+  }, [audit, auditSearch, auditAction]);
+
+  function exportAudit() {
+    const rows = [["When", "Action", "By", "Account", "Detail"], ...auditVisible.map((e) => [
+      e.createdAt, ACTION_LABEL[e.action] ?? e.action, e.actorEmail, e.targetEmail ?? "", e.detail ?? "",
+    ])];
+    const csv = rows.map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `pointly-admin-activity-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /** From the Overview: jump to a tab, optionally pre-filtered. */
+  function gotoTab(next: "accounts" | "billing" | "activity", filter?: "pending" | "frozen") {
+    if (filter) { setStatusFilter(filter); setRoleFilter("all"); setSearch(""); }
+    setTab(next);
+  }
+
+  const TAB_COPY: Record<typeof tab, { title: string; sub: string }> = {
+    overview: { title: "Overview", sub: "What needs a decision today, and how the platform is doing." },
+    accounts: { title: "Accounts", sub: "Every login on the platform — business owners, their managers and staff, and other platform admins." },
+    billing: { title: "Billing", sub: "Subscriptions, pricing and payments for every business." },
+    activity: { title: "Activity log", sub: "Every action taken in this console, by whom and when." },
+  };
 
   async function handleSignOut() {
     await signOut();
@@ -439,24 +494,34 @@ export default function AdminConsolePage() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: "#1a1a2e", letterSpacing: "-0.04em" }}>
-              Accounts
+              {TAB_COPY[tab].title}
             </h1>
             <div style={{ fontSize: 12, color: "#9898b0", fontWeight: 600, marginTop: 4 }}>
-              Every login on the platform — business owners, their managers and staff, and other platform admins.
+              {TAB_COPY[tab].sub}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" className="ac-btn" onClick={exportCsv} disabled={visible.length === 0}>
-              <Download size={14} /> Export CSV
-            </button>
-            <button type="button" className="ac-btn" onClick={() => { setLoading(true); load(); if (tab === "activity") loadAudit(); if (tab === "billing") setBillingRefresh((n) => n + 1); }}>
+            {tab === "accounts" && (
+              <button type="button" className="ac-btn" onClick={exportCsv} disabled={visible.length === 0}>
+                <Download size={14} /> Export CSV
+              </button>
+            )}
+            {tab === "activity" && (
+              <button type="button" className="ac-btn" onClick={exportAudit} disabled={auditVisible.length === 0}>
+                <Download size={14} /> Export CSV
+              </button>
+            )}
+            <button type="button" className="ac-btn" onClick={() => { setLoading(true); load(); if (tab === "activity") loadAudit(); setBillingRefresh((n) => n + 1); }}>
               <RefreshCw size={14} /> Refresh
+            </button>
+            <button type="button" className="ac-btn ac-btn-primary" onClick={() => setCreating(true)}>
+              <UserPlus size={14} /> New account
             </button>
           </div>
         </div>
 
         {/* ── Stats ──────────────────────────────────────────────────────── */}
-        {stats && (
+        {stats && tab === "accounts" && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 18 }}>
             <StatCard icon={<Users size={17} />} label="Login accounts" value={stats.total} hint={`${stats.newThisWeek} added this week`} />
             <StatCard icon={<Building2 size={17} />} label="Businesses" value={stats.owners} hint={`${stats.managers + stats.staff} team logins`} tone="#0369a1" />
@@ -468,18 +533,19 @@ export default function AdminConsolePage() {
         )}
 
         {/* ── Tabs ───────────────────────────────────────────────────────── */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 14, borderBottom: "1px solid #e8e8f2" }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, borderBottom: "1px solid #e8e8f2", overflowX: "auto", scrollbarWidth: "none" }}>
           {([
-            { key: "accounts", label: "Accounts", Icon: LayoutGrid },
-            { key: "billing", label: "Billing", Icon: Wallet },
-            { key: "activity", label: "Activity log", Icon: Shield },
-          ] as const).map(({ key, label, Icon }) => (
+            { key: "overview", label: "Overview", Icon: Gauge, count: stats?.pending ?? 0 },
+            { key: "accounts", label: "Accounts", Icon: LayoutGrid, count: 0 },
+            { key: "billing", label: "Billing", Icon: Wallet, count: 0 },
+            { key: "activity", label: "Activity log", Icon: Shield, count: 0 },
+          ] as const).map(({ key, label, Icon, count }) => (
             <button
               key={key}
               type="button"
               onClick={() => setTab(key)}
               style={{
-                border: "none", background: "transparent", cursor: "pointer", padding: "9px 13px",
+                border: "none", background: "transparent", cursor: "pointer", padding: "9px 13px", flexShrink: 0, whiteSpace: "nowrap",
                 display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontFamily: "inherit",
                 fontWeight: 800, color: tab === key ? "#c2410c" : "#8b8ba3",
                 borderBottom: tab === key ? "2px solid #EA580C" : "2px solid transparent",
@@ -487,6 +553,9 @@ export default function AdminConsolePage() {
               }}
             >
               <Icon size={14} /> {label}
+              {count > 0 && (
+                <span title={`${count} awaiting approval`} style={{ fontSize: 10.5, fontWeight: 900, color: "#fff", background: "#b45309", borderRadius: 20, padding: "1px 7px" }}>{count}</span>
+              )}
             </button>
           ))}
         </div>
@@ -501,7 +570,25 @@ export default function AdminConsolePage() {
           </div>
         )}
 
-        {tab === "accounts" ? (
+        {tab === "overview" ? (
+          <OverviewTab
+            users={users}
+            stats={stats}
+            refreshKey={billingRefresh}
+            actionLabel={ACTION_LABEL}
+            busy={busy}
+            onApprove={(user) => runAction("approve", [user])}
+            onReject={(user) => setConfirmAction({
+              action: "reject", targets: [user], title: "Reject this account?",
+              body: `${user.email} will be blocked from signing in until you approve them.`,
+              label: "Reject account", tone: "#b91c1c",
+            })}
+            onUnfreeze={(user) => runAction("unfreeze", [user])}
+            onOpen={openDetail}
+            onRecordPayment={(ownerId) => { setRecordRequest({ ownerId, nonce: Date.now() }); setTab("billing"); }}
+            onGoto={gotoTab}
+          />
+        ) : tab === "accounts" ? (
           <>
             {/* ── Filters ────────────────────────────────────────────────── */}
             <div style={{ display: "flex", gap: 9, flexWrap: "wrap", marginBottom: 12 }}>
@@ -539,6 +626,21 @@ export default function AdminConsolePage() {
                 <option value="activity">Recently active</option>
                 <option value="storage">Most data</option>
               </select>
+              <select className="ac-input" style={{ width: "auto", minWidth: 130, cursor: "pointer" }}
+                value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as BusinessTypeId | "all")} aria-label="Filter by business type">
+                <option value="all">All business types</option>
+                {BUSINESS_TYPE_IDS.map((id) => <option key={id} value={id}>{BUSINESS_TYPES[id].name}</option>)}
+              </select>
+              <select className="ac-input" style={{ width: "auto", minWidth: 110, cursor: "pointer" }}
+                value={planFilter} onChange={(event) => setPlanFilter(event.target.value as PlanId | "all")} aria-label="Filter by plan">
+                <option value="all">All plans</option>
+                {PLAN_IDS.map((id) => <option key={id} value={id}>{PLANS[id].name}</option>)}
+              </select>
+              {(search || roleFilter !== "all" || statusFilter !== "all" || typeFilter !== "all" || planFilter !== "all") && (
+                <button type="button" className="ac-btn" onClick={() => { setSearch(""); setRoleFilter("all"); setStatusFilter("all"); setTypeFilter("all"); setPlanFilter("all"); }}>
+                  <X size={13} /> Clear filters
+                </button>
+              )}
             </div>
 
             {/* ── Bulk bar ───────────────────────────────────────────────── */}
@@ -703,6 +805,11 @@ export default function AdminConsolePage() {
                             <button type="button" className="ac-menu-item" onClick={() => openDetail(user.id)}>
                               <Search size={13} /> View details
                             </button>
+                            {(user.role !== "admin" || isSelf) && (
+                              <button type="button" className="ac-menu-item" onClick={() => { setMenuFor(null); setEditFor(user); }}>
+                                <Pencil size={13} /> Edit details
+                              </button>
+                            )}
 
                             {user.accountFrozen ? (
                               <button type="button" className="ac-menu-item" disabled={busy} onClick={() => runAction("unfreeze", [user])}>
@@ -834,17 +941,32 @@ export default function AdminConsolePage() {
           <BillingTab refreshKey={billingRefresh} recordRequest={recordRequest} onToast={setToast} />
         ) : (
           /* ── Activity log ─────────────────────────────────────────────── */
+          <>
+          <div style={{ display: "flex", gap: 9, flexWrap: "wrap", marginBottom: 12 }}>
+            <div style={{ position: "relative", flex: "1 1 240px", minWidth: 200 }}>
+              <Search size={15} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#a5a5bb" }} />
+              <input className="ac-input" style={{ paddingLeft: 34 }} placeholder="Search admin, account or detail"
+                value={auditSearch} onChange={(event) => setAuditSearch(event.target.value)} />
+            </div>
+            <select className="ac-input" style={{ width: "auto", minWidth: 160, cursor: "pointer" }} aria-label="Filter by action"
+              value={auditAction} onChange={(event) => setAuditAction(event.target.value)}>
+              <option value="all">All actions</option>
+              {Array.from(new Set(audit.map((e) => e.action))).sort().map((action) => (
+                <option key={action} value={action}>{ACTION_LABEL[action] ?? action}</option>
+              ))}
+            </select>
+          </div>
           <div style={{ background: "#fff", border: "1px solid #ececf4", borderRadius: 16, overflow: "hidden", boxShadow: "0 6px 18px rgba(30,20,10,0.04)" }}>
             {auditLoading ? (
               <div style={{ padding: "56px 20px", textAlign: "center", color: "#9898b0", fontSize: 13, fontWeight: 650 }}>Loading activity…</div>
-            ) : audit.length === 0 ? (
+            ) : auditVisible.length === 0 ? (
               <div style={{ padding: "56px 20px", textAlign: "center", color: "#9898b0" }}>
                 <Shield size={26} style={{ opacity: 0.4 }} />
-                <div style={{ fontSize: 13.5, fontWeight: 750, color: "#6b6b8a", marginTop: 10 }}>No admin actions yet</div>
+                <div style={{ fontSize: 13.5, fontWeight: 750, color: "#6b6b8a", marginTop: 10 }}>{audit.length ? "No entries match" : "No admin actions yet"}</div>
                 <div style={{ fontSize: 12, marginTop: 4 }}>Freezes, approvals, password resets and deletions all appear here.</div>
               </div>
             ) : (
-              audit.map((entry) => (
+              auditVisible.map((entry) => (
                 <div key={entry.id} style={{
                   display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 16px",
                   borderBottom: "1px solid #f3f3f9",
@@ -864,13 +986,14 @@ export default function AdminConsolePage() {
                       by {entry.actorEmail}{entry.detail ? ` — ${entry.detail}` : ""}
                     </div>
                   </div>
-                  <div style={{ fontSize: 11, color: "#a5a5bb", fontWeight: 650, whiteSpace: "nowrap" }}>
+                  <div style={{ fontSize: 11, color: "#a5a5bb", fontWeight: 650, whiteSpace: "nowrap" }} title={new Date(entry.createdAt).toLocaleString()}>
                     {fmtWhen(entry.createdAt)}
                   </div>
                 </div>
               ))
             )}
           </div>
+          </>
         )}
       </div>
 
@@ -1092,6 +1215,43 @@ export default function AdminConsolePage() {
                     </div>
                   </section>
 
+                  {detail.user.role === "owner" && !detail.user.businessOwnerId && (
+                    <section>
+                      <div style={{ fontSize: 10.5, fontWeight: 850, color: "#8b8ba3", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 9 }}>Business &amp; subscription</div>
+                      <div style={{ display: "grid", gap: 7 }}>
+                        {([
+                          ["Type", businessTypeFor(detail.user).name],
+                          ["Plan", PLANS[normalizePlanId(detail.user.plan)].name],
+                          ...(detail.subscription ? [
+                            ["Price", `${cycleLabel(detail.subscription.monthlyPricePkr, detail.subscription.billingCycleMonths)}${detail.subscription.customPrice ? " · custom" : ""}`],
+                            ["Paid until", detail.subscription.paidUntil
+                              ? `${fmtDate(detail.subscription.paidUntil)} · ${detail.subscription.daysLeft !== null && detail.subscription.daysLeft > 0 ? `${detail.subscription.daysLeft} days left` : "overdue"}`
+                              : "No payment yet"],
+                            ["Payments", `${detail.subscription.payments.length} recorded`],
+                          ] : []),
+                        ] as [string, string][]).map(([label, value]) => (
+                          <div key={label} style={{ display: "flex", gap: 12, fontSize: 12.5 }}>
+                            <div style={{ width: 120, flexShrink: 0, color: "#9898b0", fontWeight: 650 }}>{label}</div>
+                            <div style={{ color: "#1a1a2e", fontWeight: 650 }}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                        <button type="button" className="ac-btn" onClick={() => { setRecordRequest({ ownerId: detail.user.id, nonce: Date.now() }); setDetail(null); setTab("billing"); }}>
+                          <Wallet size={13} /> Record payment
+                        </button>
+                        <button type="button" className="ac-btn" onClick={() => { setRecordRequest({ ownerId: detail.user.id, nonce: Date.now(), kind: "terms" }); setDetail(null); setTab("billing"); }}>
+                          <Tag size={13} /> Pricing
+                        </button>
+                        <select className="ac-input" style={{ width: "auto", cursor: "pointer", padding: "8px 10px" }} aria-label="Business type"
+                          value={businessTypeFor(detail.user).id} disabled={busy}
+                          onChange={(event) => runAction("set-business-type", [detail.user], { businessType: event.target.value as BusinessTypeId })}>
+                          {BUSINESS_TYPE_IDS.map((id) => <option key={id} value={id}>{BUSINESS_TYPES[id].name}</option>)}
+                        </select>
+                      </div>
+                    </section>
+                  )}
+
                   {detail.team.length > 0 && (
                     <section>
                       <div style={{ fontSize: 10.5, fontWeight: 850, color: "#8b8ba3", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 9 }}>
@@ -1189,12 +1349,36 @@ export default function AdminConsolePage() {
                       onClick={() => { setResetPassword(""); setIssuedPassword(""); setResetFor(detail.user); }}>
                       <KeyRound size={13} /> Reset password
                     </button>
+                    {(detail.user.role !== "admin" || detail.user.id === adminId) && (
+                      <button type="button" className="ac-btn" onClick={() => setEditFor(detail.user)}>
+                        <Pencil size={13} /> Edit details
+                      </button>
+                    )}
                   </section>
                 </div>
               </>
             )}
           </div>
         </div>
+      )}
+
+      {creating && (
+        <CreateAccountModal
+          onClose={() => setCreating(false)}
+          onToast={setToast}
+          onDone={(update) => { setUsers(update.users); setStats(update.stats); setBillingRefresh((n) => n + 1); }}
+        />
+      )}
+      {editFor && (
+        <EditProfileModal
+          user={editFor}
+          onClose={() => setEditFor(null)}
+          onToast={setToast}
+          onDone={(update) => {
+            setUsers(update.users); setStats(update.stats);
+            if (detail && detail.user.id === editFor.id) openDetail(editFor.id);
+          }}
+        />
       )}
 
       {/* ── Toast ──────────────────────────────────────────────────────────── */}

@@ -34,7 +34,8 @@ export type AdminAction =
   | "set-plan"
   | "set-business-type"
   | "record-payment" | "void-payment"
-  | "set-billing-terms";
+  | "set-billing-terms"
+  | "create-account" | "update-profile";
 
 export interface AuditEntry {
   id: string;

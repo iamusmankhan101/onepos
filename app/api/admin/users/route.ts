@@ -5,7 +5,9 @@
  *         header shows.
  * POST  → one action applied to one or more accounts (freeze, unfreeze,
  *         approve, reject, force sign-out, reset password, delete, and
- *         granting/removing platform-admin rights).
+ *         granting/removing platform-admin rights), or one of two single-account
+ *         actions: "create" (a new, already-approved business owner) and
+ *         "update-profile" (name, business name, phone, email).
  *
  * Every handler is gated on requireAdmin(): the caller's own session must
  * carry role "admin". Target ids come from the request body — that is the
@@ -17,6 +19,8 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import {
+  adminUpdateProfile,
+  createUser,
   getUserById,
   revokeAllSessionsForUser,
   setUserBusinessType,
@@ -62,12 +66,15 @@ export async function POST(req: NextRequest) {
   const admin = await requireAdmin(req);
   if (!admin) return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
-  let body: { action?: string; userIds?: unknown; reason?: string; password?: string; plan?: string; businessType?: string };
+  let body: { action?: string; userIds?: unknown; reason?: string; password?: string; plan?: string; businessType?: string } & Record<string, unknown>;
   try {
     body = await req.json();
   } catch {
     return Response.json({ ok: false, error: "Invalid request body." }, { status: 400 });
   }
+
+  if (body.action === "create") return createAccount(admin, body);
+  if (body.action === "update-profile") return updateProfile(admin, body);
 
   const action = body.action as AdminAction;
   if (!action || !ACTIONS.has(action)) {
@@ -214,4 +221,106 @@ export async function POST(req: NextRequest) {
     stats,
     adminId: admin.id,
   });
+}
+
+// ─── Single-account actions ───────────────────────────────────────────────────
+
+type Admin = NonNullable<Awaited<ReturnType<typeof requireAdmin>>>;
+const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+async function withList(extra: Record<string, unknown>, adminId: string) {
+  const { users, stats } = await listPlatformUsers();
+  return Response.json({ ok: true, ...extra, users, stats, adminId });
+}
+
+/**
+ * Creates a business owner straight from the console — already approved, on
+ * the chosen plan and business type. With no password given, one is generated
+ * and returned once so the admin can pass it on.
+ */
+async function createAccount(admin: Admin, body: Record<string, unknown>) {
+  const email = str(body.email).toLowerCase();
+  const ownerName = str(body.ownerName);
+  const businessName = str(body.businessName);
+  const phone = str(body.phone);
+  if (!EMAIL_RE.test(email) || email.length > 254) {
+    return Response.json({ ok: false, error: "Enter a valid email address." }, { status: 400 });
+  }
+  if (!ownerName || ownerName.length > 100) return Response.json({ ok: false, error: "Enter the owner's name." }, { status: 400 });
+  if (!businessName || businessName.length > 120) return Response.json({ ok: false, error: "Enter the business name." }, { status: 400 });
+  if (phone.length > 30) return Response.json({ ok: false, error: "Phone number is too long." }, { status: 400 });
+  if (normalizeBusinessTypeId(body.businessType) !== body.businessType) {
+    return Response.json({ ok: false, error: "Choose a business type." }, { status: 400 });
+  }
+  if (normalizePlanId(body.plan) !== body.plan) return Response.json({ ok: false, error: "Unknown plan." }, { status: 400 });
+
+  const password = str(body.password) || generatePassword();
+  if (password.length < 8 || password.length > 128) {
+    return Response.json({ ok: false, error: "Password must be 8–128 characters." }, { status: 400 });
+  }
+
+  try {
+    const businessType = normalizeBusinessTypeId(body.businessType);
+    const plan = normalizePlanId(body.plan);
+    const user = await createUser({
+      email, password, ownerName, businessName, phone,
+      role: "owner", emailVerified: true, approvalStatus: "approved", businessType,
+    });
+    if (plan !== "starter") await setUserPlan(user.id, plan);
+    await logAdminAction({
+      actorId: admin.id, actorEmail: admin.email, action: "create-account",
+      targetId: user.id, targetEmail: user.email,
+      detail: `${businessName} — ${BUSINESS_TYPES[businessType].name}, ${PLANS[plan].name}. Approved on creation.`,
+    });
+    // The password only comes back when it was generated here; one the admin
+    // typed is one they already have.
+    return withList({ created: { id: user.id, email: user.email }, password: str(body.password) ? undefined : password }, admin.id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Could not create the account.";
+    return Response.json({ ok: false, error: message }, { status: message.includes("already exists") ? 409 : 500 });
+  }
+}
+
+async function updateProfile(admin: Admin, body: Record<string, unknown>) {
+  const id = str(body.userId);
+  const target = id ? await getUserById(id) : null;
+  if (!target) return Response.json({ ok: false, error: "Account not found." }, { status: 404 });
+  if (target.role === "admin" && target.id !== admin.id) {
+    return Response.json({ ok: false, error: "Another platform admin — they edit their own details." }, { status: 403 });
+  }
+
+  const email = str(body.email).toLowerCase();
+  const ownerName = str(body.ownerName);
+  const businessName = str(body.businessName);
+  const phone = str(body.phone);
+  if (!EMAIL_RE.test(email) || email.length > 254) return Response.json({ ok: false, error: "Enter a valid email address." }, { status: 400 });
+  if (!ownerName || ownerName.length > 100) return Response.json({ ok: false, error: "Enter a name." }, { status: 400 });
+  if (businessName.length > 120 || phone.length > 30) return Response.json({ ok: false, error: "One of the fields is too long." }, { status: 400 });
+
+  try {
+    const changes = ([
+      ["name", target.ownerName, ownerName],
+      ["business", target.businessName, businessName || target.businessName],
+      ["phone", target.phone, phone],
+      ["email", target.email, email],
+    ] as const).filter(([, before, after]) => before !== after);
+    if (changes.length === 0) return withList({}, admin.id);
+
+    await adminUpdateProfile(target.id, {
+      ownerName,
+      businessName: businessName || undefined,
+      phone,
+      email,
+    });
+    await logAdminAction({
+      actorId: admin.id, actorEmail: admin.email, action: "update-profile",
+      targetId: target.id, targetEmail: email,
+      detail: changes.map(([field, before, after]) => `${field}: ${before || "—"} → ${after || "—"}`).join("; "),
+    });
+    return withList({}, admin.id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Could not save the changes.";
+    return Response.json({ ok: false, error: message }, { status: 400 });
+  }
 }

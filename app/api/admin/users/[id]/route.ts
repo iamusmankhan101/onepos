@@ -11,6 +11,7 @@ import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { getStaffUsersForOwner, getUserById } from "@/lib/auth-db";
 import { getActiveSessionCounts, getAuditLog, getBusinessBreakdown } from "@/lib/admin-db";
+import { getOwnSubscription } from "@/lib/billing-db";
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const admin = await requireAdmin(req);
@@ -28,11 +29,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     // Staff and managers hold no data of their own — their records live under
     // the business owner, so the footprint shown is that of the owner.
     const dataOwnerId = user.businessOwnerId || user.id;
-    const [team, breakdown, history, sessionCounts] = await Promise.all([
+    const isOwner = user.role === "owner" && !user.businessOwnerId;
+    const [team, breakdown, history, sessionCounts, subscription] = await Promise.all([
       user.businessOwnerId ? Promise.resolve([]) : getStaffUsersForOwner(user.id),
       getBusinessBreakdown(dataOwnerId),
       getAuditLog(50, id),
       getActiveSessionCounts(),
+      // The same picture the business sees in Settings → Subscription.
+      isOwner ? getOwnSubscription(user.id).catch(() => null) : Promise.resolve(null),
     ]);
 
     // Same enriched shape the list endpoint returns, so the console renders one
@@ -52,6 +56,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         ),
       },
       team,
+      subscription,
       dataOwnerId,
       breakdown,
       history,
