@@ -215,7 +215,8 @@ export default function InvoicePrint({
               [`Subtotal (${itemCount} item${itemCount === 1 ? "" : "s"})`, fmt(invoice.subtotal)],
               ...(invoice.discountAmount > 0 ? [["Discount", `-${fmt(invoice.discountAmount)}`]] : []),
               ...((invoice.discount2Amount ?? 0) > 0 ? [["Discount 2", `-${fmt(invoice.discount2Amount!)}`]] : []),
-              ...(invoice.taxAmount > 0 ? [["Tax", fmt(invoice.taxAmount)]] : []),
+              ...((invoice.serviceChargeAmount ?? 0) > 0 ? [["Service charge", fmt(invoice.serviceChargeAmount!)]] : []),
+              ...(invoice.taxAmount > 0 ? [[invoice.taxLabel || "Tax", fmt(invoice.taxAmount)]] : []),
             ] as [string, string][]).map(([label, value]) => (
               <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
                 <span>{label}</span><span style={{ fontWeight: 700 }}>{value}</span>

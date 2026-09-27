@@ -127,6 +127,7 @@ function receiptHeight(
     1 +                                                          // subtotal
     (invoice.discountAmount > 0 ? 1 : 0) +
     ((invoice.discount2Amount ?? 0) > 0 ? 1 : 0) +
+    ((invoice.serviceChargeAmount ?? 0) > 0 ? 1 : 0) +
     (invoice.taxAmount > 0 ? 1 : 0) +
     1;                                                           // the payment/balance line
   h += totalRows * (line(8) + 3);
@@ -250,9 +251,15 @@ function ReceiptDocument({ invoice, business }: {
             <Text style={styles.totalValue}>-{money(invoice.discount2Amount!)}</Text>
           </View>
         )}
+        {(invoice.serviceChargeAmount ?? 0) > 0 && (
+          <View style={styles.totalRow}>
+            <Text style={styles.totalLabel}>Service charge</Text>
+            <Text style={styles.totalValue}>{money(invoice.serviceChargeAmount!)}</Text>
+          </View>
+        )}
         {invoice.taxAmount > 0 && (
           <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Tax</Text>
+            <Text style={styles.totalLabel}>{invoice.taxLabel || "Tax"}</Text>
             <Text style={styles.totalValue}>{money(invoice.taxAmount)}</Text>
           </View>
         )}

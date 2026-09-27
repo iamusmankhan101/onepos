@@ -205,7 +205,7 @@ export default function KitchenPage() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#1d1d2f" }}>{where(t)} · #{t.orderNumber}</div>
                 <div style={{ fontSize: 11, color: "#9999b0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {t.items.map((i) => `${i.qty}× ${i.name}`).join(", ")}
+                  {t.items.map((i) => `${i.qty}× ${i.name}${i.modifiers?.length ? ` (${i.modifiers.join(", ")})` : ""}`).join(", ")}
                 </div>
               </div>
               <button type="button" className="kds-chip" onClick={() => setTicketStatus(t, "ready")}><Undo2 size={13} /> Back to ready</button>
@@ -284,6 +284,13 @@ function TicketCard({ ticket, now, flash, accent, onPrint }: {
               <div style={{ fontSize: 14, fontWeight: 800, color: item.voided ? "#dc2626" : "#1d1d2f", textDecoration: item.voided ? "line-through" : "none" }}>
                 <span style={{ color: accent }}>{item.qty}×</span> {item.name}{item.voided && " — VOID"}
               </div>
+              {item.modifiers && item.modifiers.length > 0 && !item.voided && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4, paddingLeft: 18 }}>
+                  {item.modifiers.map((m, i) => (
+                    <span key={i} style={{ fontSize: 12, fontWeight: 700, color: "#1e3a8a", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, padding: "1px 7px" }}>{m}</span>
+                  ))}
+                </div>
+              )}
               {item.note && !item.voided && (
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#b45309", background: "#fffbeb", borderRadius: 6, padding: "2px 7px", marginTop: 3, display: "inline-block" }}>
                   {item.note}

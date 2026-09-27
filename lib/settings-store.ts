@@ -164,6 +164,14 @@ const defaults = {
     ip: "",
     port: 9100,
   },
+  // Tax and service charge added on top of the POS bill (after discounts).
+  // Both off by default; see billCharges() in lib/charges.ts.
+  charges: {
+    taxRate: 0,              // percent, e.g. 16 for 16% GST
+    taxLabel: "Tax",
+    serviceChargeRate: 0,    // percent
+    serviceChargeDineInOnly: true,
+  },
 };
 
 function load() {
@@ -220,6 +228,7 @@ function load() {
       loyalty:  { ...dynamicDefaults.loyalty,  ...saved.loyalty  },
       cashback: { ...dynamicDefaults.cashback, ...saved.cashback },
       printer:  { ...dynamicDefaults.printer,  ...saved.printer  },
+      charges:  { ...dynamicDefaults.charges,  ...saved.charges  },
     };
   } catch {
     return structuredClone(defaults);

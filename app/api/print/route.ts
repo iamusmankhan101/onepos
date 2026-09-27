@@ -90,8 +90,11 @@ function buildReceipt(data: ReceiptData): Buffer {
   if (data.invoice.discountAmount > 0)
     push(padLine("Discount", `-${data.currency} ${data.invoice.discountAmount.toFixed(0)}`, W));
 
+  if ((data.invoice.serviceChargeAmount ?? 0) > 0)
+    push(padLine("Service charge", `${data.currency} ${(data.invoice.serviceChargeAmount ?? 0).toFixed(0)}`, W));
+
   if (data.invoice.taxAmount > 0)
-    push(padLine("Tax", `${data.currency} ${data.invoice.taxAmount.toFixed(0)}`, W));
+    push(padLine(data.invoice.taxLabel || "Tax", `${data.currency} ${data.invoice.taxAmount.toFixed(0)}`, W));
 
   push(CMD.boldOn);
   push(padLine("TOTAL", `${data.currency} ${data.invoice.total.toFixed(0)}`, W));
@@ -187,6 +190,8 @@ interface ReceiptData {
     subtotal: number;
     discountAmount: number;
     taxAmount: number;
+    taxLabel?: string;
+    serviceChargeAmount?: number;
     total: number;
     paymentMethod: string;
     status: string;

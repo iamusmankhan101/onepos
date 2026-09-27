@@ -33,7 +33,11 @@ export interface Invoice {
   subtotal: number;
   discountAmount: number;   // flat discount in PKR (primary discount + loyalty redemption combined)
   discount2Amount?: number; // flat discount in PKR — separate, additional discount stacked on top of discountAmount
-  taxAmount: number;        // 0 for now; ready for future
+  taxAmount: number;
+  /** What the tax line is called on the receipt ("GST"); unset reads as "Tax". */
+  taxLabel?: string;
+  /** Service charge in PKR, added before tax (lib/charges.ts). Counted in `total`. */
+  serviceChargeAmount?: number;
   total: number;
   paymentMethod: PaymentMethod | "";
   date: string;             // YYYY-MM-DD — when the invoice was issued

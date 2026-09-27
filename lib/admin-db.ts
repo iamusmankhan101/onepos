@@ -148,7 +148,7 @@ export async function getAuditLog(limit = 200, targetId?: string): Promise<Audit
 const DATA_ENTITIES = [
   "clients", "appointments", "staff", "services", "inventory", "invoices",
   "expenses", "attendance", "payouts", "cash_flow_income", "deleted_records",
-  "dining_tables", "restaurant_orders", "kitchen_tickets",
+  "dining_tables", "restaurant_orders", "kitchen_tickets", "modifier_groups",
   "loyalty_history", "settings",
 ] as const;
 

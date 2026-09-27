@@ -27,6 +27,7 @@
 import { persistEntity } from "./turso-sync";
 import { entityStorageKey } from "./sync-records";
 import type { InventoryItem } from "./types";
+import type { ChosenModifier } from "./menu";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,7 +60,10 @@ export interface OrderLine {
   itemId: string;
   name: string;
   qty: number;
+  /** Per unit, options included. */
   unitPrice: number;
+  /** Size, milk, add-ons… (lib/menu.ts) as picked; already counted in unitPrice. */
+  modifiers?: ChosenModifier[];
   /** "No onions", "extra spicy" — printed on the kitchen ticket. */
   note?: string;
   station: Station;
@@ -101,6 +105,8 @@ export interface TicketItem {
   lineId: string;
   name: string;
   qty: number;
+  /** Option names — "Large", "Oat milk" — for the barista to read. */
+  modifiers?: string[];
   note?: string;
   voided?: boolean;
 }
@@ -319,7 +325,10 @@ export async function fireOrder(order: RestaurantOrder): Promise<{ order: Restau
     tableNames: names,
     waiterName: order.waiterName,
     station,
-    items: lines.map((l) => ({ lineId: l.id, name: l.name, qty: l.qty, note: l.note })),
+    items: lines.map((l) => ({
+      lineId: l.id, name: l.name, qty: l.qty, note: l.note,
+      modifiers: l.modifiers?.length ? l.modifiers.map((m) => m.name) : undefined,
+    })),
     status: "new",
     rush: order.rush,
     createdAt: now,

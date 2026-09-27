@@ -211,4 +211,11 @@ export interface InventoryItem {
   unavailable?: boolean;
   /** Restaurant mode: which kitchen station gets this item's tickets. Unset = by category (drinks → bar). */
   station?: "kitchen" | "bar";
+  /**
+   * Restaurant mode: the menu section this item is listed under on the POS —
+   * "Coffee", "Bakery", "Combos". Free text, finer than `category`.
+   */
+  menuCategory?: string;
+  /** Restaurant mode: option groups (lib/menu.ts) the POS asks for, in this order. */
+  modifierGroupIds?: string[];
 }

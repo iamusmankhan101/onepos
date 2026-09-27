@@ -15,6 +15,8 @@ const ENTITIES = [
   // Restaurant mode (lib/restaurant.ts). Synced for every account — they are
   // simply empty arrays for a business that never opens a table.
   "dining_tables", "restaurant_orders", "kitchen_tickets",
+  // Menu options (lib/menu.ts).
+  "modifier_groups",
   DELETED_RECORDS_ENTITY,
 ] as const;
 export type Entity = typeof ENTITIES[number];

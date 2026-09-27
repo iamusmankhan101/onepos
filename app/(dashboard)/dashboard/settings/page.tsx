@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
-import { Store, Clock, Shield, Smartphone, ChevronRight, Check, KeyRound, PrinterIcon, Building2, MapPin, Plus, Trash2, Sparkles, CreditCard, AlertTriangle } from "lucide-react";
+import { Store, Clock, Shield, Smartphone, ChevronRight, Check, KeyRound, PrinterIcon, Building2, MapPin, Plus, Trash2, Sparkles, CreditCard, AlertTriangle, Percent } from "lucide-react";
+import { billCharges, getChargeSettings } from "@/lib/charges";
 import { settingsStore, saveSettings, SETTINGS_CHANGED_EVENT } from "@/lib/settings-store";
 import {
   activePlan, addBusinessLocation, canManageBranches, deleteBusinessLocation, getActiveLocationFilter,
@@ -24,6 +25,7 @@ const SECTIONS: { id: string; label: string; icon: typeof Store; ownerOnly?: boo
   { id: "business",   label: "Business Profile", icon: Store },
   { id: "branches", label: "Branches",       icon: Building2 },
   { id: "hours",   label: "Business Hours",  icon: Clock },
+  { id: "charges", label: "Tax & Service Charge", icon: Percent },
   { id: "whatsapp", label: "WhatsApp Receipt", icon: Smartphone },
   { id: "printer", label: "Thermal Printer", icon: PrinterIcon },
   { id: "access",  label: "Staff Access",    icon: KeyRound },
@@ -543,6 +545,80 @@ function ThermalPrinterSection() {
         </button>
         <SaveBar onSave={save} busy={saving} />
       </div>
+    </div>
+  );
+}
+
+function ChargesSection() {
+  const businessType = useBusinessType();
+  const [form, setForm, markSaved] = useSyncedSettings(() => {
+    const c = getChargeSettings();
+    return {
+      taxRate: c.taxRate ? String(c.taxRate) : "",
+      taxLabel: c.taxLabel,
+      serviceChargeRate: c.serviceChargeRate ? String(c.serviceChargeRate) : "",
+      serviceChargeDineInOnly: c.serviceChargeDineInOnly,
+    };
+  });
+  const { commit, saved, error, saving } = useSettingsSave(markSaved);
+  const pct = (v: string) => Math.min(100, Math.max(0, Number(v) || 0));
+  const save = () => commit(() => {
+    Object.assign(settingsStore.charges, {
+      taxRate: pct(form.taxRate),
+      taxLabel: form.taxLabel.trim() || "Tax",
+      serviceChargeRate: pct(form.serviceChargeRate),
+      serviceChargeDineInOnly: form.serviceChargeDineInOnly,
+    });
+  });
+
+  const preview = billCharges(1000, "dine-in", {
+    taxRate: pct(form.taxRate), taxLabel: form.taxLabel, serviceChargeRate: pct(form.serviceChargeRate),
+    serviceChargeDineInOnly: form.serviceChargeDineInOnly,
+  });
+  const currency = (settingsStore.business as { currency?: string }).currency || "PKR";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <SaveStatus saved={saved} error={error} />
+      <div style={{ fontSize: 12, color: "#6b6b8a", lineHeight: 1.6 }}>
+        Added on top of every POS bill, after discounts. Leave a rate empty to turn it off. Past invoices keep the amounts they were issued with.
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Field label="Tax name" hint="Printed on the receipt — GST, VAT, Sales tax.">
+          <input value={form.taxLabel} onChange={e => setForm(f => ({ ...f, taxLabel: e.target.value }))} placeholder="Tax" style={inp} />
+        </Field>
+        <Field label="Tax rate (%)">
+          <input type="number" min={0} max={100} step="0.1" value={form.taxRate} placeholder="0"
+            onChange={e => setForm(f => ({ ...f, taxRate: e.target.value }))} style={inp} />
+        </Field>
+      </div>
+
+      <Field label="Service charge (%)" hint="A percentage added for table service.">
+        <input type="number" min={0} max={100} step="0.1" value={form.serviceChargeRate} placeholder="0"
+          onChange={e => setForm(f => ({ ...f, serviceChargeRate: e.target.value }))} style={{ ...inp, maxWidth: 160 }} />
+      </Field>
+
+      {businessType.restaurantMode && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: "#f9f9fb", borderRadius: 10 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>Dine-in orders only</div>
+            <div style={{ fontSize: 11, color: "#9898b0", marginTop: 2 }}>Takeaway and delivery orders skip the service charge</div>
+          </div>
+          <Toggle value={form.serviceChargeDineInOnly} onChange={() => setForm(f => ({ ...f, serviceChargeDineInOnly: !f.serviceChargeDineInOnly }))} />
+        </div>
+      )}
+
+      {(preview.serviceCharge > 0 || preview.tax > 0) && (
+        <div style={{ padding: "12px 14px", background: "#f9f9fb", borderRadius: 8, fontSize: 12, color: "#6b6b8a", lineHeight: 1.8 }}>
+          <div style={{ fontWeight: 700, color: "#1a1a2e" }}>On a {currency} 1,000 {businessType.restaurantMode ? "dine-in " : ""}bill</div>
+          {preview.serviceCharge > 0 && <div>Service charge: {currency} {preview.serviceCharge.toLocaleString("en-PK")}</div>}
+          {preview.tax > 0 && <div>{form.taxLabel.trim() || "Tax"}: {currency} {preview.tax.toLocaleString("en-PK")}</div>}
+          <div style={{ fontWeight: 700, color: "#1a1a2e" }}>Total: {currency} {(1000 + preview.serviceCharge + preview.tax).toLocaleString("en-PK")}</div>
+        </div>
+      )}
+
+      <div><SaveBar onSave={save} busy={saving} /></div>
     </div>
   );
 }
@@ -1278,6 +1354,7 @@ export default function SettingsPage() {
               {id === "hours"    && <BusinessHours />}
               {id === "whatsapp" && <WhatsAppSection />}
               {id === "printer"  && <ThermalPrinterSection />}
+              {id === "charges"  && <ChargesSection />}
               {id === "access"   && <StaffAccess />}
               {id === "security" && <Security />}
             </div>

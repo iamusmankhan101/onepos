@@ -9,11 +9,13 @@ import { getSectionOptions, getActiveSection, inSection, defaultSectionForNewRec
 import MobilePageHeader from "@/components/mobile-page-header";
 import PageTitle from "@/components/page-title";
 import { useBusinessType } from "@/lib/use-business-type";
+import ModifierGroupsEditor from "@/components/modifier-groups-editor";
+import { CAFE_MENU_CATEGORIES, RESTAURANT_MENU_CATEGORIES, getModifierGroups } from "@/lib/menu";
 import {
   Search, X, Plus, AlertTriangle, Package, ChevronDown,
   Edit2, Trash2, Bell, Copy, CheckCircle, TrendingDown,
   MessageCircle, DollarSign, Tag, ToggleLeft, ToggleRight,
-  Upload, Download, FileSpreadsheet, Check, Image as ImageIcon,
+  Upload, Download, FileSpreadsheet, Check, Image as ImageIcon, SlidersHorizontal,
 } from "lucide-react";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -158,13 +160,17 @@ type ItemForm = {
   costPrice: string; retailPrice: string; supplier: string; notes: string;
   barcode: string; image: string;
   variablePrice: boolean; priceRangeMin: string; priceRangeMax: string;
+  menuCategory: string; modifierGroupIds: string[];
 };
+
+type FormValue = ItemForm[keyof ItemForm];
 
 const EMPTY_FORM: ItemForm = {
   name: "", brand: "", category: "", section: "", unit: "pcs",
   currentStock: "", minStock: "", costPrice: "",
   retailPrice: "", barcode: "", image: "", supplier: "", notes: "",
   variablePrice: false, priceRangeMin: "", priceRangeMax: "",
+  menuCategory: "", modifierGroupIds: [],
 };
 
 function itemToForm(item: InventoryItem): ItemForm {
@@ -178,11 +184,15 @@ function itemToForm(item: InventoryItem): ItemForm {
     variablePrice: item.variablePrice ?? false,
     priceRangeMin: item.priceRangeMin ? String(item.priceRangeMin) : "",
     priceRangeMax: item.priceRangeMax ? String(item.priceRangeMax) : "",
+    menuCategory: item.menuCategory ?? "",
+    modifierGroupIds: item.modifierGroupIds ?? [],
   };
 }
 
 function formToItem(form: ItemForm, existing?: InventoryItem): InventoryItem {
   return {
+    // Keeps what this form doesn't edit — the 86 flag, the kitchen station.
+    ...existing,
     id: existing?.id ?? "i_" + Date.now(),
     name: form.name, brand: form.brand,
     category: form.category as InventoryCategory,
@@ -201,14 +211,26 @@ function formToItem(form: ItemForm, existing?: InventoryItem): InventoryItem {
     image: form.image || undefined,
     supplier: form.supplier || undefined,
     notes: form.notes || undefined,
+    menuCategory: form.menuCategory.trim() || undefined,
+    modifierGroupIds: form.modifierGroupIds.length ? form.modifierGroupIds : undefined,
     lastRestocked: existing?.lastRestocked ?? new Date().toLocaleDateString("en-CA"),
   };
 }
 
-function ItemFormFields({ form, set, items }: { form: ItemForm; set: (k: keyof ItemForm, v: string | boolean) => void; items: InventoryItem[] }) {
+function ItemFormFields({ form, set, items }: { form: ItemForm; set: (k: keyof ItemForm, v: FormValue) => void; items: InventoryItem[] }) {
   const [imageError, setImageError] = useState("");
   const [reading, setReading] = useState(false);
   const businessType = useBusinessType();
+  const [modifierGroups] = useState(() => getModifierGroups());
+  const menuSections = [...new Set([
+    ...items.map((i) => i.menuCategory?.trim()).filter((c): c is string => !!c),
+    ...(businessType.id === "cafe" ? CAFE_MENU_CATEGORIES : RESTAURANT_MENU_CATEGORIES),
+  ])];
+
+  function toggleGroup(id: string) {
+    const on = form.modifierGroupIds.includes(id);
+    set("modifierGroupIds", on ? form.modifierGroupIds.filter((g) => g !== id) : [...form.modifierGroupIds, id]);
+  }
   const categoryChoices = categoryOptions(businessType.categories, [form.category, ...items.map((i) => i.category)]);
 
   async function pickImage(event: React.ChangeEvent<HTMLInputElement>) {
@@ -275,6 +297,33 @@ function ItemFormFields({ form, set, items }: { form: ItemForm; set: (k: keyof I
           </select>
         </Field>
       </div>
+      {businessType.restaurantMode && (
+        <>
+          <Field label="Menu section" hint="The tab it sits under on the POS — Coffee, Bakery, Combos.">
+            <input value={form.menuCategory} onChange={(e) => set("menuCategory", e.target.value)} list="menu-sections" placeholder="e.g. Coffee" style={INP} />
+            <datalist id="menu-sections">{menuSections.map((c) => <option key={c} value={c} />)}</datalist>
+          </Field>
+          <Field label="Options" hint={modifierGroups.length
+            ? "What the cashier is asked when adding it, in the order you tick them."
+            : "No option groups yet — create them with Menu options at the top of this page."}>
+            {modifierGroups.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {modifierGroups.map((g) => {
+                  const order = form.modifierGroupIds.indexOf(g.id);
+                  const on = order >= 0;
+                  return (
+                    <button key={g.id} type="button" onClick={() => toggleGroup(g.id)} aria-pressed={on}
+                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 20, border: `1.5px solid ${on ? "#EA580C" : "#e8e8f0"}`, background: on ? "#fff7ed" : "#fff", color: on ? "#c2410c" : "#6b6b8a", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      {on && <span style={{ width: 16, height: 16, borderRadius: "50%", background: "#EA580C", color: "#fff", fontSize: 10, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{order + 1}</span>}
+                      {g.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Field>
+        </>
+      )}
       <Field label="Section">
         <select value={form.section} onChange={(e) => set("section", e.target.value)} style={INP}>
           <option value="">Unassigned</option>
@@ -610,7 +659,7 @@ function AddModal({ onClose, onAdd, items }: { onClose: () => void; onAdd: (item
   const listedInPos = Boolean(form.variablePrice ? form.priceRangeMin : form.retailPrice);
   const [done, setDone] = useState(false);
   const { productLabel } = useBusinessType();
-  const set = useCallback((k: keyof ItemForm, v: string | boolean) => setForm((f) => ({ ...f, [k]: v })), []);
+  const set = useCallback((k: keyof ItemForm, v: FormValue) => setForm((f) => ({ ...f, [k]: v })), []);
   const canSubmit = form.name && form.category && form.currentStock && form.minStock && form.costPrice && priceFieldsValid(form);
 
   if (done) return (
@@ -648,7 +697,7 @@ function AddModal({ onClose, onAdd, items }: { onClose: () => void; onAdd: (item
 function EditModal({ item, onClose, onSave, items }: { item: InventoryItem; onClose: () => void; onSave: (updated: InventoryItem) => void; items: InventoryItem[] }) {
   const [form, setForm] = useState<ItemForm>(() => itemToForm(item));
   const [saved, setSaved] = useState(false);
-  const set = useCallback((k: keyof ItemForm, v: string | boolean) => setForm((f) => ({ ...f, [k]: v })), []);
+  const set = useCallback((k: keyof ItemForm, v: FormValue) => setForm((f) => ({ ...f, [k]: v })), []);
   const canSubmit = form.name && form.category && form.currentStock && form.minStock && form.costPrice && priceFieldsValid(form);
 
   if (saved) return (
@@ -895,6 +944,7 @@ export default function ProductsPage() {
   const [showReminder, setShowReminder] = useState(false);
   const [alertDismissed, setAlertDismissed] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
   // Deferred a tick: the catalogue lives in localStorage, readable only once
@@ -982,6 +1032,7 @@ export default function ProductsPage() {
       {editItem   && <EditModal   item={editItem} onClose={() => setEditItem(null)} onSave={(updated) => persist(items.map((i) => i.id === updated.id ? updated : i))} items={items} />}
       {deleteItem && <DeleteModal item={deleteItem} onClose={() => setDeleteItem(null)} onDelete={() => persist(getStoredInventory().filter((i) => i.id !== deleteItem.id))} />}
       {showReminder && <ReminderModal alertItems={alertItems} onClose={() => setShowReminder(false)} />}
+      {showOptions && <ModifierGroupsEditor items={items} currency={cur()} onClose={() => setShowOptions(false)} />}
       {showImport && (
         <ProductImportModal
           existing={items}
@@ -1285,6 +1336,12 @@ export default function ProductsPage() {
                 className="hover-bg-light"
               >
                 <Bell size={14} /> Restock List
+              </button>
+            )}
+            {businessType.restaurantMode && (
+              <button onClick={() => setShowOptions(true)}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 12, border: "1px solid #fed7aa", background: "#fff7ed", fontSize: 13, fontWeight: 750, color: "#c2410c", cursor: "pointer", transition: "all 0.18s ease" }}>
+                <SlidersHorizontal size={15} /> Menu options
               </button>
             )}
             <button

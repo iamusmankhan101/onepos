@@ -16,6 +16,8 @@ import {
 } from "@/lib/restaurant";
 import { settingsStore } from "@/lib/settings-store";
 import { fmtCurrency as fmt } from "@/lib/format";
+import { modifierSummary } from "@/lib/menu";
+import { billCharges, getChargeSettings } from "@/lib/charges";
 
 const PRINT_STYLES = `
   @media print {
@@ -58,6 +60,7 @@ function TicketSlip({ ticket }: { ticket: KitchenTicket }) {
       {ticket.items.map((item) => (
         <div key={item.lineId} style={{ marginBottom: 6, textDecoration: item.voided ? "line-through" : "none" }}>
           <div style={{ fontWeight: 800, fontSize: 15 }}>{item.qty} × {item.name}{item.voided ? "  (VOID)" : ""}</div>
+          {item.modifiers?.map((m, i) => <div key={i} style={{ fontSize: 13, fontWeight: 700, paddingLeft: 14 }}>+ {m}</div>)}
           {item.note && <div style={{ fontSize: 12, paddingLeft: 14 }}>» {item.note}</div>}
         </div>
       ))}
@@ -69,6 +72,9 @@ function TicketSlip({ ticket }: { ticket: KitchenTicket }) {
 function BillSlip({ order }: { order: RestaurantOrder }) {
   const business = settingsStore.business as { name?: string; phone?: string; address?: string };
   const lines = liveLines(order);
+  const subtotal = orderSubtotal(order);
+  const charges = getChargeSettings();
+  const { serviceCharge, tax } = billCharges(subtotal, order.type, charges);
   return (
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", color: "#000", fontSize: 12 }}>
       <div style={{ textAlign: "center", fontWeight: 900, fontSize: 15 }}>{business.name || "Bill"}</div>
@@ -86,15 +92,25 @@ function BillSlip({ order }: { order: RestaurantOrder }) {
       </div>
       <div style={DASH} />
       {lines.map((l) => (
-        <div key={l.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 3 }}>
-          <span>{l.qty} × {l.name}</span>
-          <span style={{ whiteSpace: "nowrap" }}>{fmt(l.qty * l.unitPrice)}</span>
+        <div key={l.id} style={{ marginBottom: 3 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+            <span>{l.qty} × {l.name}</span>
+            <span style={{ whiteSpace: "nowrap" }}>{fmt(l.qty * l.unitPrice)}</span>
+          </div>
+          {l.modifiers && l.modifiers.length > 0 && <div style={{ fontSize: 11, paddingLeft: 14 }}>{modifierSummary(l.modifiers, ", ")}</div>}
         </div>
       ))}
       <div style={DASH} />
+      {(serviceCharge > 0 || tax > 0) && (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between" }}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
+          {serviceCharge > 0 && <div style={{ display: "flex", justifyContent: "space-between" }}><span>Service charge ({charges.serviceChargeRate}%)</span><span>{fmt(serviceCharge)}</span></div>}
+          {tax > 0 && <div style={{ display: "flex", justifyContent: "space-between" }}><span>{charges.taxLabel} ({charges.taxRate}%)</span><span>{fmt(tax)}</span></div>}
+        </>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 15 }}>
         <span>TOTAL</span>
-        <span>{fmt(orderSubtotal(order))}</span>
+        <span>{fmt(subtotal + serviceCharge + tax)}</span>
       </div>
       <div style={{ textAlign: "center", fontSize: 11, marginTop: 10 }}>This is not a receipt — please pay at the counter.</div>
     </div>

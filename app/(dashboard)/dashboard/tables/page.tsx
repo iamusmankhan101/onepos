@@ -497,6 +497,7 @@ function OrderPanel({ order, tables, openOrders, staff, readyCount, now, onClose
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 750, color: "#1d1d2f", textDecoration: l.voided ? "line-through" : "none" }}>{l.qty} × {l.name}</div>
+                {l.modifiers && l.modifiers.length > 0 && <div style={{ fontSize: 11, fontWeight: 600, color: "#1d4ed8" }}>{l.modifiers.map((m) => m.name).join(" · ")}</div>}
                 {l.note && <div style={{ fontSize: 11, color: "#b45309" }}>{l.note}</div>}
                 <div style={{ fontSize: 10, fontWeight: 700, color: l.voided ? "#dc2626" : l.firedAt ? "#059669" : "#d97706", marginTop: 2 }}>
                   {l.voided ? `Voided — ${l.voided.reason} (${l.voided.approvedBy})` : l.firedAt ? "Sent to kitchen" : "Not sent yet"}

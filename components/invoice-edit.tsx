@@ -42,7 +42,7 @@ export default function InvoiceEdit({ invoice, onClose, onSaved }: Props) {
   const subtotal = Math.max(0, Math.round(items.reduce((s, i) => s + i.qty * i.unitPrice, 0)));
   const clampedDiscount  = Math.min(Math.max(0, Math.round(discount)), subtotal);
   const clampedDiscount2 = Math.min(Math.max(0, Math.round(discount2)), Math.max(0, subtotal - clampedDiscount));
-  const total = Math.max(0, subtotal - clampedDiscount - clampedDiscount2 + invoice.taxAmount);
+  const total = Math.max(0, subtotal - clampedDiscount - clampedDiscount2 + (invoice.serviceChargeAmount ?? 0) + invoice.taxAmount);
 
   function updateItem(id: string, patch: Partial<InvoiceItem>) {
     setItems(list => list.map(i => {

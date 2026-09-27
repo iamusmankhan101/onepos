@@ -15,6 +15,13 @@ import { useRouter } from "next/navigation";
 import { useBusinessType } from "@/lib/use-business-type";
 import KotPrint from "@/components/kot-print";
 import ManagerApproval from "@/components/manager-approval";
+import CustomizeSheet from "@/components/customize-sheet";
+import {
+  MENU_CHANGED_EVENT, defaultSelection, getModifierGroups, groupsForItem, lineDescription,
+  modifierSummary, modifiersTotal, sameModifiers, selectionFromModifiers,
+  type ChosenModifier, type ModifierGroup,
+} from "@/lib/menu";
+import { billCharges, getChargeSettings } from "@/lib/charges";
 import {
   ORDER_TYPE_LABEL, fireOrder, getOpenOrders, getOrder, getTables, markOrderPaid, newId,
   nextOrderNumber, orderRef, orderSubtotal, saveOrder, stationFor, tableNames, voidLine,
@@ -25,7 +32,7 @@ import InvoicePrint from "@/components/invoice-print";
 import InvoiceEdit from "@/components/invoice-edit";
 import {
   getStoredServices, getStoredClients, getStoredInventory,
-  getStoredStaff, getStoredAppointments, saveAppointments, saveClients, saveInventory,
+  getStoredStaff, getStoredAppointments, saveAppointments, saveClients, saveInventory, subscribeToStoredData,
 } from "@/lib/storage";
 import {
   createInvoice, calcTotals,
@@ -59,6 +66,9 @@ interface CatalogItem {
   priceRangeMax?: number;
   /** 86'd — off the menu for now (restaurant mode). */
   unavailable?: boolean;
+  /** Restaurant mode: POS menu tab, and the option groups (lib/menu.ts) asked on adding. */
+  menuCategory?: string;
+  modifierGroupIds?: string[];
 }
 
 interface CartEntry {
@@ -79,6 +89,18 @@ interface CartEntry {
   firedAt?: string;
   /** Kitchen note — "no onions". */
   note?: string;
+  /** Picked options; unitPrice already includes them. */
+  modifiers?: ChosenModifier[];
+}
+
+/** The customize pop-up: adding `item`, or changing the cart line `cartId`. */
+interface Customizing {
+  item: CatalogItem;
+  groups: ModifierGroup[];
+  cartId?: string;
+  initial: Record<string, string[]>;
+  qty: number;
+  note: string;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -266,6 +288,10 @@ export default function POSPage() {
   /** Line ids the loaded order had, to tell "removed here" from "added on another till". */
   const knownLineIds = useRef<Set<string>>(new Set());
 
+  const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>([]);
+  const [customizing,   setCustomizing]   = useState<Customizing | null>(null);
+  const [menuTab,       setMenuTab]       = useState("all");
+
   // ── Mobile tab ───────────────────────────────────────────────────────────
   const [posTab, setPosTab] = useState<"customer" | "catalog" | "cart">("catalog");
 
@@ -302,10 +328,24 @@ export default function POSPage() {
         id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`, price: i.retailPrice ?? 0,
         category: i.category, section: i.section, stock: i.currentStock, unit: i.unit, barcode: i.barcode, image: i.image,
         variablePrice: i.variablePrice, priceRangeMin: i.priceRangeMin, priceRangeMax: i.priceRangeMax,
-        unavailable: i.unavailable,
+        unavailable: i.unavailable, menuCategory: i.menuCategory?.trim() || undefined, modifierGroupIds: i.modifierGroupIds,
       }));
     return [...svc, ...prod];
   }, [services, inventory, catalogTab, catalogSearch, catalogSectionFilter]);
+
+  // Restaurant mode: menu tabs (Coffee, Bakery…) from the items' menu sections.
+  const menuCategories = useMemo(() => {
+    if (!restaurant) return [];
+    const seen = new Set<string>();
+    for (const i of inventory) {
+      const c = i.menuCategory?.trim();
+      if (c && ((i.retailPrice ?? 0) > 0 || i.variablePrice)) seen.add(c);
+    }
+    return [...seen];
+  }, [inventory, restaurant]);
+  const shownItems = restaurant && menuTab !== "all"
+    ? catalogItems.filter(i => i.menuCategory === menuTab)
+    : catalogItems;
 
   const dropClients = useMemo(() => {
     const q = clientQ.toLowerCase();
@@ -316,7 +356,7 @@ export default function POSPage() {
 
   // ── Totals ────────────────────────────────────────────────────────────────
   const cartLineItems: InvoiceItem[] = cart.map(e => ({
-    id: e.cartId, type: e.type, description: e.name,
+    id: e.cartId, type: e.type, description: lineDescription(e.name, e.modifiers),
     qty: e.qty, unitPrice: wholePkr(e.unitPrice), total: wholePkr(e.total),
   }));
   const rawSubtotal    = wholePkr(cartLineItems.reduce((s, i) => s + i.total, 0));
@@ -333,25 +373,76 @@ export default function POSPage() {
     : 0;
   const totalDiscountAmount   = Math.min(rawSubtotal, wholePkr(discountAmount + discountAmount2 + loyaltyDiscount));
 
-  const { subtotal, taxAmount, total } = calcTotals(cartLineItems, totalDiscountAmount);
+  const { subtotal } = calcTotals(cartLineItems, totalDiscountAmount);
+  const chargeSettings = getChargeSettings();
+  const { serviceCharge: serviceChargeAmount, tax: taxAmount } = billCharges(
+    subtotal - totalDiscountAmount, restaurant ? orderType : undefined, chargeSettings,
+  );
+  const total = Math.max(0, subtotal - totalDiscountAmount + serviceChargeAmount + taxAmount);
   const totalQty = cart.reduce((s, e) => s + e.qty, 0);
   const hasUnpricedVariable = cart.some(e => e.variablePrice && e.unitPrice <= 0);
   const noPaymentSelected = !isCredit && !payMethod;
 
   // ── Cart ops ──────────────────────────────────────────────────────────────
-  const addToCart = useCallback((item: CatalogItem) => {
+  /** Puts `qty` of an item on the cart with these options, joining an identical unsent line. */
+  const addLine = useCallback((item: CatalogItem, modifiers: ChosenModifier[] = [], qty = 1, note = "") => {
+    const unitPrice = item.price + modifiersTotal(modifiers);
     setCart(prev => {
       // A line the kitchen already has, or one with its own note, is its own
-      // line — another of the same dish starts a fresh one.
-      const hit = prev.find(e => e.itemId === item.id && !e.firedAt && !e.note);
-      if (hit) return prev.map(e => e.cartId === hit.cartId ? { ...e, qty: e.qty + 1, total: (e.qty + 1) * e.unitPrice } : e);
+      // line — another of the same dish starts a fresh one. So is a different
+      // size or milk: only an identical drink adds to an existing line.
+      const hit = !note && prev.find(e => e.itemId === item.id && !e.firedAt && !e.note && sameModifiers(e.modifiers, modifiers));
+      if (hit) return prev.map(e => e.cartId === hit.cartId ? { ...e, qty: e.qty + qty, total: (e.qty + qty) * e.unitPrice } : e);
       return [...prev, {
-        cartId: crypto.randomUUID(), itemId: item.id, type: item.type, name: item.name, qty: 1,
-        unitPrice: item.price, total: item.price, variablePrice: item.variablePrice,
+        cartId: crypto.randomUUID(), itemId: item.id, type: item.type, name: item.name, qty,
+        unitPrice, total: unitPrice * qty, variablePrice: item.variablePrice,
         priceRangeMin: item.priceRangeMin, priceRangeMax: item.priceRangeMax,
+        note: note || undefined, modifiers: modifiers.length ? modifiers : undefined,
       }];
     });
   }, []);
+
+  const addToCart = useCallback((item: CatalogItem) => {
+    const groups = restaurant ? groupsForItem(item, modifierGroups) : [];
+    if (groups.length > 0) {
+      setCustomizing({ item, groups, initial: defaultSelection(groups), qty: 1, note: "" });
+      return;
+    }
+    addLine(item);
+  }, [addLine, modifierGroups, restaurant]);
+
+  /** Re-opens the customize pop-up for an unsent cart line. */
+  function editEntryOptions(entry: CartEntry) {
+    const item = catalogItems.find(i => i.id === entry.itemId) ?? inventoryCatalogItem(entry.itemId);
+    if (!item) return;
+    const groups = groupsForItem(item, modifierGroups);
+    if (groups.length === 0) return;
+    setCustomizing({ item, groups, cartId: entry.cartId, initial: selectionFromModifiers(entry.modifiers), qty: entry.qty, note: entry.note ?? "" });
+  }
+
+  /** An inventory item as a catalog entry, for a cart line whose item a filter has hidden. */
+  function inventoryCatalogItem(itemId: string): CatalogItem | undefined {
+    const i = inventory.find(x => x.id === itemId);
+    if (!i) return undefined;
+    return {
+      id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`, price: i.retailPrice ?? 0,
+      category: i.category, modifierGroupIds: i.modifierGroupIds,
+    };
+  }
+
+  function confirmCustomizing(modifiers: ChosenModifier[], qty: number, note: string) {
+    if (!customizing) return;
+    const { item, cartId } = customizing;
+    if (cartId) {
+      const unitPrice = item.price + modifiersTotal(modifiers);
+      setCart(prev => prev.map(e => e.cartId === cartId
+        ? { ...e, modifiers: modifiers.length ? modifiers : undefined, qty, note: note || undefined, unitPrice, total: unitPrice * qty }
+        : e));
+    } else {
+      addLine(item, modifiers, qty, note);
+    }
+    setCustomizing(null);
+  }
 
   const addBarcodeToCart = useCallback((rawCode: string) => {
     const code = rawCode.trim();
@@ -485,6 +576,7 @@ export default function POSPage() {
     setCart(order.lines.filter(l => !l.voided).map(l => ({
       cartId: l.id, lineId: l.id, itemId: l.itemId, type: "product" as const, name: l.name,
       qty: l.qty, unitPrice: l.unitPrice, total: l.qty * l.unitPrice, firedAt: l.firedAt, note: l.note,
+      modifiers: l.modifiers,
     })));
     const client = order.clientId ? getStoredClients().find(c => c.id === order.clientId) : undefined;
     setSelectedClient(client ?? (order.clientName ? { id: "", name: order.clientName, phone: order.clientPhone ?? "", tags: [], source: "walk-in", createdAt: "", totalVisits: 0, totalSpend: 0 } : null));
@@ -507,6 +599,7 @@ export default function POSPage() {
         name: e.name,
         qty: e.qty,
         unitPrice: wholePkr(e.unitPrice),
+        modifiers: e.modifiers?.length ? e.modifiers : undefined,
         note: e.note?.trim() || undefined,
         station: stationFor(item),
         firedAt: e.firedAt,
@@ -609,6 +702,16 @@ export default function POSPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once the business type is known
   }, [restaurant]);
 
+  // Option groups — re-read when edited on the Menu page or synced from another device.
+  useEffect(() => {
+    if (!restaurant) return;
+    const load = () => setModifierGroups(getModifierGroups());
+    const t = window.setTimeout(load, 0);
+    const unsubscribe = subscribeToStoredData(load);
+    window.addEventListener(MENU_CHANGED_EVENT, load);
+    return () => { window.clearTimeout(t); unsubscribe(); window.removeEventListener(MENU_CHANGED_EVENT, load); };
+  }, [restaurant]);
+
   useEffect(() => {
     if (!orderNotice) return;
     const t = window.setTimeout(() => setOrderNotice(null), 6000);
@@ -657,6 +760,8 @@ export default function POSPage() {
         section:       saleSection,
         items:         cartLineItems,
         subtotal, discountAmount: wholePkr(discountAmount + loyaltyDiscount), discount2Amount: discountAmount2, taxAmount, total,
+        ...(taxAmount > 0 ? { taxLabel: chargeSettings.taxLabel } : {}),
+        ...(serviceChargeAmount > 0 ? { serviceChargeAmount } : {}),
         paymentMethod: isCredit ? "" : (payMethod as PaymentMethod),
         date: today, status: isCredit ? "unpaid" : "paid",
         notes: settledOrder
@@ -692,8 +797,9 @@ export default function POSPage() {
       const soldProducts = cart.filter(e => e.type === "product");
       if (soldProducts.length > 0) {
         const updated = inventory.map(item => {
-          const sold = soldProducts.find(e => e.itemId === item.id);
-          return sold ? { ...item, currentStock: Math.max(0, item.currentStock - sold.qty) } : item;
+          // One item can be on several lines (a small and a large latte).
+          const soldQty = soldProducts.filter(e => e.itemId === item.id).reduce((n, e) => n + e.qty, 0);
+          return soldQty > 0 ? { ...item, currentStock: Math.max(0, item.currentStock - soldQty) } : item;
         });
         setInventory(updated);
         saveInventory(updated);
@@ -1261,7 +1367,7 @@ export default function POSPage() {
                 )}
               </div>
               <span style={{ fontSize: 11, fontWeight: 600, color: "#b0b0c8", flexShrink: 0 }}>
-                {catalogItems.length} item{catalogItems.length !== 1 ? "s" : ""}
+                {shownItems.length} item{shownItems.length !== 1 ? "s" : ""}
               </span>
             </div>
 
@@ -1339,9 +1445,24 @@ export default function POSPage() {
             )}
           </div>
 
+          {/* Menu tabs — restaurant mode, once items have menu sections */}
+          {menuCategories.length > 0 && (
+            <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", padding: "10px 16px 0", flexShrink: 0 }}>
+              {["all", ...menuCategories].map(c => {
+                const active = menuTab === c;
+                return (
+                  <button key={c} type="button" onClick={() => setMenuTab(c)} aria-pressed={active}
+                    style={{ padding: "7px 14px", borderRadius: 20, border: `1.5px solid ${active ? "#1d1d2f" : "#e8e8f4"}`, background: active ? "#1d1d2f" : "#fff", color: active ? "#fff" : "#5a5a78", fontSize: 12, fontWeight: 800, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>
+                    {c === "all" ? "All" : c}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* Grid */}
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 16px" }}>
-            {catalogItems.length === 0 ? (
+            {shownItems.length === 0 ? (
               <div style={{ padding: "80px 24px", textAlign: "center" }}>
                 <div style={{ width: 60, height: 60, borderRadius: 18, background: "#f4f4fc", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
                   <Package size={28} color="#d0d0e8" />
@@ -1355,8 +1476,10 @@ export default function POSPage() {
               </div>
             ) : (
               <div className="pos-catalog-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 10 }}>
-                {catalogItems.map(item => {
-                  const inCart  = cart.find(e => e.itemId === item.id);
+                {shownItems.map(item => {
+                  const inCartQty = cart.filter(e => e.itemId === item.id).reduce((n, e) => n + e.qty, 0);
+                  const inCart  = inCartQty > 0 ? { qty: inCartQty } : undefined;
+                  const hasOptions = restaurant && groupsForItem(item, modifierGroups).length > 0;
                   const { fg, bg } = catColor(item.category, item.type);
                   // A restaurant sells made-to-order dishes, so stock doesn't gate
                   // them — the 86 list (kitchen display) does.
@@ -1413,6 +1536,9 @@ export default function POSPage() {
                           <span style={{ padding: "2px 7px", borderRadius: 20, background: fg + "15", fontSize: 9, fontWeight: 800, color: fg, textTransform: "capitalize", letterSpacing: "0.03em" }}>
                             {item.type === "service" ? item.category : "product"}
                           </span>
+                          {hasOptions && (
+                            <span style={{ padding: "2px 7px", borderRadius: 20, background: "#eff6ff", fontSize: 9, fontWeight: 800, color: "#1d4ed8" }}>Options</span>
+                          )}
                           {restaurant ? (item.unavailable && (
                             <span style={{ fontSize: 9, fontWeight: 800, color: "#dc2626" }}>86&apos;d</span>
                           )) : item.type === "product" && item.stock !== undefined && (
@@ -1485,6 +1611,15 @@ export default function POSPage() {
                               <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: "#059669", background: "#ecfdf5", borderRadius: 20, padding: "1px 7px", verticalAlign: "middle" }}>SENT</span>
                             )}
                           </div>
+                          {entry.modifiers && entry.modifiers.length > 0 && (
+                            <div style={{ fontSize: 11, fontWeight: 600, color: "#1d4ed8", marginTop: 3, lineHeight: 1.4 }}>{modifierSummary(entry.modifiers)}</div>
+                          )}
+                          {restaurant && !entry.firedAt && groupsForItem(catalogItems.find(i => i.id === entry.itemId) ?? inventoryCatalogItem(entry.itemId), modifierGroups).length > 0 && (
+                            <button type="button" onClick={() => editEntryOptions(entry)}
+                              style={{ marginTop: 3, border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: 11, fontWeight: 700, color: "#1d4ed8", textDecoration: "underline" }}>
+                              Change options
+                            </button>
+                          )}
                           {restaurant && (entry.firedAt ? (
                             entry.note ? <div style={{ fontSize: 11, color: "#b45309", marginTop: 3 }}>» {entry.note}</div> : null
                           ) : noteFor === entry.cartId ? (
@@ -1649,6 +1784,18 @@ export default function POSPage() {
                   </div>
                 )}
 
+                {serviceChargeAmount > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#4a4a6a", marginTop: 8, fontWeight: 700, padding: "0 4px" }}>
+                    <span>Service charge ({chargeSettings.serviceChargeRate}%)</span>
+                    <span>+ {pkr(serviceChargeAmount)}</span>
+                  </div>
+                )}
+                {taxAmount > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#4a4a6a", marginTop: 4, fontWeight: 700, padding: "0 4px" }}>
+                    <span>{chargeSettings.taxLabel} ({chargeSettings.taxRate}%)</span>
+                    <span>+ {pkr(taxAmount)}</span>
+                  </div>
+                )}
               </div>
 
               {restaurant && (
@@ -1797,6 +1944,20 @@ export default function POSPage() {
         />
       )}
       {kotTickets && <KotPrint tickets={kotTickets} onClose={() => setKotTickets(null)} />}
+      {customizing && (
+        <CustomizeSheet
+          name={customizing.item.name}
+          basePrice={customizing.item.price}
+          groups={customizing.groups}
+          initial={customizing.initial}
+          initialQty={customizing.qty}
+          initialNote={customizing.note}
+          editing={!!customizing.cartId}
+          money={pkr}
+          onConfirm={confirmCustomizing}
+          onClose={() => setCustomizing(null)}
+        />
+      )}
       {voidFor && (
         <ManagerApproval
           title={`Void ${voidFor.qty} × ${voidFor.name}?`}
