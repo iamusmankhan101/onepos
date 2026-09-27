@@ -3,8 +3,9 @@
  *
  * GET   → every billable business with its paid-until date and status, the
  *         revenue roll-up, and the payment history.
- * POST  { action: "record", ownerId, plan, months, amountPkr, method, paidAt, reference?, note? }
+ * POST  { action: "record", ownerId, plan, months | days, amountPkr, method, paidAt, reference?, note? }
  *       { action: "void", paymentId, reason? }
+ *       { action: "set-terms", ownerId, customPricePkr: number | null, billingCycleMonths: number | null }
  *
  * Gated on requireAdmin(); every write is audit-logged alongside the other
  * admin actions.
@@ -14,7 +15,11 @@ import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { logAdminAction } from "@/lib/admin-db";
 import { getBillingOverview, recordPayment, voidPayment } from "@/lib/billing-db";
-import { isIsoDate, PAYMENT_METHODS, PAYMENT_MONTH_OPTIONS, todayIso } from "@/lib/billing";
+import { getUserById, setBillingTerms } from "@/lib/auth-db";
+import {
+  cycleLabel, durationLabel, isIsoDate, MAX_PAYMENT_DAYS, MAX_PAYMENT_MONTHS, monthlyPrice, PAYMENT_METHODS,
+  todayIso, type PeriodLength,
+} from "@/lib/billing";
 import { normalizePlanId, PLANS } from "@/lib/plans";
 
 function text(value: unknown, max: number): string | null {
@@ -55,14 +60,26 @@ export async function POST(req: NextRequest) {
       }
       const plan = normalizePlanId(body.plan);
 
-      const months = Number(body.months);
-      if (!(PAYMENT_MONTH_OPTIONS as readonly number[]).includes(months)) {
-        return Response.json({ ok: false, error: "Months must be 1, 3, 6 or 12." }, { status: 400 });
+      // A period is whole months or a number of days — exactly one of the two.
+      let length: PeriodLength;
+      if (body.days !== undefined && body.days !== null) {
+        const days = Number(body.days);
+        if (!Number.isInteger(days) || days < 1 || days > MAX_PAYMENT_DAYS) {
+          return Response.json({ ok: false, error: `Days must be a whole number from 1 to ${MAX_PAYMENT_DAYS}.` }, { status: 400 });
+        }
+        length = { days };
+      } else {
+        const months = Number(body.months);
+        if (!Number.isInteger(months) || months < 1 || months > MAX_PAYMENT_MONTHS) {
+          return Response.json({ ok: false, error: `Months must be a whole number from 1 to ${MAX_PAYMENT_MONTHS}.` }, { status: 400 });
+        }
+        length = { months };
       }
 
+      // 0 is allowed: a complimentary period (a trial, a goodwill extension).
       const amountPkr = Math.round(Number(body.amountPkr));
-      if (!Number.isFinite(amountPkr) || amountPkr <= 0 || amountPkr > 10_000_000) {
-        return Response.json({ ok: false, error: "Enter the amount received." }, { status: 400 });
+      if (!Number.isFinite(amountPkr) || amountPkr < 0 || amountPkr > 10_000_000) {
+        return Response.json({ ok: false, error: "Enter the amount received (0 for a free period)." }, { status: 400 });
       }
 
       const method = text(body.method, 40);
@@ -81,7 +98,7 @@ export async function POST(req: NextRequest) {
         ownerId,
         plan,
         amountPkr,
-        months,
+        length,
         method,
         reference: text(body.reference, 120),
         note: text(body.note, 300),
@@ -95,7 +112,7 @@ export async function POST(req: NextRequest) {
         action: "record-payment",
         targetId: payment.ownerId,
         targetEmail: payment.ownerEmail,
-        detail: `PKR ${payment.amountPkr.toLocaleString("en-US")} via ${payment.method} for ${payment.months} month(s) of ${PLANS[plan].name}; paid until ${payment.periodEnd}.`
+        detail: `${payment.amountPkr > 0 ? `PKR ${payment.amountPkr.toLocaleString("en-US")} via ${payment.method}` : "Complimentary"} for ${durationLabel(payment)} of ${PLANS[plan].name}; paid until ${payment.periodEnd}.`
           + (planChanged ? ` Plan set to ${PLANS[plan].name}.` : ""),
       });
 
@@ -115,6 +132,45 @@ export async function POST(req: NextRequest) {
         targetId: payment.ownerId,
         targetEmail: payment.ownerEmail,
         detail: `Voided PKR ${payment.amountPkr.toLocaleString("en-US")} paid ${payment.paidAt}.${reason ? ` ${reason}` : ""}`,
+      });
+
+      return Response.json({ ok: true, ...(await getBillingOverview()) });
+    }
+
+    if (body.action === "set-terms") {
+      const ownerId = text(body.ownerId, 200);
+      const owner = ownerId ? await getUserById(ownerId) : null;
+      if (!owner) return Response.json({ ok: false, error: "Account not found." }, { status: 404 });
+      if (owner.businessOwnerId || owner.role !== "owner") {
+        return Response.json({ ok: false, error: "Pricing is set on the business owner's account." }, { status: 400 });
+      }
+
+      let customPricePkr: number | null = null;
+      if (body.customPricePkr !== null && body.customPricePkr !== undefined && body.customPricePkr !== "") {
+        customPricePkr = Math.round(Number(body.customPricePkr));
+        if (!Number.isFinite(customPricePkr) || customPricePkr < 0 || customPricePkr > 10_000_000) {
+          return Response.json({ ok: false, error: "Enter a monthly price from 0 to 10,000,000." }, { status: 400 });
+        }
+      }
+
+      let billingCycleMonths: number | null = null;
+      if (body.billingCycleMonths !== null && body.billingCycleMonths !== undefined && body.billingCycleMonths !== "") {
+        billingCycleMonths = Number(body.billingCycleMonths);
+        if (!Number.isInteger(billingCycleMonths) || billingCycleMonths < 1 || billingCycleMonths > MAX_PAYMENT_MONTHS) {
+          return Response.json({ ok: false, error: `The billing cycle must be 1 to ${MAX_PAYMENT_MONTHS} months.` }, { status: 400 });
+        }
+        if (billingCycleMonths === 1) billingCycleMonths = null;
+      }
+
+      await setBillingTerms(owner.id, { customPricePkr, billingCycleMonths });
+      const price = monthlyPrice(PLANS[owner.plan].pricePkr, customPricePkr);
+      await logAdminAction({
+        actorId: admin.id,
+        actorEmail: admin.email,
+        action: "set-billing-terms",
+        targetId: owner.id,
+        targetEmail: owner.email,
+        detail: `${customPricePkr === null ? "List price" : "Custom price"}: ${cycleLabel(price, billingCycleMonths)}.`,
       });
 
       return Response.json({ ok: true, ...(await getBillingOverview()) });

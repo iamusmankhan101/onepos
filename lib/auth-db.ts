@@ -80,6 +80,9 @@ async function ensureAuthTablesUncached(): Promise<void> {
   await db.execute("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'starter'").catch(() => {});
   // 'general' for every account that predates the sign-up picker — it keeps the app as it was.
   await db.execute("ALTER TABLE users ADD COLUMN business_type TEXT NOT NULL DEFAULT 'general'").catch(() => {});
+  // Billing terms set from the admin console (lib/billing.ts); NULL = plan list price / monthly.
+  await db.execute("ALTER TABLE users ADD COLUMN custom_price_pkr INTEGER").catch(() => {});
+  await db.execute("ALTER TABLE users ADD COLUMN billing_cycle_months INTEGER").catch(() => {});
 
   // Create index for faster email lookups
   await db.execute(`
@@ -127,6 +130,10 @@ export interface User {
    * owner's row is consulted — see getEffectiveBusinessType().
    */
   businessType: BusinessTypeId;
+  /** Negotiated monthly price in PKR replacing the plan's list price; null = list price. Owners only. */
+  customPricePkr: number | null;
+  /** Default billing cycle in months for new payments; null = 1. Owners only. */
+  billingCycleMonths: number | null;
   createdAt: string;
 }
 
@@ -155,6 +162,10 @@ export interface AuthUser {
    * owner's row is consulted — see getEffectiveBusinessType().
    */
   businessType: BusinessTypeId;
+  /** Negotiated monthly price in PKR replacing the plan's list price; null = list price. Owners only. */
+  customPricePkr: number | null;
+  /** Default billing cycle in months for new payments; null = 1. Owners only. */
+  billingCycleMonths: number | null;
   createdAt: string;
 }
 
@@ -180,6 +191,8 @@ function rowToUser(r: any): User {
     freezeReason: (r.freeze_reason as string) ?? null,
     plan: normalizePlanId(r.plan),
     businessType: normalizeBusinessTypeId(r.business_type),
+    customPricePkr: r.custom_price_pkr === null || r.custom_price_pkr === undefined ? null : Number(r.custom_price_pkr),
+    billingCycleMonths: r.billing_cycle_months ? Number(r.billing_cycle_months) : null,
     createdAt: r.created_at as string,
   };
 }
@@ -373,6 +386,15 @@ export async function getEffectivePlan(user: Pick<User, "plan" | "businessOwnerI
   if (!user.businessOwnerId) return normalizePlanId(user.plan);
   const owner = await getUserById(user.businessOwnerId);
   return normalizePlanId(owner?.plan);
+}
+
+/** An owner's billing terms: custom monthly price (null = list) and default cycle (null = monthly). */
+export async function setBillingTerms(id: string, terms: { customPricePkr: number | null; billingCycleMonths: number | null }): Promise<void> {
+  await ensureAuthTables();
+  await db.execute({
+    sql: "UPDATE users SET custom_price_pkr = ?, billing_cycle_months = ? WHERE id = ?",
+    args: [terms.customPricePkr, terms.billingCycleMonths, id],
+  });
 }
 
 /** Sets what kind of business an owner runs. Team logins inherit it, like the plan. */

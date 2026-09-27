@@ -6,8 +6,13 @@
  *
  * This build has no payment gateway: a business pays over WhatsApp, bank
  * transfer or cash, and a platform admin records the payment in the console.
- * Each payment buys whole months, and an account's "paid until" date is the end
- * of the latest payment's period. Nothing is locked automatically when that
+ * Each payment buys a period — whole months, or a number of days for anything
+ * off-cycle (a trial, a pro-rated top-up) — and an account's "paid until" date
+ * is the end of the latest payment's period.
+ *
+ * Each business can also carry its own terms: a custom monthly price that
+ * replaces its plan's list price (a negotiated rate), and a default billing
+ * cycle the payment form starts from. Nothing is locked automatically when that
  * date passes — the console surfaces it and the admin decides (a reminder, a
  * freeze, or a move to Basic).
  */
@@ -19,7 +24,10 @@ export const PAYMENT_METHODS = [
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+/** Quick picks on the payment form; any whole number up to the limits below is accepted. */
 export const PAYMENT_MONTH_OPTIONS = [1, 3, 6, 12] as const;
+export const MAX_PAYMENT_MONTHS = 36;
+export const MAX_PAYMENT_DAYS = 730;
 
 /** Days before the paid-until date at which an account counts as "due soon". */
 export const DUE_SOON_DAYS = 7;
@@ -31,8 +39,12 @@ export interface SubscriptionPayment {
   ownerEmail: string;
   businessName: string;
   plan: PlanId;
+  /** 0 is a complimentary period — a trial or goodwill extension. */
   amountPkr: number;
+  /** Whole months bought; 0 when the period was given in days instead. */
   months: number;
+  /** Days bought, for a period that isn't whole months; null otherwise. */
+  days: number | null;
   method: string;
   reference: string | null;
   note: string | null;
@@ -57,6 +69,12 @@ export interface BillingAccount {
   businessName: string;
   phone: string;
   plan: PlanId;
+  /** Negotiated monthly price in PKR, replacing the plan's list price; null = list price. */
+  customPricePkr: number | null;
+  /** What this business actually pays per month — custom price or list price. */
+  monthlyPricePkr: number;
+  /** Default period for a new payment, in months; null = 1. */
+  billingCycleMonths: number | null;
   accountFrozen: boolean;
   approvalStatus: string;
   createdAt: string;
@@ -111,6 +129,11 @@ export function addMonths(iso: string, months: number): string {
   return target.toISOString().slice(0, 10);
 }
 
+export function addDays(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
 export function daysBetween(fromIso: string, toIso: string): number {
   const [fy, fm, fd] = fromIso.split("-").map(Number);
   const [ty, tm, td] = toIso.split("-").map(Number);
@@ -132,6 +155,37 @@ export function billingStatus(paidUntil: string | null, today = todayIso()): { s
   if (daysLeft <= 0) return { status: "overdue", daysLeft };
   if (daysLeft <= DUE_SOON_DAYS) return { status: "due-soon", daysLeft };
   return { status: "paid", daysLeft };
+}
+
+/** The monthly price a business pays: its custom price when one is set, else the plan's. */
+export function monthlyPrice(listPricePkr: number, customPricePkr: number | null | undefined): number {
+  return customPricePkr !== null && customPricePkr !== undefined ? customPricePkr : listPricePkr;
+}
+
+/** A period of whole months, or of days. */
+export type PeriodLength = { months: number; days?: undefined } | { days: number; months?: undefined };
+
+/** End (exclusive) of a period that starts on `start`. */
+export function periodEnd(start: string, length: PeriodLength): string {
+  return length.days !== undefined ? addDays(start, length.days) : addMonths(start, length.months);
+}
+
+/** What a period costs at a monthly price — days are charged at 1/30 of a month. */
+export function priceForPeriod(monthlyPricePkr: number, length: PeriodLength): number {
+  return Math.round(length.days !== undefined ? (monthlyPricePkr * length.days) / 30 : monthlyPricePkr * length.months);
+}
+
+/** "3 months", "45 days". */
+export function durationLabel(p: { months: number; days: number | null }): string {
+  if (p.days) return `${p.days} day${p.days === 1 ? "" : "s"}`;
+  return `${p.months} month${p.months === 1 ? "" : "s"}`;
+}
+
+/** "PKR 2,500/month", or "PKR 7,500 every 3 months" for a longer cycle. */
+export function cycleLabel(monthlyPricePkr: number, cycleMonths: number | null): string {
+  const months = cycleMonths && cycleMonths > 1 ? cycleMonths : 1;
+  const amount = `PKR ${Math.round(monthlyPricePkr * months).toLocaleString("en-US")}`;
+  return months === 1 ? `${amount}/month` : `${amount} every ${months} months`;
 }
 
 /** "0300 1234567" / "+92 300…" → "923001234567", the digits-only form wa.me takes. */

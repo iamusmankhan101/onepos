@@ -28,7 +28,7 @@ export interface BusinessTypeDefinition {
   name: string;
   /** The name on the sign-up picker's cards, where "Café / Coffee shop" won't fit. */
   shortName: string;
-  /** One short line under the name on the sign-up picker. */
+  /** What picking this type means, shown under the sign-up picker once it's chosen. */
   blurb: string;
   /** Example business name for the sign-up form. */
   exampleName: string;
@@ -66,7 +66,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     id: "general",
     name: "General",
     shortName: "General",
-    blurb: "Every module, standard labels",
+    blurb: "Every module, with the standard labels.",
     exampleName: "Raza Traders",
     productsLabel: "Products",
     productLabel: "Product",
@@ -81,7 +81,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     id: "restaurant",
     name: "Restaurant",
     shortName: "Restaurant",
-    blurb: "Dine-in, takeaway, delivery",
+    blurb: "Dine-in, takeaway and delivery — with tables and a kitchen display.",
     exampleName: "Karahi House",
     productsLabel: "Menu",
     productLabel: "Menu Item",
@@ -96,7 +96,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     id: "cafe",
     name: "Café / Coffee shop",
     shortName: "Café",
-    blurb: "Coffee, bakery, light food",
+    blurb: "Coffee, bakery and light food — with quick orders and a kitchen display.",
     exampleName: "Chai Corner",
     productsLabel: "Menu",
     productLabel: "Menu Item",
@@ -111,7 +111,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     id: "retail",
     name: "Retail / Mart",
     shortName: "Retail",
-    blurb: "Shops, marts, groceries",
+    blurb: "Shops, marts and groceries — with barcode scanning and stock alerts.",
     exampleName: "Raza Mart",
     productsLabel: "Products",
     productLabel: "Product",
@@ -126,7 +126,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     id: "salon",
     name: "Salon / Clinic",
     shortName: "Salon",
-    blurb: "Salons, spas, clinics",
+    blurb: "Salons, spas and clinics — with client profiles and staff commissions.",
     exampleName: "Glow Studio",
     productsLabel: "Products",
     productLabel: "Product",

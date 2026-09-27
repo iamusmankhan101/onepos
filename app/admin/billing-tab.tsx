@@ -9,13 +9,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Ban, CalendarClock, CheckCircle2, Clock, Download, MessageCircle,
-  Plus, Receipt, Search, TrendingUp, Wallet,
+  Plus, Receipt, Search, Tag, TrendingUp, Wallet,
 } from "lucide-react";
 import { Modal, Pill, StatCard } from "./ui";
 import { PLAN_IDS, PLANS, planPriceLabel, type PlanId } from "@/lib/plans";
 import {
-  addMonths, billingStatus, nextPeriodStart, PAYMENT_METHODS, PAYMENT_MONTH_OPTIONS, todayIso, whatsAppNumber,
-  type BillingAccount, type BillingStatus, type BillingSummary, type SubscriptionPayment,
+  billingStatus, cycleLabel, daysBetween, durationLabel, MAX_PAYMENT_DAYS, MAX_PAYMENT_MONTHS, monthlyPrice,
+  nextPeriodStart, PAYMENT_METHODS, PAYMENT_MONTH_OPTIONS, periodEnd, priceForPeriod, todayIso, whatsAppNumber,
+  type BillingAccount, type BillingStatus, type BillingSummary, type PeriodLength, type SubscriptionPayment,
 } from "@/lib/billing";
 
 type Toast = (toast: { tone: "ok" | "bad"; text: string }) => void;
@@ -63,6 +64,7 @@ function reminderLink(account: BillingAccount): string | null {
   if (!number) return null;
   const plan = PLANS[account.plan];
   const name = account.ownerName?.split(" ")[0] || "there";
+  const renewal = cycleLabel(account.monthlyPricePkr, account.billingCycleMonths);
   const when = account.paidUntil
     ? account.daysLeft !== null && account.daysLeft <= 0
       ? `ended on ${fmtDay(lastCoveredDay(account.paidUntil))}`
@@ -70,7 +72,7 @@ function reminderLink(account: BillingAccount): string | null {
     : "is ready to start";
   const message =
     `Hi ${name}, this is Pointly. Your ${plan.name} subscription for ${account.businessName} ${when}. ` +
-    `The renewal is ${planPriceLabel(plan)}. Reply here once you've paid and we'll update your account. Thank you!`;
+    `The renewal is ${renewal}. Reply here once you've paid and we'll update your account. Thank you!`;
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }
 
@@ -89,10 +91,16 @@ function downloadCsv(filename: string, rows: Record<string, string | number>[]) 
 
 const label = { display: "block", fontSize: 11, fontWeight: 800, color: "#6b6b8a", marginBottom: 6, letterSpacing: "0.04em", textTransform: "uppercase" } as const;
 
+type DurationUnit = "months" | "days" | "until";
+
 interface RecordDraft {
   ownerId: string;
   plan: PlanId;
-  months: number;
+  unit: DurationUnit;
+  /** Months or days, as typed. */
+  count: string;
+  /** Last day covered, for unit "until". */
+  until: string;
   amount: string;
   method: string;
   paidAt: string;
@@ -100,25 +108,59 @@ interface RecordDraft {
   note: string;
 }
 
+/** The monthly price a draft is charged at: the account's own price for its plan, else list. */
+function draftMonthly(draft: Pick<RecordDraft, "plan">, account: BillingAccount | undefined): number {
+  return monthlyPrice(PLANS[draft.plan].pricePkr, account && account.plan === draft.plan ? account.customPricePkr : null);
+}
+
+/**
+ * The period a draft buys, or null while it's incomplete. "Until" is turned
+ * into days from where the period will start, so it lands on exactly that day.
+ */
+function draftLength(draft: RecordDraft, account: BillingAccount | undefined): PeriodLength | null {
+  const n = Number(draft.count);
+  if (draft.unit === "months") return Number.isInteger(n) && n >= 1 && n <= MAX_PAYMENT_MONTHS ? { months: n } : null;
+  if (draft.unit === "days") return Number.isInteger(n) && n >= 1 && n <= MAX_PAYMENT_DAYS ? { days: n } : null;
+  if (!draft.until || !draft.paidAt) return null;
+  const start = nextPeriodStart(account?.paidUntil ?? null, draft.paidAt);
+  const days = daysBetween(start, draft.until) + 1;
+  return days >= 1 && days <= MAX_PAYMENT_DAYS ? { days } : null;
+}
+
+/** Re-prices a draft after its account, plan or duration changed. */
+function repriced(draft: RecordDraft, account: BillingAccount | undefined): RecordDraft {
+  const length = draftLength(draft, account);
+  return length ? { ...draft, amount: String(priceForPeriod(draftMonthly(draft, account), length)) } : draft;
+}
+
 function draftFor(account: BillingAccount | undefined): RecordDraft {
   const plan = account?.plan ?? "starter";
-  return {
+  return repriced({
     ownerId: account?.id ?? "",
     plan,
-    months: 1,
-    amount: String(PLANS[plan].pricePkr),
+    unit: "months",
+    count: String(account?.billingCycleMonths ?? 1),
+    until: "",
+    amount: "",
     method: "Bank transfer",
     paidAt: todayIso(),
     reference: "",
     note: "",
-  };
+  }, account);
+}
+
+interface TermsDraft {
+  ownerId: string;
+  useCustom: boolean;
+  price: string;
+  cycle: string;
 }
 
 export default function BillingTab({ refreshKey, recordRequest, onToast }: {
   /** Bumped by the console's Refresh button. */
   refreshKey: number;
-  /** Set from the Accounts tab's row menu to open the form on one account. */
-  recordRequest: { ownerId: string; nonce: number } | null;
+  /** Set from the Accounts tab's row menu to open the payment form (or the pricing dialog) on one account. */
+  recordRequest: { ownerId: string; nonce: number; kind?: "payment" | "terms" } | null;
   onToast: Toast;
 }) {
   const [accounts, setAccounts] = useState<BillingAccount[]>([]);
@@ -133,6 +175,7 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const [draft, setDraft] = useState<RecordDraft | null>(null);
+  const [terms, setTerms] = useState<TermsDraft | null>(null);
   const [voidFor, setVoidFor] = useState<SubscriptionPayment | null>(null);
   const [voidReason, setVoidReason] = useState("");
 
@@ -167,7 +210,9 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
   useEffect(() => {
     if (!recordRequest || loading) return;
     const timer = window.setTimeout(() => {
-      setDraft(draftFor(accounts.find((a) => a.id === recordRequest.ownerId)));
+      const account = accounts.find((a) => a.id === recordRequest.ownerId);
+      if (recordRequest.kind === "terms") { if (account) openTerms(account); }
+      else setDraft(draftFor(account));
     }, 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -221,13 +266,39 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
     }
   }
 
+  function openTerms(account: BillingAccount) {
+    setTerms({
+      ownerId: account.id,
+      useCustom: account.customPricePkr !== null,
+      price: String(account.customPricePkr ?? PLANS[account.plan].pricePkr),
+      cycle: String(account.billingCycleMonths ?? 1),
+    });
+  }
+
+  async function submitTerms() {
+    if (!terms) return;
+    const ok = await post({
+      action: "set-terms",
+      ownerId: terms.ownerId,
+      customPricePkr: terms.useCustom ? Number(terms.price) : null,
+      billingCycleMonths: Number(terms.cycle),
+    });
+    if (ok) {
+      const account = accounts.find((a) => a.id === terms.ownerId);
+      onToast({ tone: "ok", text: `Pricing updated for ${account?.businessName || "the account"}.` });
+      setTerms(null);
+    }
+  }
+
   async function submitPayment() {
     if (!draft) return;
+    const length = draftLength(draft, accounts.find((a) => a.id === draft.ownerId));
+    if (!length) return;
     const ok = await post({
       action: "record",
       ownerId: draft.ownerId,
       plan: draft.plan,
-      months: draft.months,
+      ...length,
       amountPkr: Number(draft.amount),
       method: draft.method,
       paidAt: draft.paidAt,
@@ -252,15 +323,22 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
 
   const draftAccount = draft ? accounts.find((a) => a.id === draft.ownerId) : undefined;
   const draftAmount = Number(draft?.amount);
-  const draftValid = Boolean(draft && draft.ownerId && draftAmount > 0 && draft.paidAt);
-  const draftPreview = draft && draftAccount && draft.paidAt
+  const draftLen = draft ? draftLength(draft, draftAccount) : null;
+  const draftValid = Boolean(draft && draft.ownerId && draft.amount !== "" && draftAmount >= 0 && draft.paidAt && draftLen);
+  const draftPreview = draft && draftAccount && draft.paidAt && draftLen
     ? (() => {
         const start = nextPeriodStart(draftAccount.paidUntil, draft.paidAt);
-        const end = addMonths(start, draft.months);
+        const end = periodEnd(start, draftLen);
         return { start, end, status: billingStatus(end) };
       })()
     : null;
-  const expectedAmount = draft ? PLANS[draft.plan].pricePkr * draft.months : 0;
+  const draftMonthlyPrice = draft ? draftMonthly(draft, draftAccount) : 0;
+  const expectedAmount = draft && draftLen ? priceForPeriod(draftMonthlyPrice, draftLen) : 0;
+  const termsAccount = terms ? accounts.find((a) => a.id === terms.ownerId) : undefined;
+  const termsPrice = terms ? (terms.useCustom ? Number(terms.price) : PLANS[termsAccount?.plan ?? "starter"].pricePkr) : 0;
+  const termsCycle = terms ? Number(terms.cycle) : 0;
+  const termsValid = Boolean(terms && Number.isInteger(termsCycle) && termsCycle >= 1 && termsCycle <= MAX_PAYMENT_MONTHS
+    && (!terms.useCustom || (terms.price !== "" && termsPrice >= 0)));
 
   const tabs = (
     <div style={{ display: "flex", gap: 6, background: "#ececf4", padding: 3, borderRadius: 11 }}>
@@ -284,7 +362,7 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
       <style>{`
         .bt-row {
           display: grid;
-          grid-template-columns: minmax(200px, 2fr) 90px minmax(120px, 1fr) minmax(130px, 1fr) minmax(120px, 1fr) 190px;
+          grid-template-columns: minmax(200px, 2fr) 130px minmax(120px, 1fr) minmax(130px, 1fr) minmax(120px, 1fr) 200px;
           gap: 12px; align-items: center; padding: 11px 16px;
         }
         .bt-pay {
@@ -293,7 +371,7 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
           gap: 12px; align-items: center; padding: 11px 16px;
         }
         @media (max-width: 1100px) {
-          .bt-row { grid-template-columns: minmax(180px, 2fr) 84px minmax(120px, 1fr) minmax(120px, 1fr) 170px; }
+          .bt-row { grid-template-columns: minmax(180px, 2fr) 120px minmax(120px, 1fr) minmax(120px, 1fr) 180px; }
           .bt-col-last { display: none; }
           .bt-pay { grid-template-columns: 96px minmax(160px, 2fr) 110px minmax(110px, 1fr) 70px; }
           .bt-pay-plan, .bt-pay-period { display: none; }
@@ -356,7 +434,7 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
             `pointly-payments-${todayIso()}.csv`,
             visiblePayments.map((p) => ({
               "Paid on": p.paidAt, Business: p.businessName, Email: p.ownerEmail, Plan: PLANS[p.plan].name,
-              Months: p.months, "Amount (PKR)": p.amountPkr, Method: p.method, Reference: p.reference ?? "",
+              Duration: durationLabel(p), "Amount (PKR)": p.amountPkr, Method: p.method, Reference: p.reference ?? "",
               "Period start": p.periodStart, "Paid until": p.periodEnd, "Recorded by": p.recordedByEmail,
               Note: p.note ?? "", Voided: p.voidedAt ? `Yes — ${p.voidReason ?? ""}` : "",
             })),
@@ -406,6 +484,13 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
                 </div>
                 <div className="bt-col-plan">
                   <Pill label={PLANS[account.plan].name} {...PLAN_STYLE[account.plan]} />
+                  <div style={{ fontSize: 11, color: account.customPricePkr !== null ? "#7c3aed" : "#a5a5bb", marginTop: 3, fontWeight: account.customPricePkr !== null ? 750 : 500, lineHeight: 1.35 }}
+                    title={`${cycleLabel(account.monthlyPricePkr, account.billingCycleMonths)} · ${account.customPricePkr !== null ? `custom price, list is ${pkr(PLANS[account.plan].pricePkr)}/month` : "list price"}`}>
+                    {pkr(account.monthlyPricePkr)}/mo
+                    {(account.billingCycleMonths ?? 1) > 1 && (
+                      <div style={{ fontWeight: 600, color: "#8b8ba3" }}>billed every {account.billingCycleMonths} mo</div>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <Pill {...STATUS_STYLE[account.status]} />
@@ -417,8 +502,10 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
                 <div className="bt-col-last" style={{ fontSize: 12, color: "#6b6b8a" }}>
                   {account.lastPayment ? (
                     <>
-                      <div style={{ fontWeight: 700, color: "#43435f" }}>{pkr(account.lastPayment.amountPkr)}</div>
-                      <div style={{ fontSize: 11, color: "#a5a5bb" }}>{fmtDay(account.lastPayment.paidAt)} · {account.lastPayment.method}</div>
+                      <div style={{ fontWeight: 700, color: account.lastPayment.amountPkr > 0 ? "#43435f" : "#047857" }}>
+                        {account.lastPayment.amountPkr > 0 ? pkr(account.lastPayment.amountPkr) : "Free period"}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#a5a5bb" }}>{fmtDay(account.lastPayment.paidAt)}{account.lastPayment.amountPkr > 0 ? ` · ${account.lastPayment.method}` : ""}</div>
                     </>
                   ) : "—"}
                 </div>
@@ -429,6 +516,9 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
                       <MessageCircle size={13} />
                     </a>
                   )}
+                  <button type="button" className="ac-btn" style={{ padding: "7px 9px" }} title="Pricing & billing cycle" onClick={() => openTerms(account)}>
+                    <Tag size={13} />
+                  </button>
                   <button type="button" className="ac-btn" style={{ padding: "7px 11px" }} onClick={() => setDraft(draftFor(account))}>
                     <Plus size={13} /> Payment
                   </button>
@@ -473,14 +563,14 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
               </div>
               <div className="bt-pay-plan"><Pill label={PLANS[p.plan].name} {...PLAN_STYLE[p.plan]} /></div>
               <div style={{ fontSize: 13, fontWeight: 800, color: "#1a1a2e", textDecoration: p.voidedAt ? "line-through" : "none" }}>
-                {pkr(p.amountPkr)}
+                {p.amountPkr > 0 ? pkr(p.amountPkr) : "Free"}
               </div>
               <div className="bt-pay-method" style={{ fontSize: 12, color: "#6b6b8a", minWidth: 0 }}>
                 <div>{p.method}</div>
                 {p.reference && <div style={{ fontSize: 11, color: "#a5a5bb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.reference}</div>}
               </div>
               <div className="bt-pay-period" style={{ fontSize: 12, color: "#6b6b8a" }}>
-                {p.months} mo · {fmtDay(p.periodStart)} – {fmtDay(lastCoveredDay(p.periodEnd))}
+                {durationLabel(p)} · {fmtDay(p.periodStart)} – {fmtDay(lastCoveredDay(p.periodEnd))}
               </div>
               <div style={{ textAlign: "right" }}>
                 {voidable.has(p.id) && (
@@ -506,7 +596,7 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
             <>
               <button type="button" className="ac-btn" onClick={() => setDraft(null)}>Cancel</button>
               <button type="button" className="ac-btn ac-btn-primary" disabled={busy || !draftValid} onClick={submitPayment}>
-                <CheckCircle2 size={13} /> Record {draftAmount > 0 ? pkr(draftAmount) : "payment"}
+                <CheckCircle2 size={13} /> {draft.amount !== "" && draftAmount === 0 ? "Record free period" : `Record ${draftAmount > 0 ? pkr(draftAmount) : "payment"}`}
               </button>
             </>
           }
@@ -517,8 +607,10 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
               <select id="bt-owner" className="ac-input" style={{ cursor: "pointer" }} value={draft.ownerId}
                 onChange={(e) => {
                   const account = accounts.find((a) => a.id === e.target.value);
-                  const plan = account?.plan ?? draft.plan;
-                  setDraft({ ...draft, ownerId: e.target.value, plan, amount: String(PLANS[plan].pricePkr * draft.months) });
+                  setDraft(repriced({
+                    ...draft, ownerId: e.target.value, plan: account?.plan ?? draft.plan,
+                    count: draft.unit === "months" ? String(account?.billingCycleMonths ?? draft.count) : draft.count,
+                  }, account));
                 }}>
                 <option value="">Choose a business…</option>
                 {[...accounts].sort((a, b) => a.businessName.localeCompare(b.businessName)).map((a) => (
@@ -531,40 +623,73 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
               <div>
                 <label style={label} htmlFor="bt-plan">Plan</label>
                 <select id="bt-plan" className="ac-input" style={{ cursor: "pointer" }} value={draft.plan}
-                  onChange={(e) => {
-                    const plan = e.target.value as PlanId;
-                    setDraft({ ...draft, plan, amount: String(PLANS[plan].pricePkr * draft.months) });
-                  }}>
+                  onChange={(e) => setDraft(repriced({ ...draft, plan: e.target.value as PlanId }, draftAccount))}>
                   {PLAN_IDS.map((id) => <option key={id} value={id}>{PLANS[id].name} — {planPriceLabel(PLANS[id])}</option>)}
                 </select>
+                {draftAccount?.customPricePkr !== null && draftAccount?.customPricePkr !== undefined && draftAccount.plan === draft.plan && (
+                  <div style={{ fontSize: 11, color: "#7c3aed", fontWeight: 700, marginTop: 5 }}>Custom price {pkr(draftAccount.customPricePkr)}/month</div>
+                )}
               </div>
               <div>
-                <label style={label} htmlFor="bt-months">Months</label>
-                <select id="bt-months" className="ac-input" style={{ cursor: "pointer" }} value={draft.months}
-                  onChange={(e) => {
-                    const months = Number(e.target.value);
-                    setDraft({ ...draft, months, amount: String(PLANS[draft.plan].pricePkr * months) });
-                  }}>
-                  {PAYMENT_MONTH_OPTIONS.map((m) => <option key={m} value={m}>{m} month{m === 1 ? "" : "s"}</option>)}
-                </select>
+                <label style={label} htmlFor="bt-unit">Duration</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {draft.unit === "until" ? (
+                    <input id="bt-count" className="ac-input" type="date" aria-label="Last day covered"
+                      min={draftAccount ? nextPeriodStart(draftAccount.paidUntil, draft.paidAt || todayIso()) : undefined}
+                      value={draft.until} onChange={(e) => setDraft(repriced({ ...draft, until: e.target.value }, draftAccount))} />
+                  ) : (
+                    <input id="bt-count" className="ac-input" type="number" min={1} inputMode="numeric" aria-label={`Number of ${draft.unit}`}
+                      max={draft.unit === "months" ? MAX_PAYMENT_MONTHS : MAX_PAYMENT_DAYS} style={{ width: 76, flex: "0 0 auto" }}
+                      value={draft.count} onChange={(e) => setDraft(repriced({ ...draft, count: e.target.value }, draftAccount))} />
+                  )}
+                  <select id="bt-unit" className="ac-input" style={{ cursor: "pointer", flex: "0 0 96px", paddingRight: 4 }} value={draft.unit}
+                    onChange={(e) => {
+                      const unit = e.target.value as DurationUnit;
+                      setDraft(repriced({ ...draft, unit, count: unit === "days" ? "30" : unit === "months" ? "1" : draft.count }, draftAccount));
+                    }}>
+                    <option value="months">months</option>
+                    <option value="days">days</option>
+                    <option value="until">until…</option>
+                  </select>
+                </div>
               </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: -4 }}>
+              {PAYMENT_MONTH_OPTIONS.map((m) => {
+                const on = draft.unit === "months" && Number(draft.count) === m;
+                return (
+                  <button key={m} type="button" className="ac-btn"
+                    style={{ padding: "5px 10px", fontSize: 11.5, borderColor: on ? "#EA580C" : undefined, color: on ? "#c2410c" : undefined, background: on ? "#fff7ed" : undefined }}
+                    onClick={() => setDraft(repriced({ ...draft, unit: "months", count: String(m) }, draftAccount))}>
+                    {m} mo
+                  </button>
+                );
+              })}
+              {draftLen && (
+                <span style={{ fontSize: 11.5, color: "#8b8ba3", alignSelf: "center", marginLeft: 4 }}>
+                  = {draftLen.days !== undefined ? `${draftLen.days} day${draftLen.days === 1 ? "" : "s"}` : `${draftLen.months} month${draftLen.months === 1 ? "" : "s"}`} at {pkr(draftMonthlyPrice)}/month
+                </span>
+              )}
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div>
                 <label style={label} htmlFor="bt-amount">Amount received (PKR)</label>
-                <input id="bt-amount" className="ac-input" type="number" min={1} inputMode="numeric" value={draft.amount}
+                <input id="bt-amount" className="ac-input" type="number" min={0} inputMode="numeric" value={draft.amount}
                   onChange={(e) => setDraft({ ...draft, amount: e.target.value })} />
-                {draftAmount > 0 && draftAmount !== expectedAmount && (
+                {draft.amount !== "" && draftAmount === 0 ? (
+                  <div style={{ fontSize: 11, color: "#047857", fontWeight: 650, marginTop: 5 }}>Recorded as a free period</div>
+                ) : draftAmount > 0 && draftLen && draftAmount !== expectedAmount && (
                   <div style={{ fontSize: 11, color: "#b45309", fontWeight: 650, marginTop: 5 }}>
-                    List price is {pkr(expectedAmount)}
+                    Their price for this period is {pkr(expectedAmount)}
                   </div>
                 )}
               </div>
               <div>
                 <label style={label} htmlFor="bt-paid-at">Received on</label>
                 <input id="bt-paid-at" className="ac-input" type="date" max={todayIso()} value={draft.paidAt}
-                  onChange={(e) => setDraft({ ...draft, paidAt: e.target.value })} />
+                  onChange={(e) => setDraft(repriced({ ...draft, paidAt: e.target.value }, draftAccount))} />
               </div>
             </div>
 
@@ -605,6 +730,81 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
                     The account moves from {PLANS[draftAccount.plan].name} to {PLANS[draft.plan].name} when you record this.
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Pricing & billing cycle ────────────────────────────────────────── */}
+      {terms && termsAccount && (
+        <Modal
+          title={`Pricing — ${termsAccount.businessName}`}
+          icon={<Tag size={17} color="#7c3aed" />}
+          width={480}
+          onClose={() => setTerms(null)}
+          footer={
+            <>
+              <button type="button" className="ac-btn" onClick={() => setTerms(null)}>Cancel</button>
+              <button type="button" className="ac-btn ac-btn-primary" disabled={busy || !termsValid} onClick={submitTerms}>
+                <CheckCircle2 size={13} /> Save pricing
+              </button>
+            </>
+          }
+        >
+          <div style={{ display: "grid", gap: 14 }}>
+            <div>
+              <span style={label}>Monthly price</span>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {[
+                  { custom: false, title: "List price", sub: `${pkr(PLANS[termsAccount.plan].pricePkr)}/month · ${PLANS[termsAccount.plan].name}` },
+                  { custom: true, title: "Custom price", sub: "A negotiated rate for this business" },
+                ].map((option) => {
+                  const on = terms.useCustom === option.custom;
+                  return (
+                    <button key={option.title} type="button" onClick={() => setTerms({ ...terms, useCustom: option.custom })} aria-pressed={on}
+                      style={{
+                        textAlign: "left", padding: "10px 12px", borderRadius: 11, cursor: "pointer", fontFamily: "inherit",
+                        border: `1.5px solid ${on ? "#7c3aed" : "#ececf4"}`, background: on ? "#f5f3ff" : "#fff",
+                      }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: on ? "#6d28d9" : "#1a1a2e" }}>{option.title}</div>
+                      <div style={{ fontSize: 11, color: "#8b8ba3", marginTop: 2 }}>{option.sub}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              {terms.useCustom && (
+                <div style={{ marginTop: 10 }}>
+                  <label style={label} htmlFor="bt-custom-price">Custom price per month (PKR)</label>
+                  <input id="bt-custom-price" className="ac-input" type="number" min={0} inputMode="numeric" autoFocus
+                    value={terms.price} onChange={(e) => setTerms({ ...terms, price: e.target.value })} />
+                  {terms.price !== "" && termsPrice < PLANS[termsAccount.plan].pricePkr && (
+                    <div style={{ fontSize: 11, color: "#7c3aed", fontWeight: 650, marginTop: 5 }}>
+                      {termsPrice === 0 ? "Free — no charge each month" : `${Math.round((1 - termsPrice / PLANS[termsAccount.plan].pricePkr) * 100)}% off the list price`}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label style={label} htmlFor="bt-cycle">Billing cycle</label>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <input id="bt-cycle" className="ac-input" type="number" min={1} max={MAX_PAYMENT_MONTHS} inputMode="numeric"
+                  style={{ width: 80 }} value={terms.cycle} onChange={(e) => setTerms({ ...terms, cycle: e.target.value })} />
+                <span style={{ fontSize: 12.5, color: "#6b6b8a" }}>month{termsCycle === 1 ? "" : "s"} per payment</span>
+                {PAYMENT_MONTH_OPTIONS.map((m) => (
+                  <button key={m} type="button" className="ac-btn" style={{ padding: "5px 9px", fontSize: 11.5 }}
+                    onClick={() => setTerms({ ...terms, cycle: String(m) })}>{m}</button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: "#8b8ba3", marginTop: 5 }}>New payments for this business start from this many months.</div>
+            </div>
+
+            {termsValid && (
+              <div style={{ padding: "12px 14px", borderRadius: 12, background: "#f5f3ff", border: "1px solid #ddd6fe", fontSize: 12.5, color: "#4c1d95", lineHeight: 1.6 }}>
+                <div style={{ fontWeight: 800 }}>{cycleLabel(termsPrice, termsCycle)}</div>
+                <div>Shown to the business in Settings → Subscription, and used for MRR and payment reminders.</div>
               </div>
             )}
           </div>

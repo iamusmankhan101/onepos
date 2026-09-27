@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowLeft, Building2, Check, Copy, Database, Download,
   KeyRound, LayoutGrid, Loader2, LogOut, MoreVertical, RefreshCw, Search, Shield,
-  ShieldCheck, ShieldOff, Snowflake, Sparkles, Trash2, UserCheck, UserX, Users, Wallet, X, Zap,
+  ShieldCheck, ShieldOff, Snowflake, Sparkles, Tag, Trash2, UserCheck, UserX, Users, Wallet, X, Zap,
 } from "lucide-react";
 import type { AuditEntry, PlatformStats, PlatformUser } from "@/lib/admin-db";
 import type { AuthUser } from "@/lib/auth-db";
@@ -113,6 +113,7 @@ const ACTION_LABEL: Record<string, string> = {
   "set-business-type": "Changed business type",
   "record-payment": "Recorded payment",
   "void-payment": "Voided payment",
+  "set-billing-terms": "Changed pricing",
 };
 
 const PLAN_STYLE: Record<PlanId, { label: string; color: string; bg: string }> = {
@@ -133,7 +134,7 @@ export default function AdminConsolePage() {
 
   const [tab, setTab] = useState<"accounts" | "billing" | "activity">("accounts");
   const [billingRefresh, setBillingRefresh] = useState(0);
-  const [recordRequest, setRecordRequest] = useState<{ ownerId: string; nonce: number } | null>(null);
+  const [recordRequest, setRecordRequest] = useState<{ ownerId: string; nonce: number; kind?: "payment" | "terms" } | null>(null);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -773,6 +774,17 @@ export default function AdminConsolePage() {
                                   setTab("billing");
                                 }}>
                                 <Wallet size={13} color="#047857" /> Record payment
+                              </button>
+                            )}
+
+                            {!isTeamLogin && user.role === "owner" && (
+                              <button type="button" className="ac-menu-item"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  setRecordRequest({ ownerId: user.id, nonce: Date.now(), kind: "terms" });
+                                  setTab("billing");
+                                }}>
+                                <Tag size={13} color="#7c3aed" /> Pricing &amp; billing cycle
                               </button>
                             )}
 

@@ -14,10 +14,14 @@ import { PLAN_IDS, PLANS, normalizePlanId, type PlanId } from "@/lib/plans";
 import {
   addMonths,
   billingStatus,
+  monthlyPrice,
   nextPeriodStart,
+  periodEnd,
   todayIso,
   type BillingAccount,
+  type BillingStatus,
   type BillingSummary,
+  type PeriodLength,
   type SubscriptionPayment,
 } from "@/lib/billing";
 
@@ -46,6 +50,8 @@ async function ensureBillingTableUncached(): Promise<void> {
       void_reason        TEXT
     )
   `);
+  // Periods given in days rather than whole months (months is 0 on those rows).
+  await db.execute("ALTER TABLE subscription_payments ADD COLUMN duration_days INTEGER").catch(() => {});
   await db.execute(
     "CREATE INDEX IF NOT EXISTS idx_payments_owner ON subscription_payments(owner_id, period_end DESC)",
   ).catch(() => {});
@@ -72,6 +78,7 @@ function rowToPayment(r: any): SubscriptionPayment {
     plan: normalizePlanId(r.plan),
     amountPkr: Number(r.amount_pkr ?? 0),
     months: Number(r.months ?? 0),
+    days: r.duration_days ? Number(r.duration_days) : null,
     method: String(r.method),
     reference: (r.reference as string) || null,
     note: (r.note as string) || null,
@@ -105,13 +112,14 @@ async function livePaymentsFor(ownerId: string): Promise<SubscriptionPayment[]> 
 
 /**
  * Records a payment against a business owner, extends their paid-until date by
- * `months`, and moves the account onto the plan that was paid for.
+ * the period bought (whole months, or days), and moves the account onto the
+ * plan that was paid for.
  */
 export async function recordPayment(input: {
   ownerId: string;
   plan: PlanId;
   amountPkr: number;
-  months: number;
+  length: PeriodLength;
   method: string;
   reference: string | null;
   note: string | null;
@@ -134,13 +142,14 @@ export async function recordPayment(input: {
     businessName: owner.businessName,
     plan: input.plan,
     amountPkr: input.amountPkr,
-    months: input.months,
+    months: input.length.months ?? 0,
+    days: input.length.days ?? null,
     method: input.method,
     reference: input.reference,
     note: input.note,
     paidAt: input.paidAt,
     periodStart,
-    periodEnd: addMonths(periodStart, input.months),
+    periodEnd: periodEnd(periodStart, input.length),
     recordedByEmail: input.recordedBy.email,
     createdAt: new Date().toISOString(),
     voidedAt: null,
@@ -149,12 +158,12 @@ export async function recordPayment(input: {
 
   await db.execute({
     sql: `INSERT INTO subscription_payments
-            (id, owner_id, owner_email, business_name, plan, amount_pkr, months, method, reference, note,
+            (id, owner_id, owner_email, business_name, plan, amount_pkr, months, duration_days, method, reference, note,
              paid_at, period_start, period_end, recorded_by_id, recorded_by_email, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       payment.id, payment.ownerId, payment.ownerEmail, payment.businessName, payment.plan,
-      payment.amountPkr, payment.months, payment.method, payment.reference, payment.note,
+      payment.amountPkr, payment.months, payment.days, payment.method, payment.reference, payment.note,
       payment.paidAt, payment.periodStart, payment.periodEnd,
       input.recordedBy.id, input.recordedBy.email, payment.createdAt,
     ],
@@ -230,6 +239,9 @@ export async function getBillingOverview(): Promise<{
         businessName: u.businessName,
         phone: u.phone,
         plan: u.plan,
+        customPricePkr: u.customPricePkr,
+        monthlyPricePkr: monthlyPrice(PLANS[u.plan].pricePkr, u.customPricePkr),
+        billingCycleMonths: u.billingCycleMonths,
         accountFrozen: u.accountFrozen,
         approvalStatus: u.approvalStatus,
         createdAt: u.createdAt,
@@ -247,13 +259,13 @@ export async function getBillingOverview(): Promise<{
   for (const account of accounts) {
     if (account.status === "paid" || account.status === "due-soon") {
       payingByPlan[account.plan] += 1;
-      mrrPkr += PLANS[account.plan].pricePkr;
+      mrrPkr += account.monthlyPricePkr;
     }
   }
 
   const summary: BillingSummary = {
     mrrPkr,
-    potentialMrrPkr: accounts.reduce((sum, a) => sum + PLANS[a.plan].pricePkr, 0),
+    potentialMrrPkr: accounts.reduce((sum, a) => sum + a.monthlyPricePkr, 0),
     collectedThisMonthPkr: live.filter((p) => p.paidAt.startsWith(thisMonth)).reduce((s, p) => s + p.amountPkr, 0),
     collectedLastMonthPkr: live.filter((p) => p.paidAt.startsWith(lastMonth)).reduce((s, p) => s + p.amountPkr, 0),
     collectedAllTimePkr: live.reduce((s, p) => s + p.amountPkr, 0),
@@ -265,4 +277,45 @@ export async function getBillingOverview(): Promise<{
   };
 
   return { accounts, summary, payments: payments.slice(0, 500) };
+}
+
+/**
+ * What a business sees about its own subscription (Settings → Subscription):
+ * its plan, what it pays and how often, how long it's covered for, and its
+ * payments. Voided payments are left out — to the business they never happened.
+ */
+export interface OwnSubscription {
+  plan: PlanId;
+  listPricePkr: number;
+  monthlyPricePkr: number;
+  customPrice: boolean;
+  billingCycleMonths: number;
+  paidUntil: string | null;
+  status: BillingStatus;
+  daysLeft: number | null;
+  payments: Pick<SubscriptionPayment, "id" | "paidAt" | "amountPkr" | "months" | "days" | "method" | "periodStart" | "periodEnd" | "plan">[];
+}
+
+export async function getOwnSubscription(ownerId: string): Promise<OwnSubscription | null> {
+  const owner = await getUserById(ownerId);
+  if (!owner) return null;
+  const live = await livePaymentsFor(owner.id);
+  const paidUntil = live.reduce<string | null>((max, p) => (!max || p.periodEnd > max ? p.periodEnd : max), null);
+  const { status, daysLeft } = billingStatus(paidUntil);
+  return {
+    plan: owner.plan,
+    listPricePkr: PLANS[owner.plan].pricePkr,
+    monthlyPricePkr: monthlyPrice(PLANS[owner.plan].pricePkr, owner.customPricePkr),
+    customPrice: owner.customPricePkr !== null,
+    billingCycleMonths: owner.billingCycleMonths ?? 1,
+    paidUntil,
+    status,
+    daysLeft,
+    payments: live
+      .sort((a, b) => b.paidAt.localeCompare(a.paidAt) || b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 24)
+      .map(({ id, paidAt, amountPkr, months, days, method, periodStart, periodEnd: end, plan }) => ({
+        id, paidAt, amountPkr, months, days, method, periodStart, periodEnd: end, plan,
+      })),
+  };
 }

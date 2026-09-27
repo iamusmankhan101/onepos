@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
-import { Store, Clock, Shield, Smartphone, ChevronRight, Check, KeyRound, PrinterIcon, Building2, MapPin, Plus, Trash2, Sparkles } from "lucide-react";
+import { Store, Clock, Shield, Smartphone, ChevronRight, Check, KeyRound, PrinterIcon, Building2, MapPin, Plus, Trash2, Sparkles, CreditCard, AlertTriangle } from "lucide-react";
 import { settingsStore, saveSettings, SETTINGS_CHANGED_EVENT } from "@/lib/settings-store";
 import {
   activePlan, addBusinessLocation, canManageBranches, deleteBusinessLocation, getActiveLocationFilter,
@@ -10,14 +10,17 @@ import {
   updateActiveLocationDetails, updateBusinessLocation, type BusinessLocation,
 } from "@/lib/locations";
 import { MULTI_BRANCH_PLAN, PLANS, planPriceLabel, type PlanDefinition } from "@/lib/plans";
-import { ACCOUNT_REFRESHED_EVENT, updateCurrentPassword, type AuthUser } from "@/lib/auth";
+import { ACCOUNT_REFRESHED_EVENT, getCurrentUser, updateCurrentPassword, type AuthUser } from "@/lib/auth";
+import { cycleLabel, durationLabel } from "@/lib/billing";
+import type { OwnSubscription } from "@/lib/billing-db";
 import { getStoredStaff } from "@/lib/storage";
 import type { Staff } from "@/lib/types";
 import { fillTemplate, sanitizeForLink } from "@/lib/whatsapp-link";
 import PageTitle from "@/components/page-title";
 import { useBusinessType } from "@/lib/use-business-type";
 
-const SECTIONS = [
+const SECTIONS: { id: string; label: string; icon: typeof Store; ownerOnly?: boolean }[] = [
+  { id: "subscription", label: "Subscription", icon: CreditCard, ownerOnly: true },
   { id: "business",   label: "Business Profile", icon: Store },
   { id: "branches", label: "Branches",       icon: Building2 },
   { id: "hours",   label: "Business Hours",  icon: Clock },
@@ -1096,8 +1099,152 @@ function BranchesSection() {
   );
 }
 
+// ─── Subscription ─────────────────────────────────────────────────────────────
+
+function fmtDay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-PK", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/** "Paid until" is exclusive — the last day actually covered is the one before. */
+function lastDay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(y, m - 1, d - 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function pkrAmount(n: number) {
+  return `PKR ${Math.round(n).toLocaleString("en-US")}`;
+}
+
+/**
+ * What this business pays Pointly and how long it's covered for — set by a
+ * Pointly admin (Billing tab), read-only here. Owner only; the API refuses
+ * staff and managers.
+ */
+function SubscriptionSection() {
+  const [sub, setSub] = useState<OwnSubscription | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/account/subscription", { cache: "no-store", credentials: "same-origin" })
+      .then((res) => res.json() as Promise<{ ok: boolean; error?: string; subscription?: OwnSubscription | null }>)
+      .then((data) => {
+        if (cancelled) return;
+        if (!data.ok) setError(data.error || "Could not load your subscription.");
+        else setSub(data.subscription ?? null);
+      })
+      .catch(() => { if (!cancelled) setError("Could not load your subscription."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) return <div style={{ fontSize: 13, color: "#9898b0" }}>Loading…</div>;
+  if (error || !sub) return <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, fontSize: 13, color: "#991b1b" }}>{error || "No subscription found."}</div>;
+
+  const plan = PLANS[sub.plan];
+  const tone = {
+    paid:         { label: "Active",     color: "#047857", bg: "#ecfdf5", border: "#a7f3d0" },
+    "due-soon":   { label: "Renew soon", color: "#b45309", bg: "#fffbeb", border: "#fde68a" },
+    overdue:      { label: "Overdue",    color: "#b91c1c", bg: "#fef2f2", border: "#fecaca" },
+    "never-paid": { label: "Not started", color: "#6b6b8a", bg: "#f6f6fa", border: "#e6e6ef" },
+  }[sub.status];
+  const statusLine = sub.paidUntil === null
+    ? "No payment recorded yet."
+    : sub.daysLeft !== null && sub.daysLeft <= 0
+      ? `Your subscription ended on ${fmtDay(lastDay(sub.paidUntil))}.`
+      : `Paid up to ${fmtDay(lastDay(sub.paidUntil))} — ${sub.daysLeft} day${sub.daysLeft === 1 ? "" : "s"} left.`;
+  const stat = (label: string, value: ReactNode, sub2?: ReactNode) => (
+    <div style={{ padding: "14px 16px", borderRadius: 14, border: "1px solid #ecebf3", background: "#fcfcfe" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 850, color: "#1a1a2e", marginTop: 6 }}>{value}</div>
+      {sub2 && <div style={{ fontSize: 12, color: "#8b8ba3", marginTop: 3 }}>{sub2}</div>}
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "16px 18px", borderRadius: 16, background: tone.bg, border: `1px solid ${tone.border}` }}>
+        <div style={{ width: 42, height: 42, borderRadius: 12, background: "#fff", display: "grid", placeItems: "center", flexShrink: 0 }}>
+          {sub.status === "overdue" ? <AlertTriangle size={20} color={tone.color} /> : <CreditCard size={20} color={tone.color} />}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16, fontWeight: 850, color: "#1a1a2e" }}>{plan.name} plan</span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: tone.color, background: "#fff", borderRadius: 20, padding: "2px 9px" }}>{tone.label}</span>
+          </div>
+          <div style={{ fontSize: 13, color: tone.color, marginTop: 3, fontWeight: 600 }}>{statusLine}</div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+        {stat(
+          "Your price",
+          <>
+            {pkrAmount(sub.monthlyPricePkr)}<span style={{ fontSize: 12, fontWeight: 600, color: "#8b8ba3" }}>/month</span>
+          </>,
+          sub.customPrice
+            ? <span style={{ color: "#7c3aed", fontWeight: 700 }}>
+                Special rate{sub.monthlyPricePkr < sub.listPricePkr && <> · <s style={{ fontWeight: 500, color: "#a5a5bb" }}>{pkrAmount(sub.listPricePkr)}</s></>}
+              </span>
+            : "Standard price",
+        )}
+        {stat(
+          "Billing cycle",
+          sub.billingCycleMonths === 1 ? "Monthly" : `Every ${sub.billingCycleMonths} months`,
+          cycleLabel(sub.monthlyPricePkr, sub.billingCycleMonths),
+        )}
+        {stat(
+          "Paid until",
+          sub.paidUntil ? fmtDay(lastDay(sub.paidUntil)) : "—",
+          sub.daysLeft !== null ? (sub.daysLeft > 0 ? `${sub.daysLeft} days left` : `${-sub.daysLeft} days overdue`) : "Not started",
+        )}
+      </div>
+
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 750, color: "#1a1a2e", marginBottom: 10 }}>Payments</div>
+        {sub.payments.length === 0 ? (
+          <div style={{ fontSize: 13, color: "#9898b0", padding: "18px 0" }}>No payments yet.</div>
+        ) : (
+          <div style={{ border: "1px solid #ecebf3", borderRadius: 14, overflow: "hidden" }}>
+            {sub.payments.map((p, i) => (
+              <div key={p.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr auto", gap: 12, alignItems: "center", padding: "11px 16px", borderTop: i ? "1px solid #f2f1f7" : "none" }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: "#43435f" }}>{fmtDay(p.paidAt)}</div>
+                <div style={{ fontSize: 12.5, color: "#6b6b8a", minWidth: 0 }}>
+                  {PLANS[p.plan].name} · {durationLabel(p)} · {fmtDay(p.periodStart)} – {fmtDay(lastDay(p.periodEnd))}
+                  {p.amountPkr > 0 && <span style={{ color: "#a5a5bb" }}> · {p.method}</span>}
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: p.amountPkr > 0 ? "#1a1a2e" : "#047857" }}>
+                  {p.amountPkr > 0 ? pkrAmount(p.amountPkr) : "Free"}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ fontSize: 12, color: "#9898b0", lineHeight: 1.6 }}>
+        Payments are recorded by the Pointly team. To renew, change your plan or ask about a payment, get in touch with Pointly.
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [active, setActive] = useState("business");
+  // Subscription is the owner's arrangement with Pointly — managers don't see it.
+  const [isOwner, setIsOwner] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      const owner = getCurrentUser()?.role === "owner";
+      setIsOwner(owner);
+      if (owner && new URLSearchParams(window.location.search).get("section") === "subscription") setActive("subscription");
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, []);
+  const sections = SECTIONS.filter((s) => !s.ownerOnly || isOwner);
 
   return (
     <div className="dash-page dashboard-polish desktop-only" style={{ background: "#ffffff", minHeight: "100vh", padding: "32px 32px 48px", display: "flex", flexDirection: "column", gap: 24 }}>
@@ -1107,7 +1254,7 @@ export default function SettingsPage() {
 
       <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 24, alignItems: "start" }}>
         <div style={{ background: "#fff", borderRadius: 16, border: "1px solid rgba(226,223,235,0.8)", boxShadow: "0 4px 16px rgba(0,0,0,0.02)", overflow: "hidden", padding: "8px 0" }}>
-          {SECTIONS.map(({ id, label, icon: Icon }) => {
+          {sections.map(({ id, label, icon: Icon }) => {
             const isActive = active === id;
             return (
               <button key={id} onClick={() => setActive(id)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 20px", background: isActive ? "var(--accent-light)" : "transparent", border: "none", borderLeft: `3px solid ${isActive ? "var(--accent)" : "transparent"}`, cursor: "pointer", transition: "all 0.15s" }} className={isActive ? "" : "hover-bg-light"}>
@@ -1122,9 +1269,10 @@ export default function SettingsPage() {
         </div>
 
         <div style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", padding: "30px 32px" }}>
-          {SECTIONS.map(({ id, label }) => (
+          {sections.map(({ id, label }) => (
             <div key={id} style={{ display: active === id ? "block" : "none" }}>
               <div style={{ fontWeight: 800, fontSize: 18, color: "#1a1a2e", marginBottom: 24 }}>{label}</div>
+              {id === "subscription" && active === "subscription" && <SubscriptionSection />}
               {id === "business"    && <BusinessProfile />}
               {id === "branches" && <BranchesSection />}
               {id === "hours"    && <BusinessHours />}

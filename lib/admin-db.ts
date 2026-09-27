@@ -33,7 +33,8 @@ export type AdminAction =
   | "grant-admin" | "revoke-admin"
   | "set-plan"
   | "set-business-type"
-  | "record-payment" | "void-payment";
+  | "record-payment" | "void-payment"
+  | "set-billing-terms";
 
 export interface AuditEntry {
   id: string;

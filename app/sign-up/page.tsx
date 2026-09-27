@@ -2,19 +2,21 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowRight, Building2, Check, Clock, Coffee, LockKeyhole, Mail, Phone, Scissors, ShoppingBag, User, UtensilsCrossed } from "lucide-react";
+import { ArrowRight, Building2, Clock, Coffee, LockKeyhole, Mail, Phone, Scissors, ShoppingBag, User, UtensilsCrossed } from "lucide-react";
 import Wordmark from "@/components/wordmark";
 import { BUSINESS_TYPES, SIGNUP_BUSINESS_TYPE_IDS, type BusinessTypeId } from "@/lib/business-types";
 import styles from "../auth.module.css";
 
 // `businessName` is the API's field name (unchanged so nothing downstream breaks);
 // what it means here is simply the business the account belongs to.
+// Email gets a row of its own: at half width an address is cut off after a
+// dozen characters.
 const FIELDS = [
-  { id: "ownerName", label: "Your name",     icon: User,        type: "text",     placeholder: "Ali Raza"          },
-  { id: "businessName", label: "Business name", icon: Building2,   type: "text",     placeholder: "Raza Traders"      },
-  { id: "email",     label: "Email",         icon: Mail,        type: "email",    placeholder: "owner@example.com" },
-  { id: "phone",     label: "Phone",         icon: Phone,       type: "tel",      placeholder: "+92 300 1234567"   },
-  { id: "password",  label: "Password",      icon: LockKeyhole, type: "password", placeholder: "Minimum 8 characters" },
+  { id: "ownerName", label: "Your name",     icon: User,        type: "text",     placeholder: "Ali Raza",          full: false },
+  { id: "businessName", label: "Business name", icon: Building2,   type: "text",     placeholder: "Raza Traders",      full: false },
+  { id: "email",     label: "Email",         icon: Mail,        type: "email",    placeholder: "owner@example.com", full: true  },
+  { id: "phone",     label: "Phone",         icon: Phone,       type: "tel",      placeholder: "+92 300 1234567",   full: false },
+  { id: "password",  label: "Password",      icon: LockKeyhole, type: "password", placeholder: "8+ characters",     full: false },
 ] as const;
 
 const TYPE_ICONS: Partial<Record<BusinessTypeId, React.ElementType>> = {
@@ -156,7 +158,7 @@ export default function SignUpPage() {
           <form onSubmit={handleSubmit} className={styles.formCard}>
             <div className={styles.formHeader}>
               <h1 className={styles.formTitle} style={{ marginTop: 14 }}>Create your account</h1>
-              <p className={styles.formSubtitle}>Fill in your business details — a Pointly admin approves new accounts before the first sign-in.</p>
+              <p className={`${styles.formSubtitle} ${styles.signupSubtitle}`}>A Pointly admin approves every new account before its first sign-in.</p>
             </div>
 
             <span className={styles.label} id="business-type-label">Type of business</span>
@@ -172,20 +174,22 @@ export default function SignUpPage() {
                     role="radio"
                     aria-checked={active}
                     onClick={() => { setBusinessType(id); setError(""); }}
+                    title={type.name}
                     className={`${styles.typeCard}${active ? ` ${styles.typeCardActive}` : ""}`}
                   >
-                    <span className={styles.typeIcon}><Icon size={15} /></span>
+                    <span className={styles.typeIcon}><Icon size={17} /></span>
                     <span className={styles.typeName}>{type.shortName}</span>
-                    <span className={styles.typeCheck} aria-hidden="true">{active && <Check size={11} strokeWidth={3} />}</span>
-                    <span className={styles.typeBlurb}>{type.blurb}</span>
                   </button>
                 );
               })}
             </div>
+            <p className={styles.typeHint} aria-live="polite">
+              {businessType ? BUSINESS_TYPES[businessType].blurb : "Pick the one closest to your business."}
+            </p>
 
             <div className={styles.fieldGrid}>
-              {FIELDS.map(({ id, label, icon: Icon, type, placeholder }) => (
-                <label key={id} className={id === "password" ? styles.fullField : undefined}>
+              {FIELDS.map(({ id, label, icon: Icon, type, placeholder, full }) => (
+                <label key={id} className={full ? styles.fullField : undefined}>
                   <span className={styles.label}>{label}</span>
                   <div className={styles.inputWrap}>
                     <Icon size={16} className={styles.inputIcon} />
