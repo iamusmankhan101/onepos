@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { getStoredAppointments } from "@/lib/storage";
-import { getInvoices } from "@/lib/invoices";
+import { getInvoices, paymentParts } from "@/lib/invoices";
 import { getExpenses, type Expense, type ExpenseCategory } from "@/lib/expenses";
 import { getManualCashIncome, type ManualCashIncome } from "@/lib/cash-flow-income";
 import { getActiveSection } from "@/lib/sections";
@@ -17,6 +17,7 @@ import {
 
 import { fmtCurrency as fmt } from "@/lib/format";
 import { syncFromDB } from "@/lib/turso-sync";
+import { useBusinessType } from "@/lib/use-business-type";
 const fmtK = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
   : n >= 1_000   ? `${Math.round(n / 1_000)}K`
@@ -116,6 +117,10 @@ interface ChartBar {
 }
 
 export default function RevenuePage() {
+  // A café counts orders, a shop counts sales — only a salon counts appointments.
+  const businessType = useBusinessType();
+  const countLabel = businessType.salesCountLabel;
+  const countOne = countLabel.replace(/s$/, "").toLowerCase();
   const [tab, setTab]                   = useState<RevTab>("overview");
   const [period, setPeriod]             = useState<Period>("today");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -243,6 +248,9 @@ export default function RevenuePage() {
   const revChange = prevRevenue ? ((totalRevenue - prevRevenue) / prevRevenue) * 100 : 0;
   const cntChange = prevCount   ? ((totalCount   - prevCount)   / prevCount)   * 100 : 0;
   const avgChange = prevAvg     ? ((avgTicket    - prevAvg)     / prevAvg)     * 100 : 0;
+  // With nothing in the previous period there is nothing to compare against —
+  // "▲ 0.0%" would claim a comparison that never happened.
+  const hasPrev = prevRevenue > 0;
 
   // ── Chart data (1y / custom-long = monthly bars, else daily) ────────────────
   const chartData = useMemo((): ChartBar[] => {
@@ -372,8 +380,10 @@ export default function RevenuePage() {
     });
     const totals: Record<string, number> = {};
     invoices.forEach(inv => {
-      if (!inv.paymentMethod) return;
-      totals[inv.paymentMethod] = (totals[inv.paymentMethod] ?? 0) + inv.total;
+      for (const part of paymentParts(inv)) {
+        if (!part.method) continue;
+        totals[part.method] = (totals[part.method] ?? 0) + part.amount;
+      }
     });
     const grand = Object.values(totals).reduce((s, v) => s + v, 0) || 1;
     return Object.entries(totals)
@@ -412,8 +422,10 @@ export default function RevenuePage() {
   const reportMethodBreakdown = useMemo(() => {
     const totals: Record<string, number> = {};
     reportPos.forEach(inv => {
-      if (!inv.paymentMethod) return;
-      totals[inv.paymentMethod] = (totals[inv.paymentMethod] ?? 0) + inv.total;
+      for (const part of paymentParts(inv)) {
+        if (!part.method) continue;
+        totals[part.method] = (totals[part.method] ?? 0) + part.amount;
+      }
     });
     return Object.entries(totals)
       .map(([method, amount]) => ({ method, amount }))
@@ -468,8 +480,10 @@ export default function RevenuePage() {
     let cash = currentAppts.reduce((s, a) => s + a.totalAmount, 0) + currentManual.reduce((s, e) => s + e.amount, 0);
     let online = 0;
     currentPos.forEach(inv => {
-      if ((inv.paymentMethod || "cash") === "cash") cash += inv.total;
-      else online += inv.total;
+      for (const part of paymentParts(inv)) {
+        if ((part.method || "cash") === "cash") cash += part.amount;
+        else online += part.amount;
+      }
     });
     return { cash, online };
   }, [currentAppts, currentPos, currentManual]);
@@ -523,6 +537,7 @@ export default function RevenuePage() {
     : "";
 
   function Trend({ change }: { change: number }) {
+    if (!hasPrev) return <div style={{ fontSize: 12, fontWeight: 600, color: "#a0a0b8" }}>No earlier period to compare</div>;
     const up = change >= 0;
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 12, fontWeight: 600, color: up ? "#22c55e" : "#ef4444" }}>
@@ -685,7 +700,7 @@ export default function RevenuePage() {
     <div class="stat-card">
       <div class="stat-label">Total Revenue</div>
       <div class="stat-value">${fmt(pdfTotal)}</div>
-      <div class="stat-sub">${!isYearDrill ? (revChange >= 0 ? "▲" : "▼") + " " + Math.abs(revChange).toFixed(1) + "% vs prev" : pdfRange}</div>
+      <div class="stat-sub">${isYearDrill ? pdfRange : hasPrev ? (revChange >= 0 ? "▲" : "▼") + " " + Math.abs(revChange).toFixed(1) + "% vs prev" : "No earlier period to compare"}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Paid Expenses</div>
@@ -698,14 +713,14 @@ export default function RevenuePage() {
       <div class="stat-sub">${pdfNetMarginPct.toFixed(1)}% net margin</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Appointments</div>
+      <div class="stat-label">${countLabel}</div>
       <div class="stat-value">${pdfCount}</div>
-      <div class="stat-sub">Completed services</div>
+      <div class="stat-sub">${businessType.bookings ? "Completed services" : "Completed"}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Avg Ticket</div>
       <div class="stat-value">${fmt(pdfAvg)}</div>
-      <div class="stat-sub">Per appointment</div>
+      <div class="stat-sub">Per ${countOne}</div>
     </div>
   </div>
 
@@ -772,13 +787,13 @@ export default function RevenuePage() {
   </div>
   ${topServices.length > 0 ? `
   <div class="section">
-    <div class="section-title">Top Services by Revenue</div>
+    <div class="section-title">${businessType.bookings ? "Top Services by Revenue" : "Best Sellers by Revenue"}</div>
     <div class="section-sub">Most profitable this period</div>
     <div class="svc-grid">
       ${topServices.map(s => `
       <div class="svc-card">
         <div class="svc-name">${s.name}</div>
-        <div class="svc-count">${s.count} appointment${s.count !== 1 ? "s" : ""}</div>
+        <div class="svc-count">${businessType.bookings ? `${s.count} appointment${s.count !== 1 ? "s" : ""}` : `${s.count} sold`}</div>
         <div class="svc-rev">${fmt(s.revenue)}</div>
       </div>`).join("")}
     </div>
@@ -871,16 +886,18 @@ export default function RevenuePage() {
         <div className="mobile-hero-card">
           <div className="mobile-hero-label">Total Revenue · {cfg.label}</div>
           <div className="mobile-hero-value">{fmt(totalRevenue)}</div>
-          <div className="mobile-hero-sub" style={{ color: revChange >= 0 ? "#4ade80" : "#f87171" }}>
-            {revChange >= 0 ? "▲" : "▼"} {Math.abs(revChange).toFixed(1)}% vs previous {cfg.label.toLowerCase()}
+          <div className="mobile-hero-sub" style={{ color: !hasPrev ? "rgba(255,255,255,0.75)" : revChange >= 0 ? "#4ade80" : "#f87171" }}>
+            {hasPrev
+              ? <>{revChange >= 0 ? "▲" : "▼"} {Math.abs(revChange).toFixed(1)}% vs previous {cfg.label.toLowerCase()}</>
+              : "No earlier sales to compare yet"}
           </div>
         </div>
 
         {/* Mobile stats scroll */}
         <div className="mobile-stat-scroll">
           {[
-            { label: "Appointments", value: String(totalCount), color: "#3b82f6", change: cntChange },
-            { label: "Avg Ticket",   value: fmtK(avgTicket),   color: "#059669", change: avgChange },
+            { label: countLabel,   value: String(totalCount), color: "#3b82f6", change: hasPrev ? cntChange : 0 },
+            { label: "Avg Ticket", value: fmt(Math.round(avgTicket)), color: "#059669", change: hasPrev ? avgChange : 0 },
           ].map((s) => (
             <div key={s.label} className="mobile-stat-card">
               <div className="mobile-stat-card-label">{s.label}</div>
@@ -919,7 +936,7 @@ export default function RevenuePage() {
                   </div>
                   <div className="mobile-list-body">
                     <div className="mobile-list-title">{row.date === today ? "Today" : row.date}</div>
-                    <div className="mobile-list-sub">{row.count} appointment{row.count !== 1 ? "s" : ""}</div>
+                    <div className="mobile-list-sub">{row.count} {countOne}{row.count !== 1 ? "s" : ""}</div>
                   </div>
                   <div className="mobile-list-right">
                     <div className="mobile-list-amount" style={{ color: "#EA580C" }}>{fmt(row.revenue)}</div>
@@ -1008,7 +1025,9 @@ export default function RevenuePage() {
       {appointments.filter(a => a.status === "completed").length === 0 && posInvoices.length === 0 && manualIncome.length === 0 && (
         <div style={{ background: "#f8f9ff", border: "1px solid #e0e0f8", borderRadius: 10, padding: "12px 16px", marginBottom: 20, fontSize: 13, color: "#6b6b8a", display: "flex", alignItems: "center", gap: 10 }}>
           <TrendingUp size={16} color="#a0a0c8" />
-          No completed appointments yet — revenue figures will appear here once you complete your first appointment.
+          {businessType.bookings
+            ? "No completed appointments yet — revenue figures will appear here once you complete your first appointment."
+            : "No sales yet — revenue figures will appear here after your first sale."}
         </div>
       )}
 
@@ -1016,8 +1035,8 @@ export default function RevenuePage() {
       <div className="stats-grid-3">
         {[
           { label: "Total Revenue", value: fmt(totalRevenue), change: revChange, icon: TrendingUp,   color: "var(--accent)", bg: "rgba(234, 88, 12, 0.08)", showTrend: true  },
-          { label: "Appointments",  value: String(totalCount), change: cntChange, icon: CalendarDays, color: "#3b82f6", bg: "#eff6ff", showTrend: true  },
-          { label: "Revenue Growth", value: `${revChange >= 0 ? "+" : ""}${revChange.toFixed(1)}%`, change: revChange, icon: Percent, color: revChange >= 0 ? "#059669" : "#dc2626", bg: revChange >= 0 ? "#f0fdf4" : "#fef2f2", showTrend: false },
+          { label: countLabel,      value: String(totalCount), change: cntChange, icon: CalendarDays, color: "#3b82f6", bg: "#eff6ff", showTrend: true  },
+          { label: "Revenue Growth", value: hasPrev ? `${revChange >= 0 ? "+" : ""}${revChange.toFixed(1)}%` : "—", change: revChange, icon: Percent, color: revChange >= 0 ? "#059669" : "#dc2626", bg: revChange >= 0 ? "#f0fdf4" : "#fef2f2", showTrend: false },
         ].map(({ label, value, change, icon: Icon, color, bg, showTrend }) => (
           <div key={label} style={{ background: "#fff", borderRadius: 16, border: "1px solid rgba(226,223,235,0.8)", padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, boxShadow: "0 4px 12px rgba(0,0,0,0.02)", flex: 1 }}>
             <div style={{ width: 46, height: 46, borderRadius: 12, background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color }}>
@@ -1393,7 +1412,7 @@ export default function RevenuePage() {
 
         {/* Top Services */}
         <div style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", padding: "26px 30px" }}>
-          <div style={{ fontWeight: 800, fontSize: 16, color: "#1a1a2e", marginBottom: 4 }}>Top Services</div>
+          <div style={{ fontWeight: 800, fontSize: 16, color: "#1a1a2e", marginBottom: 4 }}>{businessType.bookings ? "Top Services" : "Best Sellers"}</div>
           <div style={{ fontSize: 12, color: "#a0a0b8", marginBottom: 22 }}>Most profitable this period</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {topServices.length === 0 ? (
@@ -1457,7 +1476,7 @@ export default function RevenuePage() {
           {selectedMonth && drillRows && (
             <div style={{ display: "flex", gap: 20 }}>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 11, color: "#a0a0b8", fontWeight: 600 }}>APPOINTMENTS</div>
+                <div style={{ fontSize: 11, color: "#a0a0b8", fontWeight: 600, textTransform: "uppercase" }}>{countLabel}</div>
                 <div style={{ fontSize: 18, fontWeight: 800, color: "#3b82f6" }}>{drillCount}</div>
               </div>
               <div style={{ textAlign: "right" }}>

@@ -5,7 +5,7 @@ import type { Invoice } from "@/lib/invoices";
 
 interface RequestBody {
   invoice: Invoice;
-  business: { name: string; phone?: string; email?: string; address?: string; logo?: string };
+  business: { name: string; phone?: string; email?: string; address?: string; logo?: string; footer?: string };
 }
 
 /**

@@ -49,8 +49,14 @@ export interface StockMovement {
   at: string;
   /** Local YYYY-MM-DD, for date-range reports. */
   date: string;
-  /** Invoice or purchase-order number. */
+  /** Invoice or purchase-order number, for people to read. */
   ref?: string;
+  /**
+   * The invoice's or purchase order's id. Numbers can repeat (a deleted
+   * invoice's number is handed out again), so this is what finds the
+   * movement a record made.
+   */
+  refId?: string;
   /** Wastage: why — "Expired", "Spilled". */
   reason?: string;
   note?: string;
@@ -340,7 +346,7 @@ export interface StockChange {
 export async function recordMovement(
   type: MovementType,
   changes: StockChange[],
-  meta: { ref?: string; reason?: string; note?: string; by?: string } = {},
+  meta: { ref?: string; refId?: string; reason?: string; note?: string; by?: string } = {},
 ): Promise<StockMovement | null> {
   const real = changes.filter((c) => c.qty !== 0 && Number.isFinite(c.qty));
   if (real.length === 0) return null;
@@ -395,6 +401,45 @@ export function saleChanges(
   const total: Usage = new Map();
   for (const line of lines) for (const [id, q] of lineUsage(line, items, groups)) add(total, id, q);
   return [...total].map(([itemId, qty]) => ({ itemId, qty: -roundQty(qty) }));
+}
+
+// ─── Deleting ─────────────────────────────────────────────────────────────────
+
+/**
+ * Removes a movement from the log and reverses what it did to stock — undoing
+ * a wastage entry puts the stock back. Cost prices a purchase changed stay as
+ * they are.
+ */
+export async function undoMovement(movement: StockMovement): Promise<void> {
+  const items = getStoredInventory();
+  const byId = new Map(movement.lines.map((l) => [l.itemId, l.qty]));
+  const reversed = items.map((i) => {
+    const qty = byId.get(i.id);
+    return qty === undefined ? i : { ...i, currentStock: roundQty(Math.max(0, (i.currentStock || 0) - qty)) };
+  });
+  saveInventory(refreshRecipeCosts(reversed));
+  await persistEntity(MOVEMENTS, getMovements().filter((m) => m.id !== movement.id), { inferDeletes: false, deletedIds: [movement.id] });
+  announce();
+}
+
+/**
+ * The stock movement an invoice or purchase order made: by its id, or — for
+ * movements written before ids were recorded — by its number.
+ */
+export function movementFor(type: MovementType, record: { id: string; number: string }): StockMovement | undefined {
+  const movements = getMovements().filter((m) => m.type === type);
+  return movements.find((m) => m.refId === record.id)
+    ?? movements.find((m) => !m.refId && m.ref === record.number);
+}
+
+/** Deletes a purchase order; a received one also takes its delivery back out of stock. */
+export async function deletePurchaseOrder(po: PurchaseOrder): Promise<void> {
+  if (po.status === "received") {
+    const movement = movementFor("purchase", po);
+    if (movement) await undoMovement(movement);
+  }
+  await persistEntity(PURCHASES, getPurchaseOrders().filter((p) => p.id !== po.id), { inferDeletes: false, deletedIds: [po.id] });
+  announce();
 }
 
 // ─── Alerts ───────────────────────────────────────────────────────────────────

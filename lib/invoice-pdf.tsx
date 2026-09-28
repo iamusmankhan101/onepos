@@ -164,11 +164,13 @@ function Barcode({ value }: { value: string }) {
 
 function ReceiptDocument({ invoice, business }: {
   invoice: Invoice;
-  business: { name: string; phone?: string; email?: string; address?: string; logo?: string };
+  business: { name: string; phone?: string; email?: string; address?: string; logo?: string; footer?: string };
 }) {
   const isPaid       = invoice.status === "paid";
   const businessName = business.name || "Pointly";
-  const methodLabel  = METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "—";
+  const methodLabel  = invoice.payments?.length
+    ? invoice.payments.map((p) => `${METHOD_LABELS[p.method] ?? p.method} ${Math.round(p.amount).toLocaleString("en-PK")}`).join(" + ")
+    : METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "—";
   const itemCount    = invoice.items.reduce((sum, item) => sum + item.qty, 0);
 
   return (
@@ -278,7 +280,7 @@ function ReceiptDocument({ invoice, business }: {
 
         <View style={styles.ruleLight} />
         <Text style={styles.thanks}>THANK YOU</Text>
-        <Text style={styles.note}>Please keep this receipt for exchanges.</Text>
+        <Text style={styles.note}>{business.footer || "We hope to see you again soon."}</Text>
 
         <Barcode value={invoice.number} />
         <Text style={styles.barcodeText}>{invoice.number}</Text>
@@ -294,7 +296,7 @@ function ReceiptDocument({ invoice, business }: {
 
 export async function generateInvoicePdf(
   invoice: Invoice,
-  business: { name: string; phone?: string; email?: string; address?: string; logo?: string },
+  business: { name: string; phone?: string; email?: string; address?: string; logo?: string; footer?: string },
 ) {
   return renderToBuffer(<ReceiptDocument invoice={invoice} business={business} />);
 }

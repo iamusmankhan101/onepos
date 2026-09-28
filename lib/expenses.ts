@@ -44,9 +44,9 @@ export function getExpenses(): Expense[] {
  * invisible on every device but the one it was added on (the previous
  * fire-and-forget save could fail with nothing but a console warning).
  */
-export function saveExpenses(list: Expense[]): Promise<boolean> {
+export function saveExpenses(list: Expense[], deletedIds: string[] = []): Promise<boolean> {
   if (typeof window === "undefined") return Promise.resolve(false);
-  return persistEntity("expenses", list);
+  return persistEntity("expenses", list, { deletedIds });
 }
 
 export async function addExpense(data: Omit<Expense, "id" | "createdAt">): Promise<{ expense: Expense; dbSaved: boolean }> {
@@ -57,8 +57,14 @@ export async function addExpense(data: Omit<Expense, "id" | "createdAt">): Promi
   return { expense: entry, dbSaved };
 }
 
-export function deleteExpense(id: string): void {
-  saveExpenses(getExpenses().filter(e => e.id !== id));
+/**
+ * Deletes are declared, never left to be inferred from the record's absence:
+ * an expense that synced in from another device is protected from inferred
+ * deletes for a while (lib/sync-records.ts), so dropping it from the list
+ * alone made it come straight back on the next refresh.
+ */
+export function deleteExpense(id: string): Promise<boolean> {
+  return saveExpenses(getExpenses().filter(e => e.id !== id), [id]);
 }
 
 export async function updateExpense(id: string, patch: Partial<Omit<Expense, "id" | "createdAt">>): Promise<boolean> {

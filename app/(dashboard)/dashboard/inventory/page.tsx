@@ -18,11 +18,12 @@ import {
   CountModal, IngredientModal, PurchaseModal, SupplierModal, WasteModal,
 } from "@/components/inventory-modals";
 import {
-  STOCK_CHANGED_EVENT, expiryState, fmtQty, getMovements, getPurchaseOrders, getSuppliers,
-  localDate, purchaseTotal, savePurchaseOrder, stockLevel, tracksStock,
+  STOCK_CHANGED_EVENT, deletePurchaseOrder, expiryState, fmtQty, getMovements, getPurchaseOrders, getSuppliers,
+  localDate, purchaseTotal, savePurchaseOrder, saveSuppliers, stockLevel, tracksStock, undoMovement,
   type MovementType, type PurchaseOrder, type StockMovement, type Supplier,
 } from "@/lib/stock";
 import { getStoredInventory, subscribeToStoredData } from "@/lib/storage";
+import { deleteExpense, getExpenses } from "@/lib/expenses";
 import { getCurrentUser } from "@/lib/auth";
 import { fmtCurrency as fmt } from "@/lib/format";
 import { openWhatsAppChat } from "@/lib/whatsapp-link";
@@ -99,10 +100,18 @@ export default function InventoryPage() {
 
   const currency = (settingsStore.business as { currency?: string }).currency || "PKR";
   const money = (n: number) => `${currency} ${Math.round(n).toLocaleString("en-PK")}`;
-  /** Closes whichever pop-up is open and re-reads, so the page shows what it saved. */
-  function closeAll() {
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [notice]);
+
+  /** Closes whichever pop-up is open and re-reads; a save passes what to confirm. */
+  function closeAll(message?: string) {
     setEditIngredient(null); setPurchase(null); setWaste(null); setCounting(false); setEditSupplier(null);
     refresh();
+    if (typeof message === "string") setNotice(message);
   }
 
   // ── Stock ────────────────────────────────────────────────────────────────
@@ -142,10 +151,41 @@ export default function InventoryPage() {
     openWhatsAppChat(supplier.phone, message);
   }
 
+  async function removeOrder(po: PurchaseOrder) {
+    const expense = po.status === "received"
+      ? getExpenses().find((e) => e.description.startsWith(`Stock purchase ${po.number}`))
+      : undefined;
+    const effects = [
+      po.status === "received" ? "take its delivery back out of stock" : "",
+      expense ? `delete its ${money(expense.amount)} expense on Cash Flow` : "",
+    ].filter(Boolean);
+    if (!window.confirm(`Delete ${po.number}?${effects.length ? ` This will also ${effects.join(" and ")}.` : ""}`)) return;
+    await deletePurchaseOrder(po);
+    if (expense) await deleteExpense(expense.id);
+    refresh();
+    setNotice(`${po.number} deleted`);
+  }
+
+  async function removeSupplier(s: Supplier) {
+    if (!window.confirm(`Delete ${s.name}? Past purchase orders keep the name.`)) return;
+    await saveSuppliers(suppliers.filter((x) => x.id !== s.id), [s.id]);
+    refresh();
+    setNotice(`${s.name} deleted`);
+  }
+
+  async function undo(m: StockMovement) {
+    const what = m.type === "waste" ? "wastage entry" : "stock count";
+    if (!window.confirm(`Undo this ${what}? The stock goes back to what it was before it.`)) return;
+    await undoMovement(m);
+    refresh();
+    setNotice(`${what === "wastage entry" ? "Wastage" : "Stock count"} undone — stock put back`);
+  }
+
   async function cancelOrder(po: PurchaseOrder) {
     if (!window.confirm(`Cancel ${po.number}?`)) return;
     await savePurchaseOrder({ ...po, status: "cancelled" });
     refresh();
+    setNotice(`${po.number} cancelled`);
   }
 
   // ── History ──────────────────────────────────────────────────────────────
@@ -323,6 +363,7 @@ export default function InventoryPage() {
                     </div>
                   </div>
                   <div style={{ flex: "0 0 auto", fontSize: 14, fontWeight: 800, color: "#1d1d2f" }}>{money(purchaseTotal(po))}</div>
+                  <button type="button" style={{ ...btn, height: 32, color: "#dc2626", borderColor: "#fecaca" }} onClick={() => removeOrder(po)} title="Delete purchase order" aria-label={`Delete ${po.number}`}><Trash2 size={13} /></button>
                   {po.status === "ordered" && (
                     <div style={{ display: "flex", gap: 6, flex: "0 0 auto" }}>
                       {supplier?.phone && <button type="button" style={{ ...btn, height: 32, color: "#059669" }} onClick={() => sendToSupplier(po)} title="Send to supplier on WhatsApp"><MessageCircle size={13} /></button>}
@@ -367,6 +408,7 @@ export default function InventoryPage() {
                     {theirs.length} deliver{theirs.length === 1 ? "y" : "ies"}
                   </div>
                   <button type="button" style={{ ...btn, height: 32 }} onClick={() => setEditSupplier(s)} title="Edit"><Pencil size={13} /></button>
+                  <button type="button" style={{ ...btn, height: 32, color: "#dc2626", borderColor: "#fecaca" }} onClick={() => removeSupplier(s)} title="Delete supplier" aria-label={`Delete ${s.name}`}><Trash2 size={13} /></button>
                 </div>
               );
             })}
@@ -445,6 +487,9 @@ export default function InventoryPage() {
                       </div>
                     </div>
                     <div style={{ flex: "0 0 auto", fontSize: 12.5, fontWeight: 800, color: "#4a4a6a" }}>{fmt(value)}</div>
+                    {(m.type === "waste" || m.type === "count") && (
+                      <button type="button" style={{ ...btn, height: 30 }} onClick={() => undo(m)} title="Undo — put the stock back">Undo</button>
+                    )}
                   </div>
                 );
               })}
@@ -457,6 +502,12 @@ export default function InventoryPage() {
       {purchase && <PurchaseModal po={purchase.po} prefill={purchase.prefill} items={items} suppliers={suppliers} money={money} by={by} onClose={closeAll} />}
       {waste && <WasteModal items={items} initialItemId={waste.itemId} money={money} by={by} onClose={closeAll} />}
       {counting && <CountModal items={items} money={money} by={by} onClose={closeAll} />}
+      {notice && (
+        <div role="status" aria-live="polite"
+          style={{ position: "fixed", left: "50%", bottom: 84, transform: "translateX(-50%)", zIndex: 450, display: "flex", alignItems: "center", gap: 8, background: "#1d1d2f", color: "#fff", borderRadius: 14, padding: "12px 18px", fontSize: 13, fontWeight: 700, boxShadow: "0 12px 32px rgba(0,0,0,0.25)", maxWidth: "calc(100vw - 32px)" }}>
+          <PackageCheck size={15} color="#6ee7b7" /> {notice}
+        </div>
+      )}
       {editSupplier && <SupplierModal supplier={editSupplier === "new" ? undefined : editSupplier} suppliers={suppliers} onClose={closeAll} />}
 
       <style>{`

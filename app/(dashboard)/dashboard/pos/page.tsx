@@ -23,6 +23,9 @@ import {
 } from "@/lib/menu";
 import { billCharges, getChargeSettings } from "@/lib/charges";
 import { recordMovement, saleChanges, tracksStock } from "@/lib/stock";
+import { SHIFTS_CHANGED_EVENT, getOpenShift, type CashShift } from "@/lib/shifts";
+import { discountNeedsApproval, getPosRules } from "@/lib/pos-rules";
+import { getCurrentUser } from "@/lib/auth";
 import {
   ORDER_TYPE_LABEL, fireOrder, getOpenOrders, getOrder, getTables, markOrderPaid, newId,
   nextOrderNumber, orderRef, orderSubtotal, saveOrder, stationFor, tableNames, voidLine,
@@ -221,6 +224,18 @@ export default function POSPage() {
     return () => clearInterval(t);
   }, []);
 
+  // The catalogue, customers and staff were only read once on mount, so a till
+  // opened straight after sign-in — before the first sync lands — showed an
+  // empty menu until someone reloaded. Re-read whenever stored data changes.
+  useEffect(() => {
+    return subscribeToStoredData(() => {
+      setServices(getStoredServices().filter(s => s.isActive));
+      setInventory(getStoredInventory());
+      setStaff(getStoredStaff().filter(s => s.isActive));
+      setClients(getStoredClients());
+    });
+  }, []);
+
   // ── Customer ──────────────────────────────────────────────────────────────
   const [clientQ,         setClientQ]         = useState("");
   const [showDrop,        setShowDrop]         = useState(false);
@@ -259,6 +274,7 @@ export default function POSPage() {
   const [discType,      setDiscType]      = useState<DiscountType>("flat");
   const [discount2,     setDiscount2]     = useState<number>(0);
   const [discType2,     setDiscType2]     = useState<DiscountType>("flat");
+  const [showDiscount2, setShowDiscount2] = useState(false);
   const [loyaltyRedeem, setLoyaltyRedeem] = useState<number>(0);
   // No default — staff must actively pick a method (or Pay Later/Credit) before checkout,
   // otherwise sales were silently defaulting to "cash" even when no one confirmed that.
@@ -290,6 +306,14 @@ export default function POSPage() {
   const knownLineIds = useRef<Set<string>>(new Set());
 
   const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>([]);
+  // Phase 4 — staff operations: the cash drawer's open shift, split payments,
+  // change due, the staff discount and manager sign-off on big discounts.
+  const [openShift,     setOpenShift]     = useState<CashShift | undefined>(undefined);
+  const [split,         setSplit]         = useState(false);
+  const [splitRows,     setSplitRows]     = useState<{ method: PaymentMethod; amount: string }[]>([]);
+  const [cashGiven,     setCashGiven]     = useState("");
+  const [staffDiscountOn, setStaffDiscountOn] = useState(false);
+  const [askDiscountApproval, setAskDiscountApproval] = useState(false);
   const [customizing,   setCustomizing]   = useState<Customizing | null>(null);
   const [menuTab,       setMenuTab]       = useState("all");
 
@@ -314,7 +338,8 @@ export default function POSPage() {
   // ── Derived catalog ───────────────────────────────────────────────────────
   const catalogItems = useMemo<CatalogItem[]>(() => {
     const q = catalogSearch.toLowerCase();
-    const svc: CatalogItem[] = (catalogTab !== "products" ? services : [])
+    // Services are a salon thing — a restaurant or shop sells only its menu/products.
+    const svc: CatalogItem[] = (businessType.bookings && catalogTab !== "products" ? services : [])
       .filter(s => !q || s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q))
       .filter(s => inSection(s, catalogSectionFilter))
       .map(s => ({
@@ -334,7 +359,7 @@ export default function POSPage() {
         unavailable: i.unavailable, menuCategory: i.menuCategory?.trim() || undefined, modifierGroupIds: i.modifierGroupIds,
       }));
     return [...svc, ...prod];
-  }, [services, inventory, catalogTab, catalogSearch, catalogSectionFilter, restaurant, orderType]);
+  }, [services, inventory, catalogTab, catalogSearch, catalogSectionFilter, restaurant, orderType, businessType.bookings]);
 
   // Restaurant mode: menu tabs (Coffee, Bakery…) from the items' menu sections.
   const menuCategories = useMemo(() => {
@@ -384,7 +409,20 @@ export default function POSPage() {
   const total = Math.max(0, subtotal - totalDiscountAmount + serviceChargeAmount + taxAmount);
   const totalQty = cart.reduce((s, e) => s + e.qty, 0);
   const hasUnpricedVariable = cart.some(e => e.variablePrice && e.unitPrice <= 0);
-  const noPaymentSelected = !isCredit && !payMethod;
+  const posRules = getPosRules();
+  const splitSum = splitRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+  const splitProblem = !split ? null
+    : splitRows.filter(row => Number(row.amount) > 0).length < 2 ? "Split the bill between at least two payments"
+    : Math.round(splitSum) !== total ? `Parts add up to ${pkr(splitSum)} — the bill is ${pkr(total)}`
+    : null;
+  const noPaymentSelected = split ? !!splitProblem : (!isCredit && !payMethod);
+  const shiftBlocked = restaurant && posRules.requireOpenShift && !openShift;
+  // The staff discount is the owner's own rule, so it never needs sign-off itself.
+  const approvableDiscount = (staffDiscountOn && discType === "pct" && discount === posRules.staffDiscountRate ? 0 : discountAmount) + discountAmount2;
+  const discountPct = rawSubtotal > 0 ? (approvableDiscount / rawSubtotal) * 100 : 0;
+  const signedInRole = typeof window === "undefined" ? undefined : getCurrentUser()?.role;
+  const discountNeedsSignOff = signedInRole === "staff" && discountNeedsApproval(discountPct, posRules);
+  const cashChange = !split && payMethod === "cash" && Number(cashGiven) > 0 ? Number(cashGiven) - total : null;
 
   // ── Cart ops ──────────────────────────────────────────────────────────────
   /** Puts `qty` of an item on the cart with these options, joining an identical unsent line. */
@@ -564,6 +602,7 @@ export default function POSPage() {
     setCart([]); setDiscount(0); setDiscount2(0); setLoyaltyRedeem(0); setSaleNotes(""); setPayMethod(null);
     setSelectedClient(null); setClientQ(""); setSelectedStaffId("");
     setCompleted(false); setLastInvoice(null); setWaStatus("idle"); setIsCredit(false);
+    setSplit(false); setSplitRows([]); setCashGiven(""); setStaffDiscountOn(false); setShowDiscount2(false);
     setSyncFailed(false);
     clearOrder();
   }
@@ -674,6 +713,7 @@ export default function POSPage() {
       }
       setCart([]); setDiscount(0); setDiscount2(0); setLoyaltyRedeem(0); setSaleNotes(""); setPayMethod(null);
       setSelectedClient(null); setClientQ(""); setSelectedStaffId(""); setIsCredit(false);
+      setSplit(false); setSplitRows([]); setCashGiven(""); setStaffDiscountOn(false); setShowDiscount2(false); setShowDiscount2(false);
       clearOrder();
       refreshRestaurant();
     } finally {
@@ -722,6 +762,16 @@ export default function POSPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once the business type is known
   }, [restaurant]);
 
+  // The cash drawer's shift — opened and closed on the Shifts page, possibly on another till.
+  useEffect(() => {
+    if (!restaurant) return;
+    const load = () => setOpenShift(getOpenShift());
+    const t = window.setTimeout(load, 0);
+    const unsubscribe = subscribeToStoredData(load);
+    window.addEventListener(SHIFTS_CHANGED_EVENT, load);
+    return () => { window.clearTimeout(t); unsubscribe(); window.removeEventListener(SHIFTS_CHANGED_EVENT, load); };
+  }, [restaurant]);
+
   // Option groups — re-read when edited on the Menu page or synced from another device.
   useEffect(() => {
     if (!restaurant) return;
@@ -739,11 +789,13 @@ export default function POSPage() {
   }, [orderNotice]);
 
   // ── Complete sale ─────────────────────────────────────────────────────────
-  async function completeSale() {
+  async function completeSale(discountApproval?: Approval) {
     if (cart.length === 0 || completing) return;
     // Mirrors the Complete Sale button's disabled condition — a payment method (or
-    // explicit Pay Later/Credit) must be chosen, never silently defaulted.
-    if (!isCredit && !payMethod) return;
+    // explicit Pay Later/Credit, or a split that adds up) must be chosen, never
+    // silently defaulted.
+    if (noPaymentSelected || shiftBlocked) return;
+    if (discountNeedsSignOff && !discountApproval) { setAskDiscountApproval(true); return; }
     if (restaurant) {
       const problem = orderProblem();
       if (problem) { setOrderNotice(problem); return; }
@@ -760,6 +812,9 @@ export default function POSPage() {
       }
       const today = localDateKey();
       const staffMember = staff.find(s => s.id === selectedStaffId);
+      const splitParts = splitRows
+        .filter(row => Number(row.amount) > 0)
+        .map(row => ({ method: row.method, amount: Math.round(Number(row.amount)) }));
       // Prefer the assigned staff member's section; with no staff chosen, fall
       // back to the cart's section only when every line item agrees — a mixed
       // cart (e.g. a men's haircut + a women's product) has no single section,
@@ -782,11 +837,19 @@ export default function POSPage() {
         subtotal, discountAmount: wholePkr(discountAmount + loyaltyDiscount), discount2Amount: discountAmount2, taxAmount, total,
         ...(taxAmount > 0 ? { taxLabel: chargeSettings.taxLabel } : {}),
         ...(serviceChargeAmount > 0 ? { serviceChargeAmount } : {}),
-        paymentMethod: isCredit ? "" : (payMethod as PaymentMethod),
+        paymentMethod: split
+          ? [...splitParts].sort((a, b) => b.amount - a.amount)[0].method
+          : isCredit ? "" : (payMethod as PaymentMethod),
+        ...(split ? { payments: splitParts } : {}),
+        cashierName: getCurrentUser()?.ownerName || undefined,
+        ...(openShift && !isCredit ? { shiftId: getOpenShift()?.id ?? openShift.id } : {}),
+        ...(discountApproval ? { approvedBy: discountApproval.approvedBy } : {}),
         date: today, status: isCredit ? "unpaid" : "paid",
-        notes: settledOrder
-          ? [orderRef(settledOrder), saleNotes.trim()].filter(Boolean).join(" · ")
-          : saleNotes.trim(),
+        notes: [
+          settledOrder ? orderRef(settledOrder) : "",
+          saleNotes.trim(),
+          discountApproval ? `Discount approved by ${discountApproval.approvedBy} — ${discountApproval.reason}` : "",
+        ].filter(Boolean).join(" · "),
         source: "pos",
         ...(settledOrder ? {
           orderId: settledOrder.id,
@@ -823,7 +886,7 @@ export default function POSPage() {
           soldProducts.map(e => ({ itemId: e.itemId, qty: e.qty, modifiers: e.modifiers })),
           getStoredInventory(), modifierGroups,
         );
-        await recordMovement("sale", changes, { ref: invoice.number, by: staffMember?.name || undefined });
+        await recordMovement("sale", changes, { ref: invoice.number, refId: invoice.id, by: staffMember?.name || undefined });
         setInventory(getStoredInventory());
       }
 
@@ -853,12 +916,9 @@ export default function POSPage() {
 
       setLastInvoice(invoice);
       setPrintInvoice(invoice);
-      // Receipts go out as a WhatsApp Web deep link — the business's own WhatsApp
-      // opens with the thank-you + invoice summary prefilled, ready to send.
-      // Best-effort: the awaits above may have used up the click's "user
-      // activation" window, so the browser can silently block the new tab —
-      // the WhatsApp button in the success banner is the fallback for that.
-      openWhatsAppThankYou(invoice, selectedClient);
+      // The WhatsApp receipt is sent from the success banner's button, not
+      // opened automatically: a wa.me tab opened after the checkout's awaits
+      // lands on a blank page on any till without WhatsApp, after every sale.
       setCompleted(true);
     } finally {
       setCompleting(false);
@@ -926,7 +986,7 @@ export default function POSPage() {
       const res = await fetch("/api/invoice-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoice, business }),
+        body: JSON.stringify({ invoice, business: { ...business, footer: businessType.receiptFooter } }),
       });
       if (res.ok) {
         const blob = await res.blob();
@@ -985,8 +1045,8 @@ export default function POSPage() {
             <ReceiptText size={18} color="#fff" />
           </div>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 900, color: "#1d1d2f", lineHeight: 1 }}>Point of Sale</div>
-            <div style={{ fontSize: 11, color: "#9999b0", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+            <div className="pos-brand-title" style={{ fontSize: 16, fontWeight: 900, color: "#1d1d2f", lineHeight: 1, whiteSpace: "nowrap" }}>Point of Sale</div>
+            <div className="pos-brand-sub" style={{ fontSize: 11, color: "#9999b0", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
               <Clock size={10} />
               {now.toLocaleDateString("en-PK", { weekday: "short", day: "numeric", month: "short" })}
               &nbsp;·&nbsp;
@@ -997,23 +1057,33 @@ export default function POSPage() {
 
         <div style={{ flex: 1 }} />
 
-        {restaurant && orderNotice && (
-          <div role="status" style={{ display: "flex", alignItems: "center", gap: 6, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 20, padding: "5px 14px", fontSize: 12, fontWeight: 700, color: "#047857", maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            <ChefHat size={13} /> {orderNotice}
-          </div>
+        {restaurant && (
+          <Link href="/dashboard/shifts" title={openShift ? "Cash drawer open — manage the shift" : "No shift open — open the cash drawer"}
+            className="pos-top-chip" aria-label={openShift ? "Cash drawer open" : "Cash drawer closed"}
+            style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 20, padding: "5px 12px", fontSize: 12, fontWeight: 800, textDecoration: "none",
+              border: `1px solid ${openShift ? "#a7f3d0" : "#fecaca"}`, background: openShift ? "#ecfdf5" : "#fef2f2", color: openShift ? "#047857" : "#b91c1c" }}>
+            <Banknote size={13} />
+            <span className="pos-chip-text">
+              {openShift
+                ? `Drawer open · ${new Date(openShift.openedAt).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })}`
+                : "Drawer closed"}
+            </span>
+          </Link>
         )}
+
 
         {restaurant && (
           <button type="button" onClick={() => { refreshRestaurant(); setShowOpenOrders(true); }}
+            className="pos-top-chip" aria-label="Open orders"
             style={{ display: "flex", alignItems: "center", gap: 6, border: "1.5px solid #fed7aa", borderRadius: 10, padding: "8px 14px", background: "#fff", color: "#c2410c", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
-            <ListOrdered size={14} /> Open orders
+            <ListOrdered size={14} /> <span className="pos-chip-text">Open orders</span>
             {openOrders.length > 0 && <span style={{ background: "#EA580C", color: "#fff", borderRadius: 20, padding: "0 7px", fontSize: 11 }}>{openOrders.length}</span>}
           </button>
         )}
 
         {/* Cart badge pill */}
         {totalQty > 0 && !completed && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 20, padding: "5px 14px" }}>
+          <div className="pos-cart-pill" style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 20, padding: "5px 14px" }}>
             <ShoppingCart size={13} color="#EA580C" />
             <span style={{ fontSize: 12, fontWeight: 800, color: "#EA580C" }}>{totalQty} item{totalQty > 1 ? "s" : ""}</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#F97316" }}>· {pkr(total)}</span>
@@ -1379,7 +1449,7 @@ export default function POSPage() {
               <div style={{ position: "relative", flex: 1 }}>
                 <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#b0b0c8", pointerEvents: "none" }} />
                 <input value={catalogSearch} onChange={e => setCatalogSearch(e.target.value)}
-                  placeholder="Search services & products…"
+                  placeholder={businessType.bookings ? "Search services & products…" : `Search ${businessType.productsLabel.toLowerCase()}…`}
                   style={{ width: "100%", height: 38, padding: "0 34px", borderRadius: 10, border: "1.5px solid #e8e8f4", fontSize: 13, color: "#1d1d2f", outline: "none", background: "#fafafe", boxSizing: "border-box" }} />
                 {catalogSearch && (
                   <button type="button" onClick={() => setCatalogSearch("")}
@@ -1426,8 +1496,8 @@ export default function POSPage() {
               </div>
             )}
 
-            {/* Tab switcher */}
-            <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 2 }}>
+            {/* Tab switcher — only a business with services has anything to switch between */}
+            {businessType.bookings && <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 2 }}>
               {([
                 { id: "all",      label: "All Items", icon: Sparkles },
                 { id: "services", label: "Services",  icon: Scissors },
@@ -1442,7 +1512,7 @@ export default function POSPage() {
                   </button>
                 );
               })}
-            </div>
+            </div>}
 
             {/* Section filter — locked to the active dashboard section when one is
                 set (no picker needed, only that section is valid here); shown as
@@ -1452,7 +1522,7 @@ export default function POSPage() {
                 <Lock size={11} color="#EA580C" />
                 <span style={{ fontSize: 11, fontWeight: 700, color: "#EA580C" }}>Showing {getActiveSection()} + unassigned catalog</span>
               </div>
-            ) : [...services, ...inventory].some(x => x.section) && (
+            ) : businessType.sections && [...services, ...inventory].some(x => x.section) && (
               <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", marginTop: 8 }}>
                 {["all", ...getSectionOptions([...services, ...inventory])].map(sec => {
                   const active = catalogSectionFilter === sec;
@@ -1491,7 +1561,9 @@ export default function POSPage() {
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 700, color: "#b0b0c8" }}>No items found</div>
                 <div style={{ fontSize: 12, color: "#c8c8d8", marginTop: 6, lineHeight: 1.6 }}>
-                  {catalogTab === "products"
+                  {!businessType.bookings
+                    ? `Give ${businessType.productsLabel.toLowerCase()} items a selling price to sell them here`
+                    : catalogTab === "products"
                     ? "Set retail prices on inventory items to sell them here"
                     : "Add active services to display them in the catalog"}
                 </div>
@@ -1556,7 +1628,7 @@ export default function POSPage() {
                         {/* Badges */}
                         <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                           <span style={{ padding: "2px 7px", borderRadius: 20, background: fg + "15", fontSize: 9, fontWeight: 800, color: fg, textTransform: "capitalize", letterSpacing: "0.03em" }}>
-                            {item.type === "service" ? item.category : "product"}
+                            {item.type === "service" ? item.category : item.menuCategory || (businessType.bookings ? "product" : item.category)}
                           </span>
                           {hasOptions && (
                             <span style={{ padding: "2px 7px", borderRadius: 20, background: "#eff6ff", fontSize: 9, fontWeight: 800, color: "#1d4ed8" }}>Options</span>
@@ -1604,7 +1676,7 @@ export default function POSPage() {
           </div>
 
           {/* Cart items */}
-          <div style={{ flex: cart.length === 0 ? 1 : "0 0 auto", minHeight: 0, overflowY: "visible", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="pos-cart-lines" style={{ flex: cart.length === 0 ? 1 : "1 1 auto", minHeight: cart.length === 0 ? 0 : 96, overflowY: "auto", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 12 }}>
             {cart.length === 0 ? (
               <div className="pos-cart-empty" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "48px 16px", textAlign: "center" }}>
                 <div className="pos-cart-empty-icon" style={{ width: 64, height: 64, borderRadius: 18, background: "#f4f4fc", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
@@ -1612,7 +1684,7 @@ export default function POSPage() {
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: "#b0b0c8" }}>Your cart is empty</div>
                 <div style={{ fontSize: 12, color: "#c8c8d8", marginTop: 6, lineHeight: 1.6, maxWidth: 180 }}>
-                  Click any service or product from the catalog to add it
+                  {businessType.bookings ? "Click any service or product from the catalog to add it" : `Tap anything on the ${businessType.productsLabel.toLowerCase()} to add it`}
                 </div>
               </div>
             ) : (
@@ -1725,8 +1797,20 @@ export default function POSPage() {
                 <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 9, background: "#fafafe", border: "1px solid #f0f0f8" }}>
                   <Tag size={12} color="#d97706" style={{ flexShrink: 0 }} />
                   <span style={{ fontSize: 11, fontWeight: 600, color: "#9999b0" }}>Discount</span>
+                  {posRules.staffDiscountRate > 0 && (
+                    <button type="button" aria-pressed={staffDiscountOn}
+                      onClick={() => {
+                        if (staffDiscountOn) { setStaffDiscountOn(false); setDiscount(0); return; }
+                        setStaffDiscountOn(true); setDiscType("pct"); setDiscount(posRules.staffDiscountRate);
+                        setSaleNotes(n => n.includes("Staff discount") ? n : [n.trim(), "Staff discount"].filter(Boolean).join(" · "));
+                      }}
+                      title="Apply the staff discount set in Settings → POS Rules"
+                      style={{ padding: "3px 8px", borderRadius: 7, border: `1px solid ${staffDiscountOn ? "#7c3aed" : "#e8e8f4"}`, background: staffDiscountOn ? "#f5f3ff" : "#fff", color: staffDiscountOn ? "#6d28d9" : "#8a8aa6", fontSize: 10, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
+                      Staff {posRules.staffDiscountRate}%
+                    </button>
+                  )}
                   <div style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: "center" }}>
-                    <input type="number" min={0} value={discount || ""} onChange={e => setDiscount(parseDiscountValue(e.target.value))}
+                    <input type="number" min={0} value={discount || ""} onChange={e => { setDiscount(parseDiscountValue(e.target.value)); setStaffDiscountOn(false); }}
                       placeholder="0"
                       style={{ width: 72, height: 30, padding: "0 8px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, textAlign: "right", outline: "none", background: "#fff", fontWeight: 700 }} />
                     <select value={discType} onChange={e => setDiscType(e.target.value as DiscountType)}
@@ -1744,7 +1828,14 @@ export default function POSPage() {
                   </div>
                 )}
 
-                {/* 2nd discount row — stacks on top of the discount above (e.g. a separate promo/staff discount) */}
+                {/* 2nd discount row — stacks on top of the discount above (e.g. a separate promo/staff discount).
+                    Tucked behind a link until needed: the cart footer has to fit a laptop screen. */}
+                {!showDiscount2 && discount2 === 0 ? (
+                  <button type="button" onClick={() => setShowDiscount2(true)}
+                    style={{ marginTop: 4, border: "none", background: "none", padding: "2px 4px", fontSize: 11, fontWeight: 700, color: "#8a8aa6", cursor: "pointer" }}>
+                    + Second discount
+                  </button>
+                ) : (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 9, background: "#fafafe", border: "1px solid #f0f0f8", marginTop: 6 }}>
                   <Tag size={12} color="#d97706" style={{ flexShrink: 0 }} />
                   <span style={{ fontSize: 11, fontWeight: 600, color: "#9999b0" }}>Discount 2</span>
@@ -1759,6 +1850,7 @@ export default function POSPage() {
                     </select>
                   </div>
                 </div>
+                )}
 
                 {discountAmount2 > 0 && (
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#059669", marginTop: 4, fontWeight: 700, padding: "0 4px" }}>
@@ -1859,28 +1951,84 @@ export default function POSPage() {
 
               {/* Payment methods */}
               <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 800, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 7 }}>Payment Method</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", marginBottom: 7 }}>
+                  <span style={{ flex: 1, fontSize: 10, fontWeight: 800, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Payment Method</span>
+                  <button type="button" aria-pressed={split}
+                    onClick={() => {
+                      if (split) { setSplit(false); setSplitRows([]); return; }
+                      setSplit(true); setIsCredit(false);
+                      setSplitRows([{ method: payMethod ?? "cash", amount: "" }, { method: payMethod === "card" ? "cash" : "card", amount: "" }]);
+                    }}
+                    style={{ border: "none", background: "none", padding: 0, fontSize: 11, fontWeight: 800, color: split ? "#EA580C" : "#8a8aa6", cursor: "pointer", textDecoration: "underline" }}>
+                    {split ? "Single payment" : "Split payment"}
+                  </button>
+                </div>
+                {split ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {splitRows.map((row, index) => {
+                      const others = splitRows.reduce((sum, r2, i) => i === index ? sum : sum + (Number(r2.amount) || 0), 0);
+                      return (
+                        <div key={index} style={{ display: "grid", gridTemplateColumns: "1fr 96px 58px 26px", gap: 5, alignItems: "center" }}>
+                          <select value={row.method} aria-label={`Payment ${index + 1} method`}
+                            onChange={e => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, method: e.target.value as PaymentMethod } : x))}
+                            style={{ height: 34, borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, padding: "0 6px", background: "#fff", fontWeight: 700, color: "#1d1d2f" }}>
+                            {PAY_METHODS.map(pm => <option key={pm.value} value={pm.value}>{pm.label}</option>)}
+                          </select>
+                          <input type="number" min={0} value={row.amount} placeholder="0" aria-label={`Payment ${index + 1} amount`}
+                            onChange={e => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, amount: e.target.value } : x))}
+                            style={{ height: 34, padding: "0 8px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, textAlign: "right", fontWeight: 700, boxSizing: "border-box", width: "100%" }} />
+                          <button type="button" onClick={() => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, amount: String(Math.max(0, total - others)) } : x))}
+                            title="Put the rest of the bill on this payment"
+                            style={{ height: 34, borderRadius: 8, border: "1px solid #fed7aa", background: "#fff7ed", color: "#c2410c", fontSize: 10, fontWeight: 800, cursor: "pointer" }}>Rest</button>
+                          <button type="button" onClick={() => setSplitRows(rows => rows.filter((_, i) => i !== index))} disabled={splitRows.length <= 2} aria-label="Remove payment"
+                            style={{ height: 26, width: 26, borderRadius: 7, border: "none", background: splitRows.length <= 2 ? "transparent" : "#fef2f2", cursor: splitRows.length <= 2 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: splitRows.length <= 2 ? 0.3 : 1 }}>
+                            <X size={12} color="#dc2626" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <div style={{ display: "flex", alignItems: "center", fontSize: 11, fontWeight: 700 }}>
+                      <button type="button" onClick={() => setSplitRows(rows => [...rows, { method: "cash", amount: "" }])}
+                        style={{ border: "none", background: "none", padding: 0, color: "#6b6b8a", cursor: "pointer", fontSize: 11, fontWeight: 800 }}>+ Add payment</button>
+                      <span style={{ marginLeft: "auto", color: Math.round(splitSum) === total ? "#059669" : "#d97706" }}>
+                        {Math.round(splitSum) === total ? "Adds up" : `${pkr(Math.abs(total - splitSum))} ${splitSum < total ? "left" : "over"}`}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                <div className="pos-pay-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 4 }}>
                   {PAY_METHODS.map(pm => {
                     const Icon = pm.icon;
                     const sel = payMethod === pm.value;
                     return (
                       <button key={pm.value} type="button" onClick={() => setPayMethod(pm.value)}
-                        style={{ padding: "9px 6px", borderRadius: 10, border: `2px solid ${sel ? pm.color : "#e8e8f4"}`, background: sel ? pm.bg : "#fafafe", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, transition: "all 0.12s", transform: sel ? "scale(1.03)" : "scale(1)" }}>
-                        <Icon size={15} color={sel ? pm.color : "#b0b0c8"} />
-                        <span style={{ fontSize: 10, fontWeight: 800, color: sel ? pm.color : "#9999b0" }}>{pm.label}</span>
+                        style={{ height: 34, padding: "0 6px", borderRadius: 9, border: `2px solid ${sel ? pm.color : "#e8e8f4"}`, background: sel ? pm.bg : "#fafafe", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, transition: "all 0.12s", minWidth: 0 }}>
+                        <Icon size={13} color={sel ? pm.color : "#b0b0c8"} style={{ flexShrink: 0 }} />
+                        <span style={{ fontSize: 11, fontWeight: 800, color: sel ? pm.color : "#9999b0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pm.label}</span>
                       </button>
                     );
                   })}
                 </div>
+                )}
+                {!split && payMethod === "cash" && !isCredit && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                    <input type="number" min={0} value={cashGiven} onChange={e => setCashGiven(e.target.value)} placeholder="Cash received" aria-label="Cash received"
+                      style={{ flex: 1, height: 34, padding: "0 10px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, fontWeight: 700, boxSizing: "border-box" }} />
+                    {cashChange !== null && (
+                      <span style={{ fontSize: 13, fontWeight: 900, color: cashChange < 0 ? "#dc2626" : "#059669", whiteSpace: "nowrap" }}>
+                        {cashChange < 0 ? `${pkr(-cashChange)} short` : `Change ${pkr(cashChange)}`}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Pay Later toggle */}
-              <button
+              {!split && <button
                 type="button"
                 onClick={() => setIsCredit(c => !c)}
                 style={{
-                  width: "100%", padding: "9px 0", borderRadius: 10, marginBottom: 8,
+                  width: "100%", padding: "7px 0", borderRadius: 10, marginBottom: 8,
                   border: `2px solid ${isCredit ? "#d97706" : "#e8e8f4"}`,
                   background: isCredit ? "#fffbeb" : "#fafafe",
                   color: isCredit ? "#d97706" : "#9999b0",
@@ -1891,7 +2039,7 @@ export default function POSPage() {
               >
                 <Clock size={13} />
                 {isCredit ? "Pay Later — Credit Sale" : "Pay Later / Credit"}
-              </button>
+              </button>}
 
               {hasUnpricedVariable && (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#d97706" }}>
@@ -1900,18 +2048,28 @@ export default function POSPage() {
               )}
               {!hasUnpricedVariable && noPaymentSelected && (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#d97706" }}>
-                  <AlertCircle size={13} /> Select a payment method (or Pay Later/Credit) before checkout
+                  <AlertCircle size={13} /> {splitProblem ?? "Choose how they're paying"}
+                </div>
+              )}
+              {shiftBlocked && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#b91c1c" }}>
+                  <AlertCircle size={13} /> Open the cash drawer on the <Link href="/dashboard/shifts" style={{ color: "#b91c1c" }}>Shifts</Link> page before taking payment
+                </div>
+              )}
+              {discountNeedsSignOff && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#6d28d9" }}>
+                  <AlertCircle size={13} /> A {Math.round(discountPct)}% discount needs a manager to approve it
                 </div>
               )}
               {/* Complete button */}
-              <button type="button" onClick={completeSale} disabled={completing || hasUnpricedVariable || noPaymentSelected}
+              <button type="button" onClick={() => completeSale()} disabled={completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked}
                 style={{
                   width: "100%", padding: "14px 0", borderRadius: 13, border: "none",
-                  background: (completing || hasUnpricedVariable || noPaymentSelected) ? "#e8e8f0" : isCredit ? "linear-gradient(135deg,#d97706,#f59e0b)" : "linear-gradient(135deg,#9A3412,#F97316)",
-                  color: (completing || hasUnpricedVariable || noPaymentSelected) ? "#aaaabc" : "#fff",
-                  fontSize: 15, fontWeight: 900, cursor: (completing || hasUnpricedVariable || noPaymentSelected) ? "not-allowed" : "pointer",
+                  background: (completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked) ? "#e8e8f0" : isCredit ? "linear-gradient(135deg,#d97706,#f59e0b)" : "linear-gradient(135deg,#9A3412,#F97316)",
+                  color: (completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked) ? "#aaaabc" : "#fff",
+                  fontSize: 15, fontWeight: 900, cursor: (completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked) ? "not-allowed" : "pointer",
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 9,
-                  boxShadow: (completing || hasUnpricedVariable || noPaymentSelected) ? "none" : isCredit ? "0 5px 20px rgba(217,119,6,0.40)" : "0 5px 20px rgba(154,52,18,0.42)",
+                  boxShadow: (completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked) ? "none" : isCredit ? "0 5px 20px rgba(217,119,6,0.40)" : "0 5px 20px rgba(154,52,18,0.42)",
                   letterSpacing: "-0.01em", transition: "all 0.15s",
                 }}
                 onMouseEnter={e => { if (!completing) e.currentTarget.style.transform = "translateY(-1px)"; }}
@@ -1925,13 +2083,6 @@ export default function POSPage() {
                 }
               </button>
 
-              {/* WA hint */}
-              {selectedClient?.phone && (
-                <div style={{ marginTop: 8, textAlign: "center", fontSize: 11, color: "#b0b0c8", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                  <MessageSquare size={11} color="#25d366" />
-                  PDF invoice will be sent to {selectedClient.phone}
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -1944,8 +2095,8 @@ export default function POSPage() {
           Customer
         </button>
         <button className={`pos-tab-btn${posTab === "catalog" ? " pos-tab-active" : ""}`} onClick={() => setPosTab("catalog")}>
-          <Scissors size={18} />
-          Catalog
+          {businessType.bookings ? <Scissors size={18} /> : <Package size={18} />}
+          {businessType.bookings ? "Catalog" : businessType.productsLabel}
         </button>
         <button className={`pos-tab-btn${posTab === "cart" ? " pos-tab-active" : ""}`} onClick={() => {setPosTab("cart");}}>
           <ShoppingCart size={18} />
@@ -1965,7 +2116,24 @@ export default function POSPage() {
           onEdit={() => setEditingInvoice(printInvoice)}
         />
       )}
+      {/* Order confirmations ("#12 sent to bar", "on hold", "pick a table") as a toast every screen size can see. */}
+      {restaurant && orderNotice && (
+        <div role="status" aria-live="polite" className="pos-toast"
+          style={{ position: "fixed", left: "50%", bottom: 84, transform: "translateX(-50%)", zIndex: 450, display: "flex", alignItems: "center", gap: 8, background: "#1d1d2f", color: "#fff", borderRadius: 14, padding: "12px 18px", fontSize: 13, fontWeight: 700, boxShadow: "0 12px 32px rgba(0,0,0,0.25)", maxWidth: "calc(100vw - 32px)" }}>
+          <ChefHat size={15} color="#fdba74" /> {orderNotice}
+          <button type="button" onClick={() => setOrderNotice(null)} aria-label="Dismiss" style={{ border: "none", background: "none", color: "#9999b0", cursor: "pointer", display: "flex", padding: 0, marginLeft: 4 }}><X size={14} /></button>
+        </div>
+      )}
       {kotTickets && <KotPrint tickets={kotTickets} onClose={() => setKotTickets(null)} />}
+      {askDiscountApproval && (
+        <ManagerApproval
+          title={`Approve a ${Math.round(discountPct)}% discount?`}
+          detail={`${pkr(approvableDiscount)} off a ${pkr(rawSubtotal)} bill — over the ${posRules.discountApprovalOver}% a cashier can give.`}
+          confirmLabel="Approve & complete sale"
+          onClose={() => setAskDiscountApproval(false)}
+          onApproved={(approval) => { setAskDiscountApproval(false); return completeSale(approval); }}
+        />
+      )}
       {customizing && (
         <CustomizeSheet
           name={customizing.item.name}

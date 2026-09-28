@@ -15,7 +15,8 @@ import { exportStaffPdf } from "@/lib/export-pdf";
 import { settingsStore } from "@/lib/settings-store";
 import { getActiveSection, inSection } from "@/lib/sections";
 import { CUSTOM_ROLE_OPTION, getRoleOptions, roleLabel, roleStyle, toRoleId } from "@/lib/staff-roles";
-import { activeBusinessType } from "@/lib/use-business-type";
+import { activeBusinessType, useBusinessType } from "@/lib/use-business-type";
+import { getInvoices, localDateKey, type Invoice } from "@/lib/invoices";
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
   completed:    { label: "Completed",   color: "#059669", bg: "#ecfdf5" },
@@ -188,7 +189,7 @@ function EditModal({
               </div>
             </>
           )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {activeBusinessType().bookings && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Assigned Services</label>
             <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 160, overflowY: "auto", border: "1px solid #e8e8f0", borderRadius: 8, padding: 8 }}>
               {servicesList.length === 0
@@ -205,7 +206,7 @@ function EditModal({
                   );
                 })}
             </div>
-          </div>
+          </div>}
           <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>
             <button onClick={onClose} style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "1px solid #e8e8f0", background: "#fff", fontSize: 13, fontWeight: 600, color: "#6b6b8a", cursor: "pointer" }}>Cancel</button>
             <button onClick={handleSave} disabled={!canSubmit} style={{ flex: 2, padding: "11px 0", borderRadius: 10, border: "none", background: canSubmit ? "#EA580C" : "#e8e8f0", fontSize: 13, fontWeight: 600, color: canSubmit ? "#fff" : "#b0b0c8", cursor: canSubmit ? "pointer" : "not-allowed" }}>
@@ -282,7 +283,73 @@ function RevRow({ label, value, pct, color }: { label: string; value: number; pc
 }
 
 // ─── Main Profile Page ────────────────────────────────────────────────────────
+/**
+ * The profile for a business without bookings (restaurant, café, shop): what
+ * the POS credited to this person — as waiter/server — and what they rang up
+ * as cashier.
+ */
+function SalesView({ staffName }: { staffName: string }) {
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  useEffect(() => {
+    const t = window.setTimeout(() => setInvoices(getInvoices().filter((inv) => inv.status === "paid")), 0);
+    return () => window.clearTimeout(t);
+  }, []);
+  const credited = invoices.filter((inv) => inv.staffName === staffName);
+  const sales = credited.filter((inv) => !inv.refundOf);
+  const refunds = credited.filter((inv) => inv.refundOf);
+  const rungUp = invoices.filter((inv) => inv.cashierName === staffName && !inv.refundOf);
+  const total = credited.reduce((sum, inv) => sum + inv.total, 0);
+  const today = localDateKey();
+  const monthStart = today.slice(0, 8) + "01";
+  const sumFrom = (from: string) => credited.filter((inv) => inv.date >= from).reduce((sum, inv) => sum + inv.total, 0);
+  const customers = new Set(sales.map((inv) => inv.clientId).filter(Boolean)).size;
+  const topItems = Object.values(sales.flatMap((inv) => inv.items).reduce<Record<string, { name: string; qty: number; revenue: number }>>((map, item) => {
+    const key = item.description.replace(/ \(.*\)$/, "");
+    map[key] = { name: key, qty: (map[key]?.qty ?? 0) + item.qty, revenue: (map[key]?.revenue ?? 0) + item.total };
+    return map;
+  }, {})).sort((a, b) => b.revenue - a.revenue).slice(0, 6);
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 }}>
+        <StatCard label="Sales"        value={fmt(total)}                    sub="credited to them, after refunds" icon={TrendingUp}   color="#EA580C" />
+        <StatCard label="Orders"       value={sales.length}                  sub={`${fmt(sumFrom(today))} today`}   icon={CheckCircle2} color="#059669" />
+        <StatCard label="This month"   value={fmt(sumFrom(monthStart))}      sub="sales credited"                   icon={Calendar}     color="#0284c7" />
+        <StatCard label="Avg Ticket"   value={fmt(sales.length ? sales.reduce((s2, inv) => s2 + inv.total, 0) / sales.length : 0)} sub="per order" icon={Star} color="#d97706" />
+        <StatCard label="Customers"    value={customers}                     sub="named customers served"           icon={Users}        color="#db2777" />
+        <StatCard label="Rung up"      value={rungUp.length}                 sub={`as cashier · ${refunds.length} refund${refunds.length === 1 ? "" : "s"}`} icon={Briefcase} color="#6b7280" />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 22 }}>
+        <Section title="Recent Sales" icon={Clock}>
+          {credited.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#9898b0", padding: "12px 0" }}>No sales credited to {staffName} yet. Pick them as the waiter on the POS.</div>
+          ) : [...credited].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10).map((inv) => (
+            <div key={inv.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #f4f4f8" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: inv.refundOf ? "#dc2626" : "#1a1a2e" }}>{inv.number} · {inv.clientName}</div>
+                <div style={{ fontSize: 11, color: "#9898b0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{inv.date} · {inv.items.map((it) => it.description).join(", ")}</div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: inv.refundOf ? "#dc2626" : "#1a1a2e" }}>{fmt(inv.total)}</div>
+            </div>
+          ))}
+        </Section>
+        <Section title="Best Sellers" icon={Award}>
+          {topItems.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#9898b0", padding: "12px 0" }}>Nothing sold yet.</div>
+          ) : topItems.map((it) => (
+            <div key={it.name} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid #f4f4f8", fontSize: 13 }}>
+              <span style={{ fontWeight: 700, color: "#1a1a2e" }}>{it.name} <span style={{ color: "#9898b0", fontWeight: 500 }}>× {it.qty}</span></span>
+              <span style={{ fontWeight: 800, color: "#EA580C" }}>{fmt(it.revenue)}</span>
+            </div>
+          ))}
+        </Section>
+      </div>
+    </>
+  );
+}
+
 export default function StaffProfilePage() {
+  const businessType = useBusinessType();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
 
@@ -453,7 +520,7 @@ export default function StaffProfilePage() {
                     </a>
                   )}
                 </div>
-                {staff.specialties.length > 0 && (
+                {businessType.bookings && staff.specialties.length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 10 }}>
                     {staff.specialties.map((sp) => (
                       <span key={sp} style={{ fontSize: 11, color: staff.color, background: staff.color + "18", padding: "2px 10px", borderRadius: 12 }}>{sp}</span>
@@ -482,6 +549,7 @@ export default function StaffProfilePage() {
 
       <div className="dash-page" style={{ display: "flex", flexDirection: "column", gap: 22, paddingTop: 24 }}>
 
+        {businessType.bookings ? (<>
         {/* ── 6 Key stat cards ─────────────────────────────────────────────── */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 }}>
           <StatCard label="Total Revenue"      value={fmt(stats.totalRev)}    sub="from completed appts"         icon={TrendingUp}   color="#EA580C" />
@@ -634,6 +702,7 @@ export default function StaffProfilePage() {
             )}
           </Section>
         </div>
+        </>) : <SalesView staffName={staff.name} />}
 
       </div>
     </div>

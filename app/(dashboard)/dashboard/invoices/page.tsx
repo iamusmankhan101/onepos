@@ -15,6 +15,8 @@ import { settingsStore } from "@/lib/settings-store";
 import { syncFromDB } from "@/lib/turso-sync";
 import InvoicePrint from "@/components/invoice-print";
 import InvoiceEdit from "@/components/invoice-edit";
+import RefundModal from "@/components/refund-modal";
+import { movementFor, undoMovement } from "@/lib/stock";
 import MobilePageHeader from "@/components/mobile-page-header";
 import PageTitle from "@/components/page-title";
 import { fmtCurrency as fmt } from "@/lib/format";
@@ -82,6 +84,7 @@ export default function InvoicesPage() {
   const [editDateInvoice, setEditDateInvoice] = useState<Invoice | null>(null);
   const [editDateValue, setEditDateValue] = useState("");
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+  const [refundingInvoice, setRefundingInvoice] = useState<Invoice | null>(null);
 
   const business = settingsStore.business;
   // Strict-locked to the active dashboard section, same rule as Revenue/Cash
@@ -189,9 +192,23 @@ export default function InvoicesPage() {
     if (viewingInvoice?.id === updated.id) setViewingInvoice(updated);
   }
 
-  function handleDelete(id: string) {
+  async function handleDelete(id: string) {
     const invoice = getInvoices().find((item) => item.id === id);
-    deleteInvoice(id);
+    // Off the list straight away; the stored copy is gone once deleteInvoice settles.
+    setInvoices((list) => list.filter((inv) => inv.id !== id));
+    setDeleteConfirm(null);
+    if (viewingInvoice?.id === id) setViewingInvoice(null);
+    await deleteInvoice(id);
+    // The sale took stock out (lib/stock.ts) — a deleted sale puts it back.
+    const sale = invoice ? movementFor("sale", invoice) : undefined;
+    if (sale) await undoMovement(sale);
+    // A deleted refund no longer counts against the sale it refunded.
+    if (invoice?.refundOf) {
+      const original = getInvoices().find((i) => i.id === invoice.refundOf);
+      if (original) {
+        updateInvoice({ ...original, refundedAmount: Math.max(0, (original.refundedAmount ?? 0) + invoice.total) || undefined });
+      }
+    }
     if (invoice?.appointmentId) {
       const appointments = getStoredAppointments();
       const updatedAppointments = appointments.map((appt) =>
@@ -208,7 +225,8 @@ export default function InvoicesPage() {
       const clients = getStoredClients();
       const updatedClients = clients.map((c) =>
         c.id === invoice.clientId
-          ? { ...c, totalVisits: Math.max(0, c.totalVisits - 1), totalSpend: Math.max(0, c.totalSpend - invoice.total) }
+          // A refund's total is negative, so deleting one gives the spend back; it was never a visit.
+          ? { ...c, totalVisits: invoice.refundOf ? c.totalVisits : Math.max(0, c.totalVisits - 1), totalSpend: Math.max(0, c.totalSpend - invoice.total) }
           : c
       );
       saveClients(updatedClients);
@@ -308,6 +326,15 @@ export default function InvoicesPage() {
           onClose={() => setViewingInvoice(null)}
           onMarkPaid={() => setMarkPaidPromptId(viewingInvoice.id)}
           onEdit={() => setEditingInvoice(viewingInvoice)}
+          onRefund={() => setRefundingInvoice(viewingInvoice)}
+          onDelete={() => setDeleteConfirm(viewingInvoice.id)}
+        />
+      )}
+      {refundingInvoice && (
+        <RefundModal
+          invoice={refundingInvoice}
+          onClose={() => setRefundingInvoice(null)}
+          onDone={(refund) => { setRefundingInvoice(null); reload(); setViewingInvoice(refund); }}
         />
       )}
       {editingInvoice && (
@@ -318,7 +345,7 @@ export default function InvoicesPage() {
         />
       )}
       {deleteConfirm && (
-        <div onClick={() => setDeleteConfirm(null)} className="modal-overlay" style={{ zIndex: 250 }}>
+        <div onClick={() => setDeleteConfirm(null)} className="modal-overlay" style={{ zIndex: 350 }}>
           <div onClick={(e) => e.stopPropagation()} className="modal-sheet" style={{ background: "#fff", borderRadius: 16, padding: "28px 32px", maxWidth: 360, width: "100%", boxShadow: "0 16px 50px rgba(0,0,0,0.2)", textAlign: "center" }}>
             <div style={{ width: 52, height: 52, borderRadius: 14, background: "#fef2f2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
               <Trash2 size={22} color="#dc2626" />
@@ -333,7 +360,7 @@ export default function InvoicesPage() {
         </div>
       )}
       {markPaidPromptId && (
-        <div onClick={() => setMarkPaidPromptId(null)} className="modal-overlay" style={{ zIndex: 250 }}>
+        <div onClick={() => setMarkPaidPromptId(null)} className="modal-overlay" style={{ zIndex: 350 }}>
           <div onClick={(e) => e.stopPropagation()} className="modal-sheet" style={{ background: "#fff", borderRadius: 16, padding: "28px 32px", maxWidth: 360, width: "100%", boxShadow: "0 16px 50px rgba(0,0,0,0.2)", textAlign: "center" }}>
             <div style={{ width: 52, height: 52, borderRadius: 14, background: "#ecfdf5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
               <CheckCircle size={22} color="#059669" />
@@ -370,7 +397,7 @@ export default function InvoicesPage() {
         </div>
       )}
       {editDateInvoice && (
-        <div onClick={() => setEditDateInvoice(null)} className="modal-overlay" style={{ zIndex: 250 }}>
+        <div onClick={() => setEditDateInvoice(null)} className="modal-overlay" style={{ zIndex: 350 }}>
           <div onClick={(e) => e.stopPropagation()} className="modal-sheet" style={{ background: "#fff", borderRadius: 16, padding: "28px 32px", maxWidth: 360, width: "100%", boxShadow: "0 16px 50px rgba(0,0,0,0.2)", textAlign: "center" }}>
             <div style={{ width: 52, height: 52, borderRadius: 14, background: "#FFF7ED", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
               <Pencil size={20} color="#EA580C" />
@@ -486,7 +513,11 @@ export default function InvoicesPage() {
                     }}
                   >
                     {/* Invoice # */}
-                    <div style={{ fontSize: 13, fontWeight: 800, color: "var(--accent)", fontFamily: "monospace", letterSpacing: "-0.02em" }}>{inv.number}</div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: inv.refundOf ? "#dc2626" : "var(--accent)", fontFamily: "monospace", letterSpacing: "-0.02em" }}>{inv.number}</div>
+                      {inv.refundOfNumber && <div style={{ fontSize: 10, fontWeight: 700, color: "#dc2626", marginTop: 2 }}>Refund of {inv.refundOfNumber}</div>}
+                      {(inv.refundedAmount ?? 0) > 0 && <div style={{ fontSize: 10, fontWeight: 700, color: "#b45309", marginTop: 2 }}>{fmt(inv.refundedAmount!)} refunded</div>}
+                    </div>
 
                     {/* Client */}
                     <div>
@@ -517,7 +548,9 @@ export default function InvoicesPage() {
                     <div style={{ fontSize: 12, color: "#6b6b8a", fontWeight: 500 }}>{inv.items.length} item{inv.items.length !== 1 ? "s" : ""}</div>
 
                     {/* Payment method */}
-                    <div style={{ fontSize: 12, color: "#6b6b8a", fontWeight: 500 }}>{METHOD_LABELS[inv.paymentMethod] ?? inv.paymentMethod}</div>
+                    <div style={{ fontSize: 12, color: "#6b6b8a", fontWeight: 500 }}>
+                      {inv.payments?.length ? inv.payments.map((p) => METHOD_LABELS[p.method] ?? p.method).join(" + ") : METHOD_LABELS[inv.paymentMethod] ?? inv.paymentMethod}
+                    </div>
 
                     {/* Amount */}
                     <div>

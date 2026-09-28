@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { getStoredAppointments } from "@/lib/storage";
-import { getInvoices } from "@/lib/invoices";
+import { getInvoices, paymentParts } from "@/lib/invoices";
 import { getExpenses, saveExpenses, addExpense, updateExpense, type Expense, type ExpenseCategory } from "@/lib/expenses";
 import { getManualCashIncome, saveManualCashIncome, type ManualCashIncome } from "@/lib/cash-flow-income";
 import type { Appointment } from "@/lib/types";
@@ -10,7 +10,7 @@ import MobilePageHeader from "@/components/mobile-page-header";
 import PageTitle from "@/components/page-title";
 import { fmtCurrency as fmt } from "@/lib/format";
 import { syncFromDB } from "@/lib/turso-sync";
-import { getSectionOptions, getActiveSection } from "@/lib/sections";
+import { getSectionOptions, getActiveSection, sectionsEnabled } from "@/lib/sections";
 import {
   Plus, Trash2, TrendingUp, TrendingDown,
   Wallet, X, Download, Pencil, Check, CalendarCheck, ShoppingBag, Upload, FileSpreadsheet,
@@ -255,8 +255,10 @@ export default function CashFlowPage() {
     let cash = appts.reduce((s, a) => s + a.totalAmount, 0) + manual.reduce((s, e) => s + e.amount, 0);
     let online = 0;
     pos.forEach(inv => {
-      if ((inv.paymentMethod || "cash") === "cash") cash += inv.total;
-      else online += inv.total;
+      for (const part of paymentParts(inv)) {
+        if ((part.method || "cash") === "cash") cash += part.amount;
+        else online += part.amount;
+      }
     });
     return { cash, online };
   }, [appointments, posInvoices, posLinkedAppointmentIds, manualIncome, rangeStart, filterEnd, period, customStart, customEnd]);
@@ -455,7 +457,7 @@ export default function CashFlowPage() {
         const latest = getExpenses().filter(e => !cashFlowScoped || e.section === activeSection);
         const source = latest.some((expense) => expense.id === id) ? latest : prev;
         const updated = source.filter((expense) => expense.id !== id);
-        saveExpenses(getExpenses().filter((expense) => expense.id !== id));
+        saveExpenses(getExpenses().filter((expense) => expense.id !== id), [id]);
         return updated;
       });
       if (editId === id) {
@@ -682,13 +684,14 @@ export default function CashFlowPage() {
       );
       allPaidInvoices.forEach(inv => {
         if (!dayMap[inv.date]) dayMap[inv.date] = { card: 0, cash: 0, bank: 0, newAccount: 0, expense: 0 };
-        const pm = inv.paymentMethod ?? "";
-        if      (pm === "card")                                   dayMap[inv.date].card       += inv.total;
-        else if (pm === "cash")                                   dayMap[inv.date].cash       += inv.total;
-        else if (pm === "bank")                                   dayMap[inv.date].bank       += inv.total;
-        else if (pm === "jazzcash" || pm === "easypaisa" || pm === "raast")
-                                                                  dayMap[inv.date].newAccount += inv.total;
-        else                                                      dayMap[inv.date].cash       += inv.total; // untracked → cash
+        for (const { method: pm, amount } of paymentParts(inv)) {
+          if      (pm === "card")                                 dayMap[inv.date].card       += amount;
+          else if (pm === "cash")                                 dayMap[inv.date].cash       += amount;
+          else if (pm === "bank")                                 dayMap[inv.date].bank       += amount;
+          else if (pm === "jazzcash" || pm === "easypaisa" || pm === "raast")
+                                                                  dayMap[inv.date].newAccount += amount;
+          else                                                    dayMap[inv.date].cash       += amount; // untracked → cash
+        }
       });
 
       // Completed appointments not linked to a POS invoice — same "Appointment" source
@@ -1193,7 +1196,7 @@ export default function CashFlowPage() {
                 <label style={labelSt}>Amount (PKR)</label>
                 <input type="number" value={form.amount} onChange={e => { setForm(f => ({ ...f, amount: e.target.value })); setFormError(""); }} placeholder="0" min={0.01} step="0.01" style={inputSt} />
               </div>
-              <div>
+              {sectionsEnabled() && <div>
                 <label style={labelSt}>Section</label>
                 {cashFlowScoped ? (
                   <div style={{ ...inputSt, display: "flex", alignItems: "center", gap: 6, color: "#EA580C", fontWeight: 700, background: "#faf9fd" }}>
@@ -1205,7 +1208,7 @@ export default function CashFlowPage() {
                     {getSectionOptions(expenses).map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 )}
-              </div>
+              </div>}
               <div style={{ gridColumn: "1 / -1" }}>
                 <label style={labelSt}>Description <span style={{ fontWeight: 500, textTransform: "none" }}>(optional)</span></label>
                 <input type="text" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="e.g. Shampoo & conditioner restock" style={inputSt} />

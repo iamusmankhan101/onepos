@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   UserCog, BarChart3, Banknote, Settings, ReceiptText, ShoppingCart, Package, Users,
-  X, LogOut, ChevronDown, Shield, Gift, LayoutGrid, ChefHat, Boxes,
+  X, LogOut, ChevronDown, Shield, Gift, LayoutGrid, ChefHat, Boxes, Timer,
 } from "lucide-react";
 import { AuthUser, getCurrentUser, signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
@@ -35,6 +35,7 @@ const NAV_GROUPS: {
       { href: "/dashboard/revenue",   icon: BarChart3, label: "Revenue"   },
       { href: "/dashboard/cash-flow", icon: Banknote,  label: "Cash Flow" },
       { href: "/dashboard/staff",     icon: UserCog,   label: "Staff"     },
+      { href: "/dashboard/shifts",    icon: Timer,     label: "Shifts", restaurantOnly: true },
     ],
   },
 ];

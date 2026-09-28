@@ -52,6 +52,134 @@ export interface Invoice {
   orderId?: string;
   orderType?: "dine-in" | "takeaway" | "delivery";
   tableNames?: string;
+  /**
+   * Split payment: how the total was actually paid. `paymentMethod` then holds
+   * the largest part, so anything that reads only it still sees a real method.
+   * Totals by method should go through paymentParts().
+   */
+  payments?: { method: PaymentMethod; amount: number }[];
+  /** Who rang it up (the signed-in user) — `staffName` is who it's credited to (waiter, stylist). */
+  cashierName?: string;
+  /** The cash-drawer shift (lib/shifts.ts) open when it was rung up. */
+  shiftId?: string;
+  /**
+   * A refund is a credit note: its own invoice, dated the day of the refund,
+   * with negative quantities and total, pointing at the sale it refunds. Every
+   * revenue and cash total that adds up invoices subtracts it automatically.
+   */
+  refundOf?: string;
+  refundOfNumber?: string;
+  refundReason?: string;
+  approvedBy?: string;
+  /** On a sale: how much of it has been refunded so far (positive). */
+  refundedAmount?: number;
+}
+
+/** The invoice's payment split into methods — one part unless it was a split payment. */
+export function paymentParts(inv: Pick<Invoice, "payments" | "paymentMethod" | "total">): { method: string; amount: number }[] {
+  if (inv.payments?.length) return inv.payments;
+  return [{ method: inv.paymentMethod || "", amount: inv.total }];
+}
+
+export function isRefund(inv: Pick<Invoice, "refundOf">): boolean {
+  return !!inv.refundOf;
+}
+
+/** What's left to refund on a sale. */
+export function refundable(inv: Invoice): number {
+  if (isRefund(inv) || inv.status !== "paid") return 0;
+  return Math.max(0, inv.total - (inv.refundedAmount ?? 0));
+}
+
+/**
+ * What refunding these quantities of a sale's lines comes to: each line's
+ * share of the amount actually charged, so discounts, tax and service charge
+ * are refunded in proportion. Capped at what's still refundable.
+ */
+export function refundAmount(inv: Invoice, qtyByItemId: Record<string, number>): number {
+  const ratio = inv.subtotal > 0 ? inv.total / inv.subtotal : 1;
+  const gross = inv.items.reduce((sum, item) => {
+    const qty = Math.min(item.qty, Math.max(0, qtyByItemId[item.id] ?? 0));
+    return sum + (item.qty > 0 ? (item.total / item.qty) * qty : 0);
+  }, 0);
+  return Math.min(refundable(inv), Math.round(gross * ratio));
+}
+
+function nextRefundNumber(existing: Invoice[]): string {
+  const prefix = `RF-${new Date().getFullYear()}-`;
+  const highest = existing.reduce((max, inv) => {
+    if (typeof inv?.number !== "string" || !inv.number.startsWith(prefix)) return max;
+    const seq = parseInt(inv.number.slice(prefix.length), 10);
+    return Number.isNaN(seq) ? max : Math.max(max, seq);
+  }, 0);
+  return `${prefix}${String(highest + 1).padStart(4, "0")}`;
+}
+
+/**
+ * Refunds part or all of a paid sale: writes the credit note and adds its
+ * amount to the sale's refundedAmount, in one save.
+ */
+export async function createRefund(original: Invoice, input: {
+  qtyByItemId: Record<string, number>;
+  method: PaymentMethod;
+  reason: string;
+  approvedBy: string;
+  cashierName?: string;
+  shiftId?: string;
+  /** Override the proportional amount (a goodwill partial refund). */
+  amount?: number;
+}): Promise<{ refund: Invoice; dbSaved: boolean }> {
+  const existing = getInvoices();
+  const fresh = existing.find((i) => i.id === original.id) ?? original;
+  const amount = Math.min(refundable(fresh), Math.round(input.amount ?? refundAmount(fresh, input.qtyByItemId)));
+  if (!(amount > 0)) throw new Error("Nothing to refund.");
+  // Lines are scaled to what was actually charged for them (their share of
+  // discounts, tax and service charge), so the credit note's lines add up to
+  // its total exactly — the rounding remainder goes on the last line.
+  const picked = fresh.items.filter((item) => (input.qtyByItemId[item.id] ?? 0) > 0 && item.qty > 0);
+  const gross = picked.reduce((s, item) => s + (item.total / item.qty) * Math.min(item.qty, input.qtyByItemId[item.id]), 0);
+  const scale = gross > 0 ? amount / gross : 0;
+  let running = 0;
+  const items: InvoiceItem[] = picked.map((item, index) => {
+    const qty = Math.min(item.qty, input.qtyByItemId[item.id]);
+    const last = index === picked.length - 1;
+    const lineTotal = last ? amount - running : Math.round((item.total / item.qty) * qty * scale);
+    running += lineTotal;
+    return { ...item, id: crypto.randomUUID(), qty: -qty, unitPrice: Math.round(lineTotal / qty), total: -lineTotal };
+  });
+  const now = new Date();
+  const refund: Invoice = {
+    id: crypto.randomUUID(),
+    number: nextRefundNumber(existing),
+    clientId: fresh.clientId,
+    clientName: fresh.clientName,
+    clientPhone: fresh.clientPhone,
+    staffName: fresh.staffName,
+    section: fresh.section,
+    items: items.length ? items : [{ id: crypto.randomUUID(), type: "product", description: `Refund on ${fresh.number}`, qty: -1, unitPrice: amount, total: -amount }],
+    subtotal: -amount,
+    discountAmount: 0,
+    taxAmount: 0,
+    total: -amount,
+    paymentMethod: input.method,
+    date: localDateKey(now),
+    paidDate: localDateKey(now),
+    status: "paid",
+    notes: `Refund of ${fresh.number} — ${input.reason}`,
+    createdAt: now.toISOString(),
+    source: fresh.source ?? "pos",
+    orderType: fresh.orderType,
+    refundOf: fresh.id,
+    refundOfNumber: fresh.number,
+    refundReason: input.reason,
+    approvedBy: input.approvedBy,
+    cashierName: input.cashierName,
+    shiftId: input.shiftId,
+  };
+  const updatedOriginal: Invoice = { ...fresh, refundedAmount: (fresh.refundedAmount ?? 0) + amount };
+  const list = [refund, ...existing.map((i) => (i.id === fresh.id ? updatedOriginal : i))];
+  const dbSaved = await saveInvoices(list);
+  return { refund, dbSaved };
 }
 
 // ─── Storage ──────────────────────────────────────────────────────────────────

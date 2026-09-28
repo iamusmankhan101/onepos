@@ -13,6 +13,7 @@ import { exportClientPdf } from "@/lib/export-pdf";
 import { locationUserKey } from "@/lib/locations";
 import { getSectionOptions, getActiveSection, inSection } from "@/lib/sections";
 import { normalizePhone } from "@/lib/whatsapp-link";
+import { useBusinessType } from "@/lib/use-business-type";
 import {
   ArrowLeft, Phone, Mail, Calendar, Heart, Star, Camera, X,
   Plus, Edit2, TrendingUp, Clock, Users, Scissors, ShoppingCart,
@@ -75,6 +76,7 @@ function InfoRow({ icon, label, children }: { icon: React.ReactNode; label: stri
 }
 
 export default function ClientProfilePage() {
+  const businessType = useBusinessType();
   const params = useParams();
   const router = useRouter();
   const clientId = params.id as string;
@@ -227,14 +229,14 @@ export default function ClientProfilePage() {
     <div className="dashboard-polish detail-page-polish" style={{ background: "#f4f5f7", minHeight: "100vh" }}>
 
       {/* Top bar */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #e8e8f0", padding: "13px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 10 }}>
+      <div className="client-topbar" style={{ background: "#fff", borderBottom: "1px solid #e8e8f0", padding: "13px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 10 }}>
         <button
           onClick={() => router.push("/dashboard/clients")}
           style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", cursor: "pointer", color: "#6b6b8a", fontSize: 13, fontWeight: 600, padding: 0 }}
         >
-          <ArrowLeft size={15} /> Back to Clients
+          <ArrowLeft size={15} /> Back to {businessType.clientsLabel}
         </button>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="client-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {!editing && (
             <button
               onClick={() => setEditing(true)}
@@ -288,13 +290,14 @@ export default function ClientProfilePage() {
         </div>
 
         {/* ── Stats row ─────────────────────────────────────────────────────────── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+        <div className="client-stats" style={{ display: "grid", gridTemplateColumns: `repeat(${businessType.beautyProfile ? 5 : 4}, minmax(0, 1fr))`, gap: 12 }}>
           {[
             { label: "Total Visits",  value: totalVisits,                      color: "#EA580C", bg: "#fff7ed",  icon: <CheckCircle2 size={18} color="#EA580C" /> },
             { label: "Total Spend",   value: fmt(totalSpend),                  color: "#059669", bg: "#ecfdf5",  icon: <TrendingUp size={18} color="#059669" /> },
             { label: "Avg Ticket",    value: avgTicket ? fmt(avgTicket) : "—", color: "#0284c7", bg: "#f0f9ff",  icon: <Star size={18} color="#0284c7" /> },
             { label: "Last Visit",    value: fmtDate(lastVisit),               color: "#d97706", bg: "#fffbeb",  icon: <Calendar size={18} color="#d97706" /> },
-            { label: "Photos Saved",  value: totalPhotos,                      color: "#db2777", bg: "#fdf2f8",  icon: <Camera size={18} color="#db2777" /> },
+            // Before/after photos are a salon feature.
+            ...(businessType.beautyProfile ? [{ label: "Photos Saved", value: totalPhotos, color: "#db2777", bg: "#fdf2f8", icon: <Camera size={18} color="#db2777" /> }] : []),
           ].map((s) => (
             <div key={s.label} style={{ background: s.bg, borderRadius: 14, padding: "16px 18px", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ flexShrink: 0 }}>{s.icon}</div>
@@ -307,7 +310,7 @@ export default function ClientProfilePage() {
         </div>
 
         {/* ── Two-column layout ─────────────────────────────────────────────────── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 20, alignItems: "start" }}>
+        <div className="client-main" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 360px", gap: 20, alignItems: "start" }}>
 
           {/* LEFT column */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -546,7 +549,8 @@ export default function ClientProfilePage() {
               );
             })()}
 
-            {/* Upcoming appointments */}
+            {/* Upcoming appointments — only for a business that takes bookings */}
+            {businessType.bookings && (
             <SectionCard title="Upcoming" sub={upcomingAppts.length > 0 ? `${upcomingAppts.length} scheduled` : undefined}>
               {upcomingAppts.length === 0 ? (
                 <div style={{ padding: "24px 20px", textAlign: "center", color: "#b0b0c8", fontSize: 13 }}>No upcoming appointments.</div>
@@ -565,6 +569,7 @@ export default function ClientProfilePage() {
                 </div>
               )}
             </SectionCard>
+            )}
 
             {/* Client notes */}
             <SectionCard
@@ -589,7 +594,7 @@ export default function ClientProfilePage() {
                     value={notesDraft}
                     onChange={(e) => setNotesDraft(e.target.value)}
                     rows={4}
-                    placeholder="e.g. Sensitive scalp, prefers morning slots…"
+                    placeholder={businessType.clientNotesHint}
                     style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #e8e8f0", fontSize: 13, color: "#1a1a2e", outline: "none", resize: "vertical", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box" }}
                   />
                 ) : client.notes ? (
@@ -628,7 +633,7 @@ export default function ClientProfilePage() {
                     {([
                       { label: "Source", key: "source", opts: ["whatsapp","walk-in","web","manual"] },
                       { label: "Tag",    key: "tag",    opts: ["", ...Object.keys(TAG_COLORS)] },
-                      { label: "Section", key: "section", opts: ["", ...getSectionOptions(getStoredClients())] },
+                      ...(businessType.sections ? [{ label: "Section", key: "section" as const, opts: ["", ...getSectionOptions(getStoredClients())] }] : []),
                     ] as const).map(({ label, key, opts }) => (
                       <div key={key}>
                         <label style={{ fontSize: 10, fontWeight: 700, color: "#b0b0c8", textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 5 }}>{label}</label>
@@ -642,7 +647,7 @@ export default function ClientProfilePage() {
                   <div>
                     <label style={{ fontSize: 10, fontWeight: 700, color: "#b0b0c8", textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 5 }}>Notes &amp; Preferences</label>
                     <textarea value={editForm.notes} onChange={(e) => setE("notes", e.target.value)} rows={3}
-                      placeholder="e.g. Sensitive scalp, prefers morning slots…"
+                      placeholder={businessType.clientNotesHint}
                       style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #e8e8f0", fontSize: 13, color: "#1a1a2e", outline: "none", resize: "vertical", fontFamily: "inherit", lineHeight: 1.5, boxSizing: "border-box" }} />
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>

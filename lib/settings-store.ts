@@ -172,6 +172,12 @@ const defaults = {
     serviceChargeRate: 0,    // percent
     serviceChargeDineInOnly: true,
   },
+  // Till controls — see lib/pos-rules.ts.
+  posRules: {
+    staffDiscountRate: 0,       // percent; 0 hides the Staff discount button
+    discountApprovalOver: 0,    // percent of the bill; 0 = any discount without approval
+    requireOpenShift: false,    // restaurant mode: no sale until the cash drawer is opened
+  },
 };
 
 function load() {
@@ -229,6 +235,7 @@ function load() {
       cashback: { ...dynamicDefaults.cashback, ...saved.cashback },
       printer:  { ...dynamicDefaults.printer,  ...saved.printer  },
       charges:  { ...dynamicDefaults.charges,  ...saved.charges  },
+      posRules: { ...dynamicDefaults.posRules, ...saved.posRules },
     };
   } catch {
     return structuredClone(defaults);

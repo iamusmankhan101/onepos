@@ -7,7 +7,7 @@ const MANAGER_PERMISSIONS = ["*"];
 const ALL_PERMISSION_KEYS = new Set([
   "dashboard", "calendar", "appointments", "clients", "pos", "products", "invoices", "loyalty",
   "revenue", "cash-flow", "inventory", "services", "staff", "messages", "try-on",
-  "account", "billing", "tables", "kitchen",
+  "account", "billing", "tables", "kitchen", "shifts",
 ]);
 
 const isText = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";

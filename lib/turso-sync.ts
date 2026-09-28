@@ -19,6 +19,8 @@ const ENTITIES = [
   "modifier_groups",
   // Inventory (lib/stock.ts).
   "stock_movements", "suppliers", "purchase_orders",
+  // Cash drawer and time clock (lib/shifts.ts).
+  "cash_shifts", "time_entries",
   DELETED_RECORDS_ENTITY,
 ] as const;
 export type Entity = typeof ENTITIES[number];

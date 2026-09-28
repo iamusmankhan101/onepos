@@ -5,13 +5,23 @@ import { useRouter } from "next/navigation";
 import { getStoredStaff, saveStaff, getStoredServices, saveServices, getStoredAppointments, subscribeToStoredData } from "@/lib/storage";
 import type { Staff, Service, StaffPayType, Appointment } from "@/lib/types";
 import { X, Plus, Check, ChevronRight, Trash2, UserCog, Pencil, Lock, Upload, Download, FileSpreadsheet, ChevronDown } from "lucide-react";
-import { getSectionOptions, getActiveSection, inSection, defaultSectionForNewRecord } from "@/lib/sections";
+import { getSectionOptions, getActiveSection, inSection, defaultSectionForNewRecord, sectionsEnabled } from "@/lib/sections";
 import { CUSTOM_ROLE_OPTION, getRoleOptions, normalizeRole, roleLabel, roleStyle, toRoleId } from "@/lib/staff-roles";
 import PageTitle from "@/components/page-title";
 import MobilePageHeader from "@/components/mobile-page-header";
 import { useBusinessType } from "@/lib/use-business-type";
+import { getInvoices } from "@/lib/invoices";
 
 import { fmtCurrency as fmt } from "@/lib/format";
+
+/** Without bookings: the POS sales credited to this person (net of refunds). */
+function salesStats(staffName: string) {
+  const mine = getInvoices().filter((inv) => inv.status === "paid" && inv.staffName === staffName);
+  return {
+    total: mine.filter((inv) => !inv.refundOf).length,
+    revenue: mine.reduce((sum, inv) => sum + inv.total, 0),
+  };
+}
 
 function getStaffStats(staffId: string, appointments: Appointment[]) {
   const mine      = appointments.filter((a) => a.staffId === staffId);
@@ -103,7 +113,7 @@ function StaffFormModal({ onClose, onSave, staff, servicesList, staffList }: { o
   // Built-in roles plus whatever this team has already invented. An existing
   // custom role is therefore already in the list when editing someone who
   // holds it, so the picker shows their real role rather than falling blank.
-  const { roleSeed } = useBusinessType();
+  const { roleSeed, bookings } = useBusinessType();
   const roleOptions = getRoleOptions(staffList, roleSeed);
   const [customRole, setCustomRole] = useState("");
   const addingCustomRole = form.role === CUSTOM_ROLE_OPTION;
@@ -209,13 +219,13 @@ function StaffFormModal({ onClose, onSave, staff, servicesList, staffList }: { o
             )}
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {sectionsEnabled() && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Section</label>
             <select value={form.section} onChange={(e) => set("section", e.target.value)} style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid #e8e8f0", fontSize: 13, color: "#1a1a2e", outline: "none", background: "#fff" }}>
               <option value="">Unassigned</option>
               {sectionOptions.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
-          </div>
+          </div>}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Pay Type</label>
@@ -263,7 +273,7 @@ function StaffFormModal({ onClose, onSave, staff, servicesList, staffList }: { o
             Staff login, password, and module permissions are managed separately in <strong>Settings → Staff Access</strong>.
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {bookings && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Assign Services (Dropdown Selection)</label>
             <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 150, overflowY: "auto", border: "1px solid #e8e8f0", borderRadius: 8, padding: 8 }}>
               {servicesList.length > 0 ? servicesList.map((sv) => {
@@ -280,7 +290,7 @@ function StaffFormModal({ onClose, onSave, staff, servicesList, staffList }: { o
                 );
               }) : <div style={{ fontSize: 12, color: "#9898b0", fontStyle: "italic", padding: "8px 0" }}>No services found. Please add services first.</div>}
             </div>
-          </div>
+          </div>}
 
           <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>
             <button onClick={onClose} style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "1px solid #e8e8f0", background: "#fff", fontSize: 13, fontWeight: 600, color: "#6b6b8a", cursor: "pointer" }}>Cancel</button>
@@ -519,6 +529,9 @@ function DeleteConfirmModal({ name, onConfirm, onCancel }: { name: string; onCon
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function StaffPage() {
+  // A restaurant's staff take orders, not appointments — their numbers come
+  // from the sales credited to them on the POS instead.
+  const businessType = useBusinessType();
   const router = useRouter();
   const [showAdd, setShowAdd]       = useState(false);
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
@@ -716,7 +729,7 @@ export default function StaffPage() {
           <Lock size={13} color="#EA580C" />
           <span style={{ fontSize: 12, fontWeight: 750, color: "#EA580C" }}>Showing {getActiveSection()} + unassigned staff</span>
         </div>
-      ) : (() => {
+      ) : businessType.sections && (() => {
         const sectionTabs = ["all", ...getSectionOptions(staffList)];
         return (
           <div className="filter-tabs" style={{ display: "flex", gap: 6, background: "#f4f4f9", border: "1px solid #e3e0eb", borderRadius: 12, padding: 4, alignSelf: "flex-start", marginBottom: 4 }}>
@@ -747,7 +760,7 @@ export default function StaffPage() {
       {/* Cards grid */}
       <div className="cards-grid-auto">
         {visibleStaff.map((s) => {
-          const stats = getStaffStats(s.id, appointmentsList);
+          const stats = businessType.bookings ? getStaffStats(s.id, appointmentsList) : salesStats(s.name);
           const role  = roleStyle(s.role);
           return (
             <div
@@ -801,19 +814,19 @@ export default function StaffPage() {
                 </div>
               </div>
 
-              {/* Specialties */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {/* Specialties — the services a stylist does; nothing to show without bookings */}
+              {businessType.bookings && <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                 {s.specialties.length > 0
                   ? s.specialties.slice(0, 3).map((sp) => (
                     <span key={sp} style={{ fontSize: 11, fontWeight: 600, color: s.color, background: s.color + "10", padding: "3px 10px", borderRadius: 12 }}>{sp}</span>
                   ))
                   : <span style={{ fontSize: 11, color: "#9898b0", fontStyle: "italic", fontWeight: 500 }}>No specialties</span>}
-              </div>
+              </div>}
 
               {/* Stats + view profile CTA */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, borderTop: "1px solid #f8f8fc", paddingTop: 14, alignItems: "center" }}>
                 <div>
-                  <div style={{ fontSize: 10, color: "#9898b0", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>Appointments</div>
+                  <div style={{ fontSize: 10, color: "#9898b0", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>{businessType.salesCountLabel}</div>
                   <div style={{ fontSize: 16, fontWeight: 900, color: "#1a1a2e", marginTop: 4 }}>{stats.total}</div>
                 </div>
                 <div>

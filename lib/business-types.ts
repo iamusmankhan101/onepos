@@ -51,6 +51,19 @@ export interface BusinessTypeDefinition {
    * Tables and Kitchen screens, and order types / send-to-kitchen on the POS.
    */
   restaurantMode: boolean;
+  /**
+   * Appointments and a service menu — a salon's bread and butter. Off, the
+   * screens stop talking about appointments, services and specialties.
+   */
+  bookings: boolean;
+  /** Men's / Women's style sections on staff, customers and products. */
+  sections: boolean;
+  /** What one sale is called in counts — "Appointments", "Orders", "Sales". */
+  salesCountLabel: string;
+  /** Example text for a customer's notes. */
+  clientNotesHint: string;
+  /** The last line of a printed receipt. Only a shop takes things back. */
+  receiptFooter: string;
 }
 
 const ALL_CATEGORIES: InventoryCategory[] = [
@@ -60,6 +73,8 @@ const ALL_CATEGORIES: InventoryCategory[] = [
 const SALON_ROLES = [
   "owner", "manager", "senior-stylist", "junior-stylist", "receptionist", "trainee", "hair", "aesthetic",
 ];
+
+const RECEIPT_FOOTER = "We hope to see you again soon.";
 
 export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
   general: {
@@ -76,6 +91,11 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     roleSeed: SALON_ROLES,
     beautyProfile: true,
     restaurantMode: false,
+    bookings: true,
+    sections: true,
+    salesCountLabel: "Appointments",
+    clientNotesHint: "e.g. Sensitive scalp, prefers morning appointments…",
+    receiptFooter: "Please keep this receipt for exchanges.",
   },
   restaurant: {
     id: "restaurant",
@@ -91,6 +111,11 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     roleSeed: ["owner", "manager", "chef", "cook", "waiter", "cashier", "kitchen-helper"],
     beautyProfile: false,
     restaurantMode: true,
+    bookings: false,
+    sections: false,
+    salesCountLabel: "Orders",
+    clientNotesHint: "e.g. Allergic to nuts, prefers the window table…",
+    receiptFooter: RECEIPT_FOOTER,
   },
   cafe: {
     id: "cafe",
@@ -106,6 +131,11 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     roleSeed: ["owner", "manager", "barista", "baker", "cashier", "server"],
     beautyProfile: false,
     restaurantMode: true,
+    bookings: false,
+    sections: false,
+    salesCountLabel: "Orders",
+    clientNotesHint: "e.g. Oat milk flat white, extra hot…",
+    receiptFooter: RECEIPT_FOOTER,
   },
   retail: {
     id: "retail",
@@ -121,6 +151,11 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     roleSeed: ["owner", "manager", "cashier", "sales-associate", "stock-keeper"],
     beautyProfile: false,
     restaurantMode: false,
+    bookings: false,
+    sections: false,
+    salesCountLabel: "Sales",
+    clientNotesHint: "e.g. Buys in bulk, prefers delivery on Fridays…",
+    receiptFooter: "Please keep this receipt for exchanges.",
   },
   salon: {
     id: "salon",
@@ -136,6 +171,11 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     roleSeed: SALON_ROLES,
     beautyProfile: true,
     restaurantMode: false,
+    bookings: true,
+    sections: true,
+    salesCountLabel: "Appointments",
+    clientNotesHint: "e.g. Sensitive scalp, prefers morning appointments…",
+    receiptFooter: "Please keep this receipt for exchanges.",
   },
 };
 

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Printer, CheckCircle, Pencil } from "lucide-react";
+import { X, Printer, CheckCircle, Pencil, Trash2 } from "lucide-react";
+import { activeBusinessType } from "@/lib/use-business-type";
 import type { Invoice } from "@/lib/invoices";
 import { settingsStore } from "@/lib/settings-store";
 import Wordmark from "@/components/wordmark";
@@ -48,11 +49,15 @@ interface Props {
   onClose: () => void;
   onMarkPaid?: () => void;
   onEdit?: () => void;
+  /** Shown for a paid sale with something left to refund. */
+  onRefund?: () => void;
+  /** The invoice list's delete — here too so it can be reached from a phone, where the list has no row buttons. */
+  onDelete?: () => void;
 }
 
 export default function InvoicePrint({
   invoice, businessName, businessPhone, businessEmail, businessAddress,
-  onClose, onMarkPaid, onEdit,
+  onClose, onMarkPaid, onEdit, onRefund, onDelete,
 }: Props) {
   const [mounted, setMounted]           = useState(false);
   const [thermalStatus, setThermalStatus] = useState<"idle" | "printing" | "ok" | "error">("idle");
@@ -136,10 +141,22 @@ export default function InvoicePrint({
                   {thermalError}
                 </span>
               )}
-              {onEdit && (
+              {onRefund && invoice.status === "paid" && !invoice.refundOf && invoice.total - (invoice.refundedAmount ?? 0) > 0 && (
+                <button onClick={e => { e.stopPropagation(); onRefund(); }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 9, border: "1px solid #fca5a5", background: "rgba(220,38,38,0.25)", fontSize: 12, fontWeight: 700, color: "#fecaca", cursor: "pointer" }}>
+                  Refund
+                </button>
+              )}
+              {onEdit && !invoice.refundOf && (
                 <button onClick={e => { e.stopPropagation(); onEdit(); }}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 9, border: "1px solid rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.15)", fontSize: 12, fontWeight: 700, color: "#fff", cursor: "pointer" }}>
                   <Pencil size={14} /> Edit
+                </button>
+              )}
+              {onDelete && (
+                <button onClick={e => { e.stopPropagation(); onDelete(); }} aria-label="Delete invoice" title="Delete invoice"
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, borderRadius: 9, border: "1px solid #fca5a5", background: "rgba(220,38,38,0.25)", color: "#fecaca", cursor: "pointer" }}>
+                  <Trash2 size={14} />
                 </button>
               )}
               <button onClick={() => window.print()}
@@ -169,16 +186,18 @@ export default function InvoicePrint({
             </div>
 
             <div style={DASH} />
-            <div style={{ fontSize: 12, fontWeight: 800, textAlign: "center", letterSpacing: "0.16em" }}>SALES RECEIPT</div>
+            <div style={{ fontSize: 12, fontWeight: 800, textAlign: "center", letterSpacing: "0.16em" }}>{invoice.refundOf ? "REFUND" : "SALES RECEIPT"}</div>
             <div style={{ borderBottom: "1px solid #ddd", margin: "8px 0" }} />
 
             {/* ── SALE DETAILS ── */}
             {([
               ["Receipt No", invoice.number],
+              ...(invoice.refundOfNumber ? [["Refund of", invoice.refundOfNumber]] : []),
               ["Date", fmtDate(invoice.date)],
               ["Customer", invoice.clientName],
               ...(invoice.staffName ? [["Served by", invoice.staffName]] : []),
-              ["Payment", isPaid ? (METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "—") : "UNPAID"],
+              ...(invoice.cashierName && invoice.cashierName !== invoice.staffName ? [["Cashier", invoice.cashierName]] : []),
+              ["Payment", !isPaid ? "UNPAID" : invoice.payments?.length ? "Split" : (METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "—")],
             ] as [string, string][]).map(([label, value]) => (
               <div key={label} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 10, marginTop: 3 }}>
                 <span style={{ color: "#555" }}>{label}</span>
@@ -227,10 +246,23 @@ export default function InvoicePrint({
               <span style={{ fontSize: 15, fontWeight: 900 }}>TOTAL</span>
               <span style={{ fontSize: 15, fontWeight: 900 }}>{fmt(invoice.total)}</span>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
-              <span>{isPaid ? (METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "Paid") : "Balance due"}</span>
-              <span style={{ fontWeight: 700 }}>{fmt(invoice.total)}</span>
-            </div>
+            {isPaid && invoice.payments?.length ? invoice.payments.map((part, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
+                <span>{METHOD_LABELS[part.method] ?? part.method}</span>
+                <span style={{ fontWeight: 700 }}>{fmt(part.amount)}</span>
+              </div>
+            )) : (
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
+                <span>{isPaid ? (METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "Paid") : "Balance due"}</span>
+                <span style={{ fontWeight: 700 }}>{fmt(invoice.total)}</span>
+              </div>
+            )}
+            {(invoice.refundedAmount ?? 0) > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
+                <span>Refunded</span>
+                <span style={{ fontWeight: 700 }}>-{fmt(invoice.refundedAmount!)}</span>
+              </div>
+            )}
 
             {invoice.notes && (
               <div style={{ fontSize: 10, color: "#444", textAlign: "center", marginTop: 8, lineHeight: 1.5 }}>{invoice.notes}</div>
@@ -238,7 +270,7 @@ export default function InvoicePrint({
 
             <div style={{ borderBottom: "1px solid #ddd", margin: "12px 0 10px" }} />
             <div style={{ fontSize: 12, fontWeight: 800, textAlign: "center", letterSpacing: "0.2em" }}>THANK YOU</div>
-            <div style={{ fontSize: 10, color: "#444", textAlign: "center", marginTop: 4 }}>Please keep this receipt for exchanges.</div>
+            <div style={{ fontSize: 10, color: "#444", textAlign: "center", marginTop: 4 }}>{activeBusinessType().receiptFooter}</div>
 
             {/* ── BARCODE ── */}
             {barcode.length > 0 && (

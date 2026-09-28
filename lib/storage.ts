@@ -155,10 +155,11 @@ export function getStoredInventory(): InventoryItem[] {
   return JSON.parse(saved);
 }
 
-export function saveInventory(items: InventoryItem[]) {
+/** `deletedIds` declares real deletes — see deleteExpense() in lib/expenses.ts for why they can't be inferred. */
+export function saveInventory(items: InventoryItem[], deletedIds: string[] = []) {
   if (typeof window !== "undefined") {
     checkSchema();
-    persistEntity("inventory", items);
+    persistEntity("inventory", items, { deletedIds });
   }
 }
 

@@ -1189,3 +1189,31 @@ input, textarea, select { font-family: inherit; }
   .rc-row { grid-template-columns: minmax(0, 1fr) 58px 64px 30px !important; }
   .rc-row > .rc-item { grid-column: 1 / -1; }
 }
+
+/* The Menu page's Stock and Sold-in-POS tables: fixed columns need ~860px, so
+   below that the row keeps its width and the card scrolls sideways, instead of
+   the name spilling into Category or the row running off the page (the min
+   width used to apply on phones only). */
+.inv-table-inner { min-width: 860px; }
+
+/* POS header on a phone: the date line, the chip labels and the cart pill
+   (the tab bar already shows the cart) go, so the title and buttons stop
+   colliding. Chips keep their icon, badge and aria-label. */
+@media (max-width: 640px) {
+  .pos-topbar { gap: 8px !important; }
+  .pos-topbar .pos-brand-sub,
+  .pos-topbar .pos-chip-text,
+  .pos-topbar .pos-cart-pill { display: none !important; }
+  .pos-topbar .pos-brand-title { font-size: 15px !important; }
+  .pos-topbar .pos-top-chip { padding: 7px 10px !important; }
+}
+
+/* Customer profile on a phone: the top-bar buttons wrap under "Back" instead
+   of overlapping it, and the stat and two-column grids stack. */
+@media (max-width: 640px) {
+  .client-topbar { padding: 10px 14px !important; }
+  .client-actions { width: 100%; }
+  .client-actions > button { flex: 1 1 auto; justify-content: center; padding: 8px 10px !important; }
+  .client-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .client-main { grid-template-columns: minmax(0, 1fr) !important; }
+}

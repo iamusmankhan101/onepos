@@ -6,6 +6,18 @@
 // totals fall out of simply not touching those pages.
 
 import { saveSettings, settingsStore } from "./settings-store";
+import { getCurrentUser } from "./auth";
+import { businessTypeFor } from "./business-types";
+
+/**
+ * Whether this business uses sections at all. Men's / Women's is a salon
+ * idea; a restaurant, café or shop never sees the fields, the filters or the
+ * switcher, and is always working in "all".
+ */
+export function sectionsEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  return businessTypeFor(getCurrentUser()).sections;
+}
 
 export const SECTION_SEED = ["Men's", "Women's"] as const;
 
@@ -16,6 +28,7 @@ export const SECTION_SEED = ["Men's", "Women's"] as const;
  * section-aware page initializes from). "all" = both sections combined.
  */
 export function getActiveSection(): string {
+  if (!sectionsEnabled()) return "all";
   return (settingsStore as { activeSection?: string }).activeSection || "all";
 }
 

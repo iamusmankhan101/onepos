@@ -9,7 +9,7 @@ import { getCurrentUser, checkServerSession, signOut, ACCOUNT_REFRESHED_EVENT } 
 import { applyAppearanceSettings, SETTINGS_CHANGED_EVENT, reloadSettings, settingsNeedSync } from "@/lib/settings-store";
 import { syncFromDB, syncLocalDataToDB, SESSION_EXPIRED_EVENT, SETTINGS_SYNC_STATE_EVENT } from "@/lib/turso-sync";
 import { getStoredStaff, getStoredServices } from "@/lib/storage";
-import { getActiveSection, setActiveSection, getSectionOptions } from "@/lib/sections";
+import { getActiveSection, setActiveSection, getSectionOptions, sectionsEnabled } from "@/lib/sections";
 import { canManageBranches, getActiveLocationFilter, getBusinessLocations, setActiveLocationFilter, type BusinessLocation } from "@/lib/locations";
 
 // Settings is the one owner-only screen; the four modules are reachable by
@@ -127,7 +127,7 @@ function DashboardSectionSwitcher({ onSectionChange }: { onSectionChange: (secti
     };
   }, []);
 
-  if (!hasTagged) return null;
+  if (!hasTagged || !sectionsEnabled()) return null;
 
   function changeSection(section: string) {
     if (section === activeSection) return;

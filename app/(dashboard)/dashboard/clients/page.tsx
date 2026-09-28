@@ -10,7 +10,7 @@ import { Search, X, Plus, Phone, Mail, Calendar, Heart, Tag, MapPin, ChevronDown
 import { SETTINGS_CHANGED_EVENT, settingsStore } from "@/lib/settings-store";
 import { getTier, loyaltyActive, TIER_META, nextTierThreshold, pointsToRupees, type LoyaltySettings } from "@/lib/loyalty";
 import { clientLocationId, getActiveLocationFilter, getDefaultLocationId, getBusinessLocations, locationName, type BusinessLocation } from "@/lib/locations";
-import { getSectionOptions, getActiveSection, inSection, defaultSectionForNewRecord } from "@/lib/sections";
+import { getSectionOptions, getActiveSection, inSection, defaultSectionForNewRecord, sectionsEnabled } from "@/lib/sections";
 import { normalizePhone } from "@/lib/whatsapp-link";
 import PageTitle from "@/components/page-title";
 import MobilePageHeader from "@/components/mobile-page-header";
@@ -225,12 +225,13 @@ function ClientPanel({ client, onClose, appointments, locations, onUpdate, onDel
 
           {/* Stats — live-computed from appointment history */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: businessType.bookings ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr", gap: 10 }}>
               {[
                 { label: "Visits",     value: liveVisits,            color: "#EA580C", bg: "#fff7ed" },
                 { label: "Total Spend",value: fmt(liveSpend),        color: "#059669", bg: "#ecfdf5" },
                 { label: "Avg Ticket", value: liveAvgTicket ? fmt(liveAvgTicket) : "—", color: "#0284c7", bg: "#f0f9ff" },
-                { label: "Upcoming",   value: upcomingAppts.length,  color: "#d97706", bg: "#fffbeb" },
+                // Upcoming appointments only mean something to a business that takes bookings.
+                ...(businessType.bookings ? [{ label: "Upcoming", value: upcomingAppts.length, color: "#d97706", bg: "#fffbeb" }] : []),
               ].map((s) => (
                 <div key={s.label} style={{ background: s.bg, borderRadius: 12, padding: "12px 10px", textAlign: "center" }}>
                   <div style={{ fontSize: 20, fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.value}</div>
@@ -563,13 +564,15 @@ function InfoLine({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       {icon}
-      <span style={{ fontSize: 13, color: "#1a1a2e", textTransform: "capitalize" }}>{label}</span>
+      {/* No text-transform: it title-cased email addresses ("Test@Example.Com"). */}
+      <span style={{ fontSize: 13, color: "#1a1a2e" }}>{label}</span>
     </div>
   );
 }
 
 // ── Add Client Modal ──────────────────────────────────────────────────────────
 function AddClientModal({ onClose, onAdd, locations, allowLocationSelection, clients }: { onClose: () => void; onAdd: (c: Client) => void; locations: BusinessLocation[]; allowLocationSelection: boolean; clients: Client[] }) {
+  const businessType = useBusinessType();
   const [done, setDone] = useState(false);
   const { clientLabel } = useBusinessType();
   const [form, setForm] = useState({ name: "", phone: "", email: "", dob: "", source: "whatsapp", tag: "", section: defaultSectionForNewRecord(), notes: "", locationId: getDefaultLocationId() });
@@ -653,20 +656,20 @@ function AddClientModal({ onClose, onAdd, locations, allowLocationSelection, cli
                 {Object.keys(TAG_COLORS).map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            {businessType.sections && <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
               <label style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Section</label>
               <select value={form.section} onChange={(e) => set("section", e.target.value)} style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid #e8e8f0", fontSize: 13, color: "#1a1a2e", outline: "none", background: "#fff" }}>
                 <option value="">Unassigned</option>
                 {getSectionOptions(clients).map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
-            </div>
+            </div>}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>Notes & Preferences</label>
             <textarea
               value={form.notes}
               onChange={(e) => set("notes", e.target.value)}
-              placeholder="e.g. Sensitive scalp, prefers morning appointments, no strong fragrances…"
+              placeholder={businessType.clientNotesHint}
               rows={3}
               style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid #e8e8f0", fontSize: 13, color: "#1a1a2e", outline: "none", resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }}
             />
@@ -1268,7 +1271,7 @@ export default function ClientsPage() {
           {[
             { label: "Tag", value: tagFilter, onChange: setTagFilter, options: [["all", "All Tags"], ...allTags.map((t) => [t, t])] },
             { label: "Source", value: sourceFilter, onChange: setSourceFilter, options: [["all", "All Sources"], ...allSources.map((s) => [s, s])] },
-            {
+            ...(sectionsEnabled() ? [{
               // Locked to the active dashboard section when one is set — switch
               // the global "Active Section" control to see other clients.
               label: "Section", value: sectionFilter, onChange: setSectionFilter,
@@ -1276,7 +1279,7 @@ export default function ClientsPage() {
                 ? [[getActiveSection(), `${getActiveSection()} (locked)`]]
                 : [["all", "All Sections"], ...getSectionOptions(clients).map((s) => [s, s])],
               locked: getActiveSection() !== "all",
-            },
+            }] : []),
             { label: "Sort By", value: sortFilter, onChange: setSortFilter, options: [["none", "Default"], ["topSpend", "Top Spenders"], ["lowSpend", "Low Spenders"], ["topVisits", "Top Visits"]] },
           ].map(({ label, value, onChange, options, locked }) => (
             <div key={label} style={{ display: "flex", flexDirection: "column", gap: 5 }}>

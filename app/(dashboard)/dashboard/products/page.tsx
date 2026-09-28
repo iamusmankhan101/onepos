@@ -350,12 +350,12 @@ function ItemFormFields({ form, set, items, selfId }: { form: ItemForm; set: (k:
           </Field>
         </>
       )}
-      <Field label="Section">
+      {businessType.sections && <Field label="Section">
         <select value={form.section} onChange={(e) => set("section", e.target.value)} style={INP}>
           <option value="">Unassigned</option>
           {getSectionOptions(items).map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-      </Field>
+      </Field>}
       {businessType.restaurantMode && (
         <RecipeSection form={form} set={set} items={items} selfId={selfId} />
       )}
@@ -951,7 +951,7 @@ function ItemRow({ item, isLast, onEdit, onDelete }: {
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "2.2fr 110px 130px 100px 130px 110px 90px",
+      gridTemplateColumns: "minmax(0, 2.2fr) 110px 130px 100px 130px 110px 90px",
       padding: "13px 20px",
       borderBottom: isLast ? "none" : "1px solid #f4f4f8",
       borderLeft: leftBorder,
@@ -963,9 +963,9 @@ function ItemRow({ item, isLast, onEdit, onDelete }: {
       <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
         <ProductThumb item={item} size={34} />
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e", display: "flex", alignItems: "center", gap: 6 }}>
-            {item.name}
-            {status !== "ok" && <AlertTriangle size={12} color={badge.color} />}
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e", display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <span title={item.name} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{item.name}</span>
+            {status !== "ok" && <AlertTriangle size={12} color={badge.color} style={{ flexShrink: 0 }} />}
           </div>
           <div style={{ fontSize: 11, color: "#9898b0", marginTop: 1 }}>
             {item.brand}{item.supplier ? ` · ${item.supplier}` : ""}
@@ -1051,11 +1051,11 @@ export default function ProductsPage() {
     return subscribeToStoredData(() => setItems(getStoredInventory()));
   }, []);
 
-  const persist = useCallback((list: InventoryItem[]) => {
+  const persist = useCallback((list: InventoryItem[], deletedIds: string[] = []) => {
     // An ingredient's cost may have changed — keep recipe items' costs in step.
     const updated = refreshRecipeCosts(list);
     setItems(updated);
-    saveInventory(updated);
+    saveInventory(updated, deletedIds);
   }, []);
 
   const toggleRetail = useCallback((id: string) => {
@@ -1128,7 +1128,7 @@ export default function ProductsPage() {
       {/* ── Modals (shared) ── */}
       {showAdd    && <AddModal    onClose={() => setShowAdd(false)}    onAdd={(item) => persist([item, ...items])} items={items} />}
       {editItem   && <EditModal   item={editItem} onClose={() => setEditItem(null)} onSave={(updated) => persist(items.map((i) => i.id === updated.id ? updated : i))} items={items} />}
-      {deleteItem && <DeleteModal item={deleteItem} onClose={() => setDeleteItem(null)} onDelete={() => persist(getStoredInventory().filter((i) => i.id !== deleteItem.id))} />}
+      {deleteItem && <DeleteModal item={deleteItem} onClose={() => setDeleteItem(null)} onDelete={() => persist(getStoredInventory().filter((i) => i.id !== deleteItem.id), [deleteItem.id])} />}
       {showReminder && <ReminderModal alertItems={alertItems} onClose={() => setShowReminder(false)} />}
       {showOptions && <ModifierGroupsEditor items={items} currency={cur()} onClose={() => setShowOptions(false)} />}
       {showImport && (
@@ -1545,7 +1545,7 @@ export default function ProductsPage() {
             <div className="table-scroll-wrap" style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", overflow: "hidden" }}>
               <div className="table-scroll-inner">
                 <div className="inv-table-inner" style={{ background: "#fff" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 90px 110px 120px 110px 100px", padding: "12px 20px", background: "#faf9fd", borderBottom: "1px solid #f0f0f5", alignItems: "center" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 110px 90px 110px 120px 110px 100px", padding: "12px 20px", background: "#faf9fd", borderBottom: "1px solid #f0f0f5", alignItems: "center" }}>
                     {["PRODUCT", "CATEGORY", "STOCK", "COST PRICE", "RETAIL PRICE", "MARGIN", "IN POS"].map(h => (
                       <div key={h} style={{ fontSize: 10, fontWeight: 800, color: "#8e89a3", letterSpacing: "0.08em" }}>{h}</div>
                     ))}
@@ -1566,12 +1566,12 @@ export default function ProductsPage() {
                       return (
                         <div key={item.id}
                           className="hover-bg-row"
-                          style={{ display: "grid", gridTemplateColumns: "1fr 110px 90px 110px 120px 110px 100px", padding: "14px 20px", borderBottom: i < listItems.length - 1 ? "1px solid #f8f8fc" : "none", alignItems: "center", background: isRetail ? "#fafffe" : "transparent", transition: "background 0.2s" }}
+                          style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 110px 90px 110px 120px 110px 100px", padding: "14px 20px", borderBottom: i < listItems.length - 1 ? "1px solid #f8f8fc" : "none", alignItems: "center", background: isRetail ? "#fafffe" : "transparent", transition: "background 0.2s" }}
                         >
-                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, paddingRight: 10 }}>
                             <ProductThumb item={item} size={38} />
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 750, color: "#1a1a2e", letterSpacing: "-0.01em" }}>{item.brand ? `${item.brand} ` : ""}{item.name}</div>
+                            <div style={{ minWidth: 0 }}>
+                              <div title={`${item.brand ? `${item.brand} ` : ""}${item.name}`} style={{ fontSize: 13, fontWeight: 750, color: "#1a1a2e", letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.brand ? `${item.brand} ` : ""}{item.name}</div>
                               <div style={{ fontSize: 11, color: "#9898b0", marginTop: 2, fontWeight: 500 }}>{item.unit}</div>
                             </div>
                           </div>
@@ -1746,7 +1746,7 @@ export default function ProductsPage() {
                   onChange: (v: string) => setStatusFilter(v as "all" | "low" | "out" | "ok"),
                   options: [["all", "All"], ["ok", "In Stock"], ["low", "Low Stock"], ["out", "Out of Stock"]] as [string, string][],
                 },
-                {
+                ...(businessType.sections ? [{
                   // Locked to the active dashboard section when one is set — the
                   // only way to see other sections' products is to switch the
                   // global "Active Section" control, not this filter.
@@ -1756,7 +1756,7 @@ export default function ProductsPage() {
                     ? [[getActiveSection(), `${getActiveSection()} (locked)`]] as [string, string][]
                     : [["all", "All Sections"], ...getSectionOptions(items).map((s) => [s, s])] as [string, string][],
                   locked: getActiveSection() !== "all",
-                },
+                }] : []),
               ].map(({ label, value, onChange, options, locked }) => (
                 <div key={label} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   <label style={{ fontSize: 11, fontWeight: 800, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</label>
@@ -1776,7 +1776,7 @@ export default function ProductsPage() {
           <div className="table-scroll-wrap" style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", overflow: "hidden" }}>
             <div className="table-scroll-inner">
               <div className="inv-table-inner" style={{ background: "#fff" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "2.2fr 110px 130px 100px 130px 110px 90px", padding: "12px 20px", borderBottom: "1px solid #f0f0f5", background: "#faf9fd", alignItems: "center" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2.2fr) 110px 130px 100px 130px 110px 90px", padding: "12px 20px", borderBottom: "1px solid #f0f0f5", background: "#faf9fd", alignItems: "center" }}>
                   {["ITEM", "CATEGORY", "STOCK", "RESTOCKED", "COST PRICE", "STATUS", "ACTIONS"].map((h) => (
                     <div key={h} style={{ fontSize: 10, fontWeight: 800, color: "#8e89a3", letterSpacing: "0.08em" }}>{h}</div>
                   ))}

@@ -24,7 +24,7 @@ import { useRestaurantData, chime } from "@/lib/use-restaurant";
 import {
   ORDER_TYPE_LABEL, cancelOrder, deleteTable, liveLines, mergeOrders, minutesSince, moveOrder,
   newId, nextOrderNumber, orderLabel, orderSubtotal, saveOrder, saveTable, serveOrder, splitOrder,
-  tableState, type DiningTable, type RestaurantOrder, type TableState,
+  tableState, type DiningTable, type KitchenTicket, type RestaurantOrder, type TableState,
 } from "@/lib/restaurant";
 import { getStoredStaff } from "@/lib/storage";
 import { fmtCurrency as fmt } from "@/lib/format";
@@ -306,6 +306,7 @@ export default function TablesPage() {
           openOrders={openOrders}
           staff={staff}
           readyCount={tickets.filter((t) => t.orderId === openOrder.id && t.status === "ready").length}
+          tickets={tickets.filter((t) => t.orderId === openOrder.id)}
           now={now}
           onClose={() => setOpenOrderId(null)}
           onSelect={setOpenOrderId}
@@ -432,10 +433,13 @@ function SeatDialog({ table, staff, onClose, onSeat, onHistory }: {
 
 type PanelMode = null | "move" | "merge" | "split" | "cancel";
 
-function OrderPanel({ order, tables, openOrders, staff, readyCount, now, onClose, onSelect }: {
+function OrderPanel({ order, tables, openOrders, staff, readyCount, tickets, now, onClose, onSelect }: {
   order: RestaurantOrder; tables: DiningTable[]; openOrders: RestaurantOrder[]; staff: Staff[];
-  readyCount: number; now: number; onClose: () => void; onSelect: (id: string | null) => void;
+  readyCount: number; tickets: KitchenTicket[]; now: number; onClose: () => void; onSelect: (id: string | null) => void;
 }) {
+  // Where each sent line has got to: the status of the kitchen ticket carrying it.
+  const lineStatus = new Map<string, KitchenTicket["status"]>();
+  for (const t of tickets) for (const i of t.items) lineStatus.set(i.lineId, t.status);
   const router = useRouter();
   const [mode, setMode] = useState<PanelMode>(null);
   const [splitIds, setSplitIds] = useState<Set<string>>(new Set());
@@ -499,8 +503,10 @@ function OrderPanel({ order, tables, openOrders, staff, readyCount, now, onClose
                 <div style={{ fontSize: 13, fontWeight: 750, color: "#1d1d2f", textDecoration: l.voided ? "line-through" : "none" }}>{l.qty} × {l.name}</div>
                 {l.modifiers && l.modifiers.length > 0 && <div style={{ fontSize: 11, fontWeight: 600, color: "#1d4ed8" }}>{l.modifiers.map((m) => m.name).join(" · ")}</div>}
                 {l.note && <div style={{ fontSize: 11, color: "#b45309" }}>{l.note}</div>}
-                <div style={{ fontSize: 10, fontWeight: 700, color: l.voided ? "#dc2626" : l.firedAt ? "#059669" : "#d97706", marginTop: 2 }}>
-                  {l.voided ? `Voided — ${l.voided.reason} (${l.voided.approvedBy})` : l.firedAt ? "Sent to kitchen" : "Not sent yet"}
+                <div style={{ fontSize: 10, fontWeight: 700, color: l.voided ? "#dc2626" : !l.firedAt ? "#d97706" : lineStatus.get(l.id) === "ready" ? "#047857" : lineStatus.get(l.id) === "served" ? "#6b7280" : "#059669", marginTop: 2 }}>
+                  {l.voided ? `Voided — ${l.voided.reason} (${l.voided.approvedBy})`
+                    : !l.firedAt ? "Not sent yet"
+                    : ({ new: "Sent to kitchen", preparing: "Being prepared", ready: "Ready to serve", served: "Served" } as const)[lineStatus.get(l.id) ?? "new"]}
                 </div>
               </div>
               <div style={{ fontSize: 13, fontWeight: 800, color: "#4a4a6a" }}>{fmt(l.qty * l.unitPrice)}</div>

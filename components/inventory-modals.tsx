@@ -79,7 +79,8 @@ export function IngredientModal({ item, suppliers, money, onClose }: {
   item?: InventoryItem;
   suppliers: Supplier[];
   money: (n: number) => string;
-  onClose: () => void;
+  /** Called with a confirmation message after a save, with nothing on cancel. */
+  onClose: (message?: string) => void;
 }) {
   const [name, setName] = useState(item?.name ?? "");
   const [unit, setUnit] = useState<InventoryUnit>(item?.unit ?? "kg");
@@ -111,7 +112,7 @@ export function IngredientModal({ item, suppliers, money, onClose }: {
       saveInventory(refreshRecipeCosts(list));
       const openingQty = Number(opening) || 0;
       if (!item && openingQty > 0) await recordMovement("count", [{ itemId: next.id, qty: openingQty }], { note: "Opening stock" });
-      onClose();
+      onClose(item ? `${next.name} saved` : `${next.name} added`);
     } finally {
       setBusy(false);
     }
@@ -123,15 +124,15 @@ export function IngredientModal({ item, suppliers, money, onClose }: {
       ? `${item.name} is in the recipe for ${usedIn.map((i) => i.name).join(", ")}. Delete it anyway? Those recipes stop using it.`
       : `Delete ${item.name}?`;
     if (!window.confirm(msg)) return;
-    saveInventory(refreshRecipeCosts(getStoredInventory().filter((i) => i.id !== item.id)));
-    onClose();
+    saveInventory(refreshRecipeCosts(getStoredInventory().filter((i) => i.id !== item.id)), [item.id]);
+    onClose(`${item.name} deleted`);
   }
 
   // Changing an existing item's unit would silently reinterpret its stock and every recipe using it.
   const unitLocked = !!item && (item.currentStock > 0 || usedIn.length > 0);
 
   return (
-    <Modal title={item ? `Edit — ${item.name}` : "Add ingredient"} subtitle={item ? undefined : "Something you stock and use: beans, milk, cups, lids…"} onClose={onClose}>
+    <Modal title={item ? `Edit — ${item.name}` : "Add ingredient"} subtitle={item ? undefined : "Something you stock and use: beans, milk, cups, lids…"} onClose={() => onClose()}>
       <Field label="Name *"><input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Coffee beans" style={INP} /></Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Stock unit *" hint={unitLocked ? "Locked — stock and recipes are counted in it." : "Recipes can still use g for kg, ml for l."}>
@@ -171,7 +172,7 @@ export function IngredientModal({ item, suppliers, money, onClose }: {
       {item && (
         <button type="button" onClick={remove} style={{ alignSelf: "flex-start", border: "none", background: "none", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>Delete ingredient</button>
       )}
-      <Buttons onCancel={onClose} onSave={save} label={item ? "Save" : "Add ingredient"} disabled={!name.trim()} busy={busy} />
+      <Buttons onCancel={() => onClose()} onSave={save} label={item ? "Save" : "Add ingredient"} disabled={!name.trim()} busy={busy} />
     </Modal>
   );
 }
@@ -196,7 +197,8 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
   suppliers: Supplier[];
   money: (n: number) => string;
   by?: string;
-  onClose: () => void;
+  /** Called with a confirmation message after a save, with nothing on cancel. */
+  onClose: (message?: string) => void;
 }) {
   const stocked = useMemo(() => items.filter(tracksStock).sort((a, b) => a.name.localeCompare(b.name)), [items]);
   const byId = new Map(items.map((i) => [i.id, i]));
@@ -263,7 +265,7 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
         await recordMovement(
           "purchase",
           order.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitCost: l.unitCost, expiresOn: l.expiresOn })),
-          { ref: order.number, note: order.supplierName || undefined, by },
+          { ref: order.number, refId: order.id, note: order.supplierName || undefined, by },
         );
         const amount = Math.round(purchaseTotal(order));
         if (asExpense && amount > 0) {
@@ -279,7 +281,9 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
         }
       }
       await savePurchaseOrder(order);
-      onClose();
+      onClose(receive
+        ? `${order.number} received — ${order.lines.length} item${order.lines.length === 1 ? "" : "s"} added to stock`
+        : `${order.number} saved as ordered`);
     } finally {
       setBusy(false);
     }
@@ -287,7 +291,7 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
 
   const title = receiving ? `Receive ${po!.number}` : po ? po.number : "New purchase order";
   return (
-    <Modal wide title={title} subtitle={receiving ? "Correct anything that arrived differently, then mark it received." : "Save it as ordered, or receive it now if the delivery is already here."} onClose={onClose}>
+    <Modal wide title={title} subtitle={receiving ? "Correct anything that arrived differently, then mark it received." : "Save it as ordered, or receive it now if the delivery is already here."} onClose={() => onClose()}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Supplier">
           <input value={supplierName} onChange={(e) => setSupplierName(e.target.value)} list="po-suppliers" placeholder="e.g. Metro Cash & Carry" style={INP} />
@@ -342,7 +346,7 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
       </div>
 
       <div style={{ display: "flex", gap: 10, paddingTop: 14, borderTop: "1px solid #f0f0f8", flexWrap: "wrap" }}>
-        <button type="button" onClick={onClose} style={SECONDARY}>Cancel</button>
+        <button type="button" onClick={() => onClose()} style={SECONDARY}>Cancel</button>
         {!receiving && (
           <button type="button" onClick={() => submit(false)} disabled={busy || valid.length === 0}
             style={{ ...SECONDARY, color: "#c2410c", borderColor: "#fed7aa", background: "#fff7ed", opacity: valid.length ? 1 : 0.5 }}>
@@ -369,7 +373,8 @@ export function WasteModal({ items, initialItemId, money, by, onClose }: {
   initialItemId?: string;
   money: (n: number) => string;
   by?: string;
-  onClose: () => void;
+  /** Called with a confirmation message after a save, with nothing on cancel. */
+  onClose: (message?: string) => void;
 }) {
   const choices = useMemo(() => [...items].sort((a, b) => Number(hasRecipe(a)) - Number(hasRecipe(b)) || a.name.localeCompare(b.name)), [items]);
   const [itemId, setItemId] = useState(initialItemId ?? choices[0]?.id ?? "");
@@ -404,14 +409,14 @@ export function WasteModal({ items, initialItemId, money, by, onClose }: {
         note: [recipe && item ? `${amount} × ${item.name}` : "", note.trim()].filter(Boolean).join(" · ") || undefined,
         by,
       });
-      onClose();
+      onClose("Wastage recorded — taken out of stock");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <Modal title="Record wastage" subtitle="Takes it out of stock and counts it in wastage reports." onClose={onClose}>
+    <Modal title="Record wastage" subtitle="Takes it out of stock and counts it in wastage reports." onClose={() => onClose()}>
       <Field label="What">
         <select value={itemId} onChange={(e) => pick(e.target.value)} style={INP}>
           {choices.map((i) => <option key={i.id} value={i.id}>{i.name}{hasRecipe(i) ? " (made to order)" : ""}</option>)}
@@ -444,7 +449,7 @@ export function WasteModal({ items, initialItemId, money, by, onClose }: {
           <div style={{ fontWeight: 800, color: "#1a1a2e" }}>Value lost: {money(value)}</div>
         </div>
       )}
-      <Buttons onCancel={onClose} onSave={save} label="Record wastage" disabled={changes.length === 0} busy={busy} />
+      <Buttons onCancel={() => onClose()} onSave={save} label="Record wastage" disabled={changes.length === 0} busy={busy} />
     </Modal>
   );
 }
@@ -452,7 +457,7 @@ export function WasteModal({ items, initialItemId, money, by, onClose }: {
 // ─── Stock count ──────────────────────────────────────────────────────────────
 
 /** Enter what's actually on the shelf; the differences are recorded as a count adjustment. */
-export function CountModal({ items, money, by, onClose }: { items: InventoryItem[]; money: (n: number) => string; by?: string; onClose: () => void }) {
+export function CountModal({ items, money, by, onClose }: { items: InventoryItem[]; money: (n: number) => string; by?: string; onClose: (message?: string) => void }) {
   const stocked = useMemo(() => items.filter(tracksStock).sort((a, b) => a.name.localeCompare(b.name)), [items]);
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -467,14 +472,14 @@ export function CountModal({ items, money, by, onClose }: { items: InventoryItem
     setBusy(true);
     try {
       await recordMovement("count", diffs.map((d) => ({ itemId: d.item.id, qty: d.diff })), { note: "Stock count", by });
-      onClose();
+      onClose(`Stock count saved — ${diffs.length} item${diffs.length === 1 ? "" : "s"} adjusted`);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <Modal wide title="Stock count" subtitle="Type what's actually there. Leave a row empty if you didn't count it." onClose={onClose}>
+    <Modal wide title="Stock count" subtitle="Type what's actually there. Leave a row empty if you didn't count it." onClose={() => onClose()}>
       <div style={{ display: "flex", flexDirection: "column" }}>
         {stocked.map((i) => {
           const counted = counts[i.id];
@@ -498,14 +503,14 @@ export function CountModal({ items, money, by, onClose }: { items: InventoryItem
           {diffs.length} item{diffs.length === 1 ? "" : "s"} adjusted · {value < 0 ? "shortfall" : "surplus"} worth {money(Math.abs(value))}
         </div>
       )}
-      <Buttons onCancel={onClose} onSave={save} label="Save count" disabled={diffs.length === 0} busy={busy} />
+      <Buttons onCancel={() => onClose()} onSave={save} label="Save count" disabled={diffs.length === 0} busy={busy} />
     </Modal>
   );
 }
 
 // ─── Supplier ─────────────────────────────────────────────────────────────────
 
-export function SupplierModal({ supplier, suppliers, onClose }: { supplier?: Supplier; suppliers: Supplier[]; onClose: () => void }) {
+export function SupplierModal({ supplier, suppliers, onClose }: { supplier?: Supplier; suppliers: Supplier[]; onClose: (message?: string) => void }) {
   const [name, setName] = useState(supplier?.name ?? "");
   const [phone, setPhone] = useState(supplier?.phone ?? "");
   const [contact, setContact] = useState(supplier?.contact ?? "");
@@ -518,7 +523,7 @@ export function SupplierModal({ supplier, suppliers, onClose }: { supplier?: Sup
     try {
       const next: Supplier = { id: supplier?.id ?? newStockId("sup"), name: name.trim(), phone: phone.trim() || undefined, contact: contact.trim() || undefined, notes: notes.trim() || undefined };
       await saveSuppliers(supplier ? suppliers.map((s) => (s.id === supplier.id ? next : s)) : [...suppliers, next]);
-      onClose();
+      onClose(`${next.name} saved`);
     } finally {
       setBusy(false);
     }
@@ -527,11 +532,11 @@ export function SupplierModal({ supplier, suppliers, onClose }: { supplier?: Sup
   async function remove() {
     if (!supplier || !window.confirm(`Delete ${supplier.name}? Past purchase orders keep the name.`)) return;
     await saveSuppliers(suppliers.filter((s) => s.id !== supplier.id), [supplier.id]);
-    onClose();
+    onClose(`${supplier.name} deleted`);
   }
 
   return (
-    <Modal title={supplier ? `Edit — ${supplier.name}` : "Add supplier"} onClose={onClose}>
+    <Modal title={supplier ? `Edit — ${supplier.name}` : "Add supplier"} onClose={() => onClose()}>
       <Field label="Name *"><input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Metro Cash & Carry" style={INP} /></Field>
       {duplicate && <div style={{ fontSize: 12, color: "#dc2626", fontWeight: 700 }}>There&apos;s already a supplier with that name.</div>}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -542,7 +547,7 @@ export function SupplierModal({ supplier, suppliers, onClose }: { supplier?: Sup
       {supplier && (
         <button type="button" onClick={remove} style={{ alignSelf: "flex-start", border: "none", background: "none", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>Delete supplier</button>
       )}
-      <Buttons onCancel={onClose} onSave={save} label={supplier ? "Save" : "Add supplier"} disabled={!name.trim() || duplicate} busy={busy} />
+      <Buttons onCancel={() => onClose()} onSave={save} label={supplier ? "Save" : "Add supplier"} disabled={!name.trim() || duplicate} busy={busy} />
     </Modal>
   );
 }

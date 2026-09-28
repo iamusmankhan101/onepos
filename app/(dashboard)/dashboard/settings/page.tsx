@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
-import { Store, Clock, Shield, Smartphone, ChevronRight, Check, KeyRound, PrinterIcon, Building2, MapPin, Plus, Trash2, Sparkles, CreditCard, AlertTriangle, Percent } from "lucide-react";
+import { Store, Clock, Shield, Smartphone, ChevronRight, Check, KeyRound, PrinterIcon, Building2, MapPin, Plus, Trash2, Sparkles, CreditCard, AlertTriangle, Percent, ShieldCheck } from "lucide-react";
 import { billCharges, getChargeSettings } from "@/lib/charges";
+import { getPosRules } from "@/lib/pos-rules";
 import { settingsStore, saveSettings, SETTINGS_CHANGED_EVENT } from "@/lib/settings-store";
 import {
   activePlan, addBusinessLocation, canManageBranches, deleteBusinessLocation, getActiveLocationFilter,
@@ -26,6 +27,7 @@ const SECTIONS: { id: string; label: string; icon: typeof Store; ownerOnly?: boo
   { id: "branches", label: "Branches",       icon: Building2 },
   { id: "hours",   label: "Business Hours",  icon: Clock },
   { id: "charges", label: "Tax & Service Charge", icon: Percent },
+  { id: "pos-rules", label: "POS Rules", icon: ShieldCheck },
   { id: "whatsapp", label: "WhatsApp Receipt", icon: Smartphone },
   { id: "printer", label: "Thermal Printer", icon: PrinterIcon },
   { id: "access",  label: "Staff Access",    icon: KeyRound },
@@ -40,6 +42,7 @@ const PERMISSION_OPTIONS: { key: string; label: string; restaurantOnly?: boolean
   { key: "kitchen",   label: "Kitchen", restaurantOnly: true },
   { key: "products",  label: "Products"  },
   { key: "inventory", label: "Inventory", restaurantOnly: true },
+  { key: "shifts",    label: "Shifts",    restaurantOnly: true },
   { key: "clients",   label: "Clients"   },
   { key: "loyalty",   label: "Loyalty"   },
   { key: "invoices",  label: "Invoices"  },
@@ -619,6 +622,51 @@ function ChargesSection() {
         </div>
       )}
 
+      <div><SaveBar onSave={save} busy={saving} /></div>
+    </div>
+  );
+}
+
+function PosRulesSection() {
+  const businessType = useBusinessType();
+  const [form, setForm, markSaved] = useSyncedSettings(() => {
+    const r = getPosRules();
+    return {
+      staffDiscountRate: r.staffDiscountRate ? String(r.staffDiscountRate) : "",
+      discountApprovalOver: r.discountApprovalOver ? String(r.discountApprovalOver) : "",
+      requireOpenShift: r.requireOpenShift,
+    };
+  });
+  const { commit, saved, error, saving } = useSettingsSave(markSaved);
+  const pct = (v: string) => Math.min(100, Math.max(0, Number(v) || 0));
+  const save = () => commit(() => {
+    Object.assign(settingsStore.posRules, {
+      staffDiscountRate: pct(form.staffDiscountRate),
+      discountApprovalOver: pct(form.discountApprovalOver),
+      requireOpenShift: form.requireOpenShift,
+    });
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <SaveStatus saved={saved} error={error} />
+      <Field label="Staff discount (%)" hint="Adds a one-tap Staff discount button on the POS. Leave empty to hide it.">
+        <input type="number" min={0} max={100} step="0.5" value={form.staffDiscountRate} placeholder="e.g. 25"
+          onChange={e => setForm(f => ({ ...f, staffDiscountRate: e.target.value }))} style={{ ...inp, maxWidth: 160 }} />
+      </Field>
+      <Field label="Manager approval for discounts over (%)" hint="A staff login giving a bigger discount than this needs an owner or manager to sign it off. Leave empty for no limit. Refunds always need approval.">
+        <input type="number" min={0} max={100} step="1" value={form.discountApprovalOver} placeholder="e.g. 10"
+          onChange={e => setForm(f => ({ ...f, discountApprovalOver: e.target.value }))} style={{ ...inp, maxWidth: 160 }} />
+      </Field>
+      {businessType.restaurantMode && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: "#f9f9fb", borderRadius: 10 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>Require an open shift to sell</div>
+            <div style={{ fontSize: 11, color: "#9898b0", marginTop: 2 }}>The POS won&apos;t take payment until someone opens the cash drawer on the Shifts page</div>
+          </div>
+          <Toggle value={form.requireOpenShift} onChange={() => setForm(f => ({ ...f, requireOpenShift: !f.requireOpenShift }))} />
+        </div>
+      )}
       <div><SaveBar onSave={save} busy={saving} /></div>
     </div>
   );
@@ -1356,6 +1404,7 @@ export default function SettingsPage() {
               {id === "whatsapp" && <WhatsAppSection />}
               {id === "printer"  && <ThermalPrinterSection />}
               {id === "charges"  && <ChargesSection />}
+              {id === "pos-rules" && <PosRulesSection />}
               {id === "access"   && <StaffAccess />}
               {id === "security" && <Security />}
             </div>
