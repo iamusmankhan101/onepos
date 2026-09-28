@@ -465,7 +465,33 @@ function priceFieldsValid(form: ItemForm): boolean {
 const PRODUCT_EXPORT_COLS = [
   "Item ID", "Name", "Brand", "Category", "Section", "Unit", "Current Stock", "Min Stock",
   "Cost Price", "Variable Price", "Retail Price", "Min Price", "Max Price", "Barcode", "Supplier", "Last Restocked", "Notes",
+  // Restaurant mode — without these a re-import turned recipe dishes into
+  // plain stock items with 0 stock and lost their sections and prices.
+  "Menu Section", "Takeaway Price", "Delivery Price", "Recipe", "Options",
 ];
+
+/** "Coffee beans 18 g; Full cream milk 250 ml" — a recipe as one spreadsheet cell. */
+function recipeToText(recipe: RecipeLine[] | undefined, items: InventoryItem[]): string {
+  const byId = new Map(items.map((i) => [i.id, i.name]));
+  return (recipe ?? []).map((l) => `${byId.get(l.itemId) ?? "?"} ${l.qty} ${l.unit}`).join("; ");
+}
+
+/** Reads recipeToText() back, by ingredient name. Unknown names are reported, not guessed. */
+function textToRecipe(text: string, items: InventoryItem[]): { recipe: RecipeLine[]; problems: string[] } {
+  const byName = new Map(items.map((i) => [i.name.trim().toLowerCase(), i]));
+  const recipe: RecipeLine[] = [];
+  const problems: string[] = [];
+  for (const part of text.split(";").map((x) => x.trim()).filter(Boolean)) {
+    const m = part.match(/^(.*?)\s+(-?\d+(?:\.\d+)?)\s*([a-z]+)$/i);
+    const item = m ? byName.get(m[1].trim().toLowerCase()) : undefined;
+    const unit = m?.[3].toLowerCase() as InventoryUnit | undefined;
+    if (!m) { problems.push(`recipe part "${part}" isn't "name amount unit"`); continue; }
+    if (!item) { problems.push(`recipe ingredient "${m[1].trim()}" not found`); continue; }
+    if (!unit || !(UNITS as string[]).includes(unit)) { problems.push(`recipe unit "${m[3]}" unknown`); continue; }
+    recipe.push({ itemId: item.id, qty: Number(m[2]), unit });
+  }
+  return { recipe, problems };
+}
 
 type ProductImportRecord = { item: InventoryItem; mode: "add" | "update" };
 type ProductImportResult = { added: number; updated: number; skipped: number; errors: string[] };
@@ -484,7 +510,9 @@ function normalizeUnit(value: unknown): InventoryUnit {
   return (UNITS as string[]).includes(raw) ? (raw as InventoryUnit) : "pcs";
 }
 
-function itemsToRows(list: InventoryItem[]) {
+function itemsToRows(list: InventoryItem[], allItems?: InventoryItem[]) {
+  const groupNames = new Map(getModifierGroups().map((g) => [g.id, g.name]));
+  const lookupList = allItems && allItems.length > 0 ? allItems : list;
   return list.map((item) => ({
     "Item ID": item.id,
     "Name": item.name,
@@ -503,6 +531,11 @@ function itemsToRows(list: InventoryItem[]) {
     "Supplier": item.supplier ?? "",
     "Last Restocked": item.lastRestocked ?? "",
     "Notes": item.notes ?? "",
+    "Menu Section": item.menuCategory ?? "",
+    "Takeaway Price": item.takeawayPrice ?? "",
+    "Delivery Price": item.deliveryPrice ?? "",
+    "Recipe": recipeToText(item.recipe, lookupList),
+    "Options": (item.modifierGroupIds ?? []).map((id) => groupNames.get(id)).filter(Boolean).join(", "),
   }));
 }
 
@@ -516,9 +549,9 @@ function downloadBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-async function exportProducts(list: InventoryItem[], format: "xlsx" | "csv") {
+async function exportProducts(list: InventoryItem[], format: "xlsx" | "csv", allItems?: InventoryItem[]) {
   const XLSX = await import("xlsx");
-  const ws = XLSX.utils.json_to_sheet(itemsToRows(list), { header: PRODUCT_EXPORT_COLS });
+  const ws = XLSX.utils.json_to_sheet(itemsToRows(list, allItems), { header: PRODUCT_EXPORT_COLS });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Products");
   const date = new Date().toISOString().slice(0, 10);
@@ -538,6 +571,11 @@ function ProductImportModal({ existing, onClose, onImport }: {
 }) {
   const [step, setStep] = useState<"pick" | "preview" | "done">("pick");
   const [parsed, setParsed] = useState<ProductImportRecord[]>([]);
+  const [problems, setProblems] = useState<string[]>([]);
+  const businessType = useBusinessType();
+  /** Where an imported row ends up — a restaurant keeps unpriced stock on the Inventory page. */
+  const destination = (item: InventoryItem) =>
+    businessType.restaurantMode && tracksStock(item) && !((item.retailPrice ?? 0) > 0) && !item.variablePrice ? "Inventory" : businessType.productsLabel;
   const [result, setResult] = useState<ProductImportResult | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -560,12 +598,33 @@ function ProductImportModal({ existing, onClose, onImport }: {
       const byId = new Map(existing.map((i) => [i.id, i]));
       const byBarcode = new Map(existing.filter((i) => i.barcode).map((i) => [i.barcode!.trim(), i]));
       const byNameBrand = new Map(existing.map((i) => [`${i.name.trim().toLowerCase()}|${i.brand.trim().toLowerCase()}`, i]));
+      const groupsByName = new Map(getModifierGroups().map((g) => [g.name.trim().toLowerCase(), g.id]));
       const records: ProductImportRecord[] = [];
+      const problems: string[] = [];
       const usedIds = new Set(existing.map((i) => i.id));
+      const recipeText = new Map<string, { text: string; row: number }>();
 
-      for (const row of rows) {
+      /**
+       * A number cell: blank → undefined (keep what's there), a number → it,
+       * anything else → an error. Number("") is 0 and Number("abc") is NaN,
+       * which is how blank and garbage cells used to land as 0 stock silently.
+       */
+      const num = (raw: unknown, column: string, rowNo: number, bad: string[]): number | undefined => {
+        const text = String(raw ?? "").trim().replace(/,/g, "");
+        if (!text) return undefined;
+        const n = Number(text);
+        if (!Number.isFinite(n) || n < 0) { bad.push(`${column} "${String(raw).trim()}" isn't a number`); return undefined; }
+        return n;
+      };
+
+      rows.forEach((row, index) => {
+        const rowNo = index + 2; // the header is row 1
         const name = String(row["Name"] ?? row["name"] ?? "").trim();
-        if (!name) continue;
+        if (!name) {
+          const blank = Object.values(row).every((v) => String(v ?? "").trim() === "");
+          if (!blank) problems.push(`Row ${rowNo}: skipped — no Name.`);
+          return;
+        }
         const brand = String(row["Brand"] ?? row["brand"] ?? "").trim();
 
         const rawId = String(row["Item ID"] ?? row["ID"] ?? row["id"] ?? "").trim();
@@ -573,20 +632,33 @@ function ProductImportModal({ existing, onClose, onImport }: {
         const nameBrandKey = `${name.toLowerCase()}|${brand.toLowerCase()}`;
         const existingItem = (rawId && byId.get(rawId)) || (barcode && byBarcode.get(barcode)) || byNameBrand.get(nameBrandKey);
         const id = existingItem?.id ?? (rawId || `inv_imp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
-        if (!existingItem && usedIds.has(id)) continue;
+        if (!existingItem && usedIds.has(id)) { problems.push(`Row ${rowNo} (${name}): skipped — Item ID ${id} appears twice.`); return; }
+
+        const bad: string[] = [];
+        const variablePrice = parseBool(row["Variable Price"] ?? row["Variable"]);
+        const priceRangeMin = num(row["Min Price"] ?? row["Price Range Min"], "Min Price", rowNo, bad);
+        const priceRangeMax = num(row["Max Price"] ?? row["Price Range Max"], "Max Price", rowNo, bad);
+        const retailPriceRaw = num(row["Retail Price"] ?? row["Selling Price"] ?? row["Price"], "Retail Price", rowNo, bad);
+        const currentStock = num(row["Current Stock"] ?? row["Stock"], "Current Stock", rowNo, bad);
+        const minStock = num(row["Min Stock"], "Min Stock", rowNo, bad);
+        const costPrice = num(row["Cost Price"] ?? row["Cost"], "Cost Price", rowNo, bad);
+        const takeawayPrice = num(row["Takeaway Price"], "Takeaway Price", rowNo, bad);
+        const deliveryPrice = num(row["Delivery Price"], "Delivery Price", rowNo, bad);
+        // A row with a garbled number is skipped whole, not imported with a 0 in it.
+        if (bad.length) { problems.push(`Row ${rowNo} (${name}): skipped — ${bad.join(", ")}.`); return; }
         usedIds.add(id);
 
-        const variablePrice = parseBool(row["Variable Price"] ?? row["Variable"]);
-        const priceRangeMin = Number(row["Min Price"] ?? row["Price Range Min"] ?? "");
-        const priceRangeMax = Number(row["Max Price"] ?? row["Price Range Max"] ?? "");
-        const retailPriceRaw = Number(row["Retail Price"] ?? row["Price"] ?? "");
-        const currentStock = Number(row["Current Stock"] ?? row["Stock"] ?? "");
-        const minStock = Number(row["Min Stock"] ?? "");
-        const costPrice = Number(row["Cost Price"] ?? row["Cost"] ?? "");
+        const optionNames = String(row["Options"] ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+        const modifierGroupIds = optionNames.map((n) => groupsByName.get(n.toLowerCase())).filter((x): x is string => !!x);
+        const missingGroups = optionNames.filter((n) => !groupsByName.has(n.toLowerCase()));
+        if (missingGroups.length) problems.push(`Row ${rowNo} (${name}): option group${missingGroups.length === 1 ? "" : "s"} ${missingGroups.join(", ")} not found — create ${missingGroups.length === 1 ? "it" : "them"} under Menu options first.`);
+        const recipeCell = String(row["Recipe"] ?? "").trim();
+        if (recipeCell) recipeText.set(id, { text: recipeCell, row: rowNo });
 
         records.push({
           mode: existingItem ? "update" : "add",
           item: {
+            ...existingItem,
             id,
             name,
             brand: brand || existingItem?.brand || "",
@@ -595,15 +667,15 @@ function ProductImportModal({ existing, onClose, onImport }: {
               || defaultSectionForNewRecord()
               || undefined,
             unit: normalizeUnit(row["Unit"] ?? row["unit"]),
-            currentStock: Number.isFinite(currentStock) ? currentStock : (existingItem?.currentStock ?? 0),
-            minStock: Number.isFinite(minStock) ? minStock : (existingItem?.minStock ?? 0),
-            costPrice: Number.isFinite(costPrice) ? costPrice : (existingItem?.costPrice ?? 0),
+            currentStock: currentStock ?? existingItem?.currentStock ?? 0,
+            minStock: minStock ?? existingItem?.minStock ?? 0,
+            costPrice: costPrice ?? existingItem?.costPrice ?? 0,
             retailPrice: variablePrice
-              ? (Number.isFinite(priceRangeMin) && priceRangeMin > 0 ? priceRangeMin : undefined)
-              : (Number.isFinite(retailPriceRaw) && retailPriceRaw > 0 ? retailPriceRaw : existingItem?.retailPrice),
+              ? (priceRangeMin && priceRangeMin > 0 ? priceRangeMin : undefined)
+              : (retailPriceRaw && retailPriceRaw > 0 ? retailPriceRaw : existingItem?.retailPrice),
             variablePrice,
-            priceRangeMin: variablePrice && Number.isFinite(priceRangeMin) ? priceRangeMin : undefined,
-            priceRangeMax: variablePrice && Number.isFinite(priceRangeMax) ? priceRangeMax : undefined,
+            priceRangeMin: variablePrice ? priceRangeMin : undefined,
+            priceRangeMax: variablePrice ? priceRangeMax : undefined,
             barcode: barcode || existingItem?.barcode || undefined,
             // Photos aren't a spreadsheet column — carry the existing one over
             // so re-importing a sheet never silently strips product images.
@@ -611,11 +683,29 @@ function ProductImportModal({ existing, onClose, onImport }: {
             supplier: String(row["Supplier"] ?? row["supplier"] ?? "").trim() || existingItem?.supplier,
             notes: String(row["Notes"] ?? row["notes"] ?? "").trim() || existingItem?.notes,
             lastRestocked: String(row["Last Restocked"] ?? "").trim() || existingItem?.lastRestocked || new Date().toLocaleDateString("en-CA"),
+            menuCategory: String(row["Menu Section"] ?? "").trim() || existingItem?.menuCategory,
+            takeawayPrice: takeawayPrice && takeawayPrice > 0 ? takeawayPrice : existingItem?.takeawayPrice,
+            deliveryPrice: deliveryPrice && deliveryPrice > 0 ? deliveryPrice : existingItem?.deliveryPrice,
+            modifierGroupIds: optionNames.length ? modifierGroupIds : existingItem?.modifierGroupIds,
           },
         });
+      });
+
+      // Recipes second: an ingredient can be a row further down the same file.
+      const known = [...existing.filter((i) => !records.some((r2) => r2.item.id === i.id)), ...records.map((r2) => r2.item)];
+      for (const record of records) {
+        const cell = recipeText.get(record.item.id);
+        if (!cell) continue;
+        const { recipe, problems: recipeProblems } = textToRecipe(cell.text, known.filter((i) => i.id !== record.item.id));
+        recipeProblems.forEach((msg) => problems.push(`Row ${cell.row} (${record.item.name}): ${msg}.`));
+        if (recipe.length) {
+          // Made to order: no stock of its own (lib/stock.ts).
+          record.item = { ...record.item, recipe, currentStock: 0, minStock: 0 };
+        }
       }
 
       setParsed(records);
+      setProblems(problems);
       setStep("preview");
     } catch (e) {
       setError(`Could not read file: ${e instanceof Error ? e.message : String(e)}`);
@@ -626,7 +716,10 @@ function ProductImportModal({ existing, onClose, onImport }: {
 
   async function downloadTemplate() {
     const XLSX = await import("xlsx");
-    const sample = [{
+    const sample = businessType.restaurantMode ? [
+      { "Item ID": "", "Name": "Coffee beans", "Brand": "", "Category": "supplies", "Section": "", "Unit": "kg", "Current Stock": 5, "Min Stock": 1, "Cost Price": 4000, "Variable Price": "No", "Retail Price": "", "Min Price": "", "Max Price": "", "Barcode": "", "Supplier": "Bean Co", "Last Restocked": "", "Notes": "An ingredient: no selling price, so it lives on Inventory", "Menu Section": "", "Takeaway Price": "", "Delivery Price": "", "Recipe": "", "Options": "" },
+      { "Item ID": "", "Name": "Latte", "Brand": "", "Category": "drinks", "Section": "", "Unit": "pcs", "Current Stock": "", "Min Stock": "", "Cost Price": "", "Variable Price": "No", "Retail Price": 600, "Min Price": "", "Max Price": "", "Barcode": "", "Supplier": "", "Last Restocked": "", "Notes": "Made to order from its recipe", "Menu Section": "Coffee", "Takeaway Price": 650, "Delivery Price": 700, "Recipe": "Coffee beans 18 g", "Options": "Size, Milk" },
+    ] : [{
       "Item ID": "",
       "Name": "500ml Water Bottle",
       "Brand": "Nestle",
@@ -647,7 +740,7 @@ function ProductImportModal({ existing, onClose, onImport }: {
     }];
     const ws = XLSX.utils.json_to_sheet(sample, { header: PRODUCT_EXPORT_COLS });
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Products Template");
+    XLSX.utils.book_append_sheet(wb, ws, `${businessType.productsLabel} Template`);
     XLSX.writeFile(wb, "products-import-template.xlsx");
   }
 
@@ -658,6 +751,7 @@ function ProductImportModal({ existing, onClose, onImport }: {
   }
 
   const addCount = parsed.filter((record) => record.mode === "add").length;
+  const ingredientCount = parsed.filter((record) => destination(record.item) === "Inventory").length;
   const updateCount = parsed.filter((record) => record.mode === "update").length;
 
   return (
@@ -669,7 +763,7 @@ function ProductImportModal({ existing, onClose, onImport }: {
               <FileSpreadsheet size={18} color="#fff" />
             </div>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: "#1a1a2e" }}>Import Products</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#1a1a2e" }}>Import {businessType.productsLabel}</div>
               <div style={{ fontSize: 11, color: "#9898b0" }}>XLSX or CSV file</div>
             </div>
           </div>
@@ -696,8 +790,13 @@ function ProductImportModal({ existing, onClose, onImport }: {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 16px", fontSize: 11 }}>
                 {[
-                  ["Name", "Required"], ["Brand", "Optional"], ["Category", CATEGORIES.join(" / ")], ["Unit", UNITS.join(" / ")],
-                  ["Current Stock", "Number"], ["Min Stock", "Alert threshold"], ["Cost Price", "Number"], ["Barcode", "Used to match existing items"],
+                  ["Name", "Required"], ["Retail Price", businessType.restaurantMode ? "Selling price — leave empty for an ingredient" : "Selling price — needed to sell it in the POS"],
+                  ["Category", businessType.categories.join(" / ")], ["Unit", UNITS.join(" / ")],
+                  ["Current Stock", "Number — empty keeps the current stock"], ["Min Stock", "Alert threshold"], ["Cost Price", "Number"], ["Barcode", "Used to match existing items"],
+                  ...(businessType.restaurantMode ? [
+                    ["Menu Section", "POS tab — Coffee, Bakery…"], ["Takeaway / Delivery Price", "Optional, instead of the selling price"],
+                    ["Recipe", "\"Coffee beans 18 g; Milk 250 ml\" by ingredient name"], ["Options", "Option group names, comma separated"],
+                  ] : []),
                 ].map(([col, hint]) => <div key={col}><strong>{col}</strong>: {hint}</div>)}
               </div>
             </div>
@@ -708,16 +807,30 @@ function ProductImportModal({ existing, onClose, onImport }: {
           <>
             <div style={{ padding: "14px 16px", background: "#f8f7ff", border: "1px solid #fed7aa", borderRadius: 12, marginBottom: 14 }}>
               <div style={{ fontSize: 14, fontWeight: 800, color: "#1a1a2e" }}>{parsed.length} item{parsed.length === 1 ? "" : "s"} ready</div>
-              <div style={{ fontSize: 12, color: "#6b6b8a", marginTop: 4 }}>{addCount} new, {updateCount} update{updateCount === 1 ? "" : "s"}</div>
+              <div style={{ fontSize: 12, color: "#6b6b8a", marginTop: 4 }}>
+                {addCount} new, {updateCount} update{updateCount === 1 ? "" : "s"}
+                {businessType.restaurantMode && ingredientCount > 0 && ` · ${ingredientCount} without a selling price go to Inventory as ingredients`}
+              </div>
             </div>
+            {problems.length > 0 && (
+              <div style={{ padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, marginBottom: 14, maxHeight: 140, overflowY: "auto" }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "#92400e", marginBottom: 4 }}>{problems.length} problem{problems.length === 1 ? "" : "s"} — fix the file and pick it again, or import the rest</div>
+                {problems.map((msg, i) => <div key={i} style={{ fontSize: 11.5, color: "#92400e", lineHeight: 1.5 }}>{msg}</div>)}
+              </div>
+            )}
             <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #f0f0f8", borderRadius: 12 }}>
               {parsed.slice(0, 8).map((record) => (
                 <div key={record.item.id} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderBottom: "1px solid #f8f8fc" }}>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 800, color: "#1a1a2e" }}>{record.item.name}</div>
-                    <div style={{ fontSize: 11, color: "#9898b0" }}>{record.item.brand || "—"} · {(CATEGORY_CONFIG[record.item.category] ?? CATEGORY_CONFIG.other).label} · {record.item.currentStock} {record.item.unit}</div>
+                    <div style={{ fontSize: 11, color: "#9898b0" }}>
+                      {record.item.brand || "—"} · {(CATEGORY_CONFIG[record.item.category] ?? CATEGORY_CONFIG.other).label} · {stockText(record.item)}
+                      {record.item.retailPrice ? ` · ${fmt(record.item.retailPrice)}` : ""}
+                    </div>
                   </div>
-                  <span style={{ alignSelf: "center", fontSize: 10, fontWeight: 800, borderRadius: 999, padding: "3px 8px", background: record.mode === "add" ? "#ecfdf5" : "#eff6ff", color: record.mode === "add" ? "#059669" : "#2563eb" }}>{record.mode === "add" ? "Add" : "Update"}</span>
+                  <span style={{ alignSelf: "center", fontSize: 10, fontWeight: 800, borderRadius: 999, padding: "3px 8px", background: record.mode === "add" ? "#ecfdf5" : "#eff6ff", color: record.mode === "add" ? "#059669" : "#2563eb", whiteSpace: "nowrap" }}>
+                    {record.mode === "add" ? "Add" : "Update"}{businessType.restaurantMode ? ` → ${destination(record.item)}` : ""}
+                  </span>
                 </div>
               ))}
               {parsed.length > 8 && <div style={{ padding: "10px 12px", fontSize: 12, color: "#9898b0" }}>+{parsed.length - 8} more</div>}
@@ -733,7 +846,10 @@ function ProductImportModal({ existing, onClose, onImport }: {
           <div style={{ textAlign: "center", padding: "24px 8px 8px" }}>
             <div style={{ width: 60, height: 60, borderRadius: "50%", background: "#ecfdf5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><Check size={28} color="#059669" /></div>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#1a1a2e", marginBottom: 6 }}>Import Complete</div>
-            <div style={{ fontSize: 13, color: "#6b6b8a", marginBottom: 20 }}>{result.added} added, {result.updated} updated{result.skipped ? `, ${result.skipped} skipped` : ""}.</div>
+            <div style={{ fontSize: 13, color: "#6b6b8a", marginBottom: 20, lineHeight: 1.6 }}>
+              {result.added} added, {result.updated} updated{problems.length ? `, ${problems.filter((m) => m.includes("skipped")).length} rows skipped` : ""}.
+              {businessType.restaurantMode && ingredientCount > 0 && <><br />{ingredientCount} without a selling price are on the Inventory page, not the menu.</>}
+            </div>
             <button onClick={onClose} style={{ padding: "10px 32px", borderRadius: 10, border: "none", background: "#EA580C", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Done</button>
           </div>
         )}
@@ -1473,7 +1589,7 @@ export default function ProductsPage() {
                       { fmt: "xlsx" as const, label: "Excel (.xlsx)" },
                       { fmt: "csv" as const, label: "CSV (.csv)" },
                     ].map(({ fmt, label }) => (
-                      <button key={fmt} onClick={() => { setShowExportMenu(false); exportProducts(filtered, fmt); }}
+                      <button key={fmt} onClick={() => { setShowExportMenu(false); exportProducts(filtered, fmt, items); }}
                         style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", border: "none", background: "transparent", borderRadius: 8, fontSize: 12, fontWeight: 700, color: "#1a1a2e", cursor: "pointer", textAlign: "left" }} className="hover-bg-light">
                         <FileSpreadsheet size={14} color="#059669" /> {label}
                       </button>

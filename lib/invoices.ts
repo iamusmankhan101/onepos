@@ -52,6 +52,8 @@ export interface Invoice {
   orderId?: string;
   orderType?: "dine-in" | "takeaway" | "delivery";
   tableNames?: string;
+  /** Delivery orders: printed on the receipt so the rider has it. */
+  deliveryAddress?: string;
   /**
    * Split payment: how the total was actually paid. `paymentMethod` then holds
    * the largest part, so anything that reads only it still sees a real method.

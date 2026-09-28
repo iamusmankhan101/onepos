@@ -357,10 +357,10 @@ function Security() {
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {saved && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#ecfdf5", borderRadius: 12, fontSize: 13, color: "#059669", fontWeight: 500 }}><Check size={14} /> Password updated successfully.</div>}
       {error && <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, fontSize: 13, color: "#991b1b", fontWeight: 500 }}>{error}</div>}
-      <Field label="Current Password"><input type="password" value={form.current} onChange={(e) => set("current", e.target.value)} placeholder="••••••••" style={inp} /></Field>
-      <Field label="New Password" hint="At least 8 characters."><input type="password" value={form.newPass} onChange={(e) => set("newPass", e.target.value)} placeholder="••••••••" style={inp} /></Field>
+      <Field label="Current Password"><input type="password" autoComplete="new-password" value={form.current} onChange={(e) => set("current", e.target.value)} placeholder="••••••••" style={inp} /></Field>
+      <Field label="New Password" hint="At least 8 characters."><input type="password" autoComplete="new-password" value={form.newPass} onChange={(e) => set("newPass", e.target.value)} placeholder="••••••••" style={inp} /></Field>
       <Field label="Confirm New Password">
-        <input type="password" value={form.confirm} onChange={(e) => set("confirm", e.target.value)} placeholder="••••••••" style={{ ...inp, borderColor: form.confirm && form.confirm !== form.newPass ? "#dc2626" : "#e3e0eb" }} />
+        <input type="password" autoComplete="new-password" value={form.confirm} onChange={(e) => set("confirm", e.target.value)} placeholder="••••••••" style={{ ...inp, borderColor: form.confirm && form.confirm !== form.newPass ? "#dc2626" : "#e3e0eb" }} />
         {form.confirm && form.confirm !== form.newPass && <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>Passwords do not match.</div>}
       </Field>
       <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 16, borderTop: "1px solid #f0f0f5", marginTop: 16 }}>
@@ -474,6 +474,12 @@ function ThermalPrinterSection() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <SaveStatus saved={saved} error={error} />
+
+      <div style={{ padding: "12px 14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, fontSize: 12, color: "#92400e", lineHeight: 1.6 }}>
+        <strong>Most restaurants don&apos;t need this.</strong> The <strong>Print</strong> button on every receipt and kitchen ticket prints to this
+        computer&apos;s default printer — set your thermal printer as the default in Windows/macOS and it prints on it directly.
+        Direct network printing below only works when Pointly runs on a computer inside your restaurant&apos;s own network, not on the hosted website.
+      </div>
 
       {/* Status banner */}
       <div style={{ padding: "14px 16px", background: connected ? "#f0fdf4" : "#faf8ff", borderRadius: 10, border: `1px solid ${connected ? "#6ee7b7" : "#ffedd5"}`, display: "flex", alignItems: "center", gap: 12 }}>
@@ -835,10 +841,11 @@ function StaffAccess() {
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <Field label="Login email">
-                <input value={draft.email} onChange={(e) => updateDraft(member.id, { email: e.target.value })} placeholder="name@business.com" style={inp} />
+                {/* Not the owner's saved login: the browser must neither fill this in nor offer the owner's password below. */}
+                <input value={draft.email} onChange={(e) => updateDraft(member.id, { email: e.target.value })} placeholder="name@business.com" autoComplete="new-password" name={`staff-login-${member.id}`} data-1password-ignore="true" style={inp} />
               </Field>
               <Field label={existing ? "New password" : "Password"} hint={existing ? "Leave blank to keep the current one." : "At least 8 characters."}>
-                <input type="password" value={draft.password} onChange={(e) => updateDraft(member.id, { password: e.target.value })} placeholder="••••••••" style={inp} />
+                <input type="password" autoComplete="new-password" name={`staff-password-${member.id}`} data-1password-ignore="true" value={draft.password} onChange={(e) => updateDraft(member.id, { password: e.target.value })} placeholder="••••••••" style={inp} />
               </Field>
               <Field label="Access level">
                 <select value={draft.role} onChange={(e) => updateDraft(member.id, { role: e.target.value as AccessDraft["role"] })} style={inp}>

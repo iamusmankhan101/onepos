@@ -209,6 +209,18 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false, error: "Not authenticated." }, { status: 401 });
   }
 
+  // On a hosted deployment the server sits in a data centre: a restaurant's
+  // 192.168.x.x printer is unreachable from it, and "local network" addresses
+  // there are the host's own internal network — so this route could only ever
+  // fail or poke at infrastructure. Direct printing is for Pointly running on
+  // the restaurant's own network; everyone else prints through the browser.
+  if (process.env.VERCEL || process.env.AWS_EXECUTION_ENV || process.env.RAILWAY_STATIC_URL || process.env.FLY_APP_NAME || process.env.RENDER) {
+    return Response.json(
+      { ok: false, error: "Direct LAN printing is only available when running Pointly on your local network. Please use Print on the receipt to print via your browser or local print helper app." },
+      { status: 501 },
+    );
+  }
+
   let body: ReceiptData & { printerIp: string; printerPort?: number };
   try {
     body = await req.json();

@@ -119,6 +119,10 @@ export interface KitchenTicket {
   /** Table names at the moment of firing — a later table move doesn't rewrite a printed ticket. */
   tableNames: string[];
   waiterName?: string;
+  /** Delivery orders: where it's going and who to call — the rider reads it off the ticket. */
+  deliveryAddress?: string;
+  clientName?: string;
+  clientPhone?: string;
   station: Station;
   items: TicketItem[];
   status: TicketStatus;
@@ -324,6 +328,11 @@ export async function fireOrder(order: RestaurantOrder): Promise<{ order: Restau
     orderType: order.type,
     tableNames: names,
     waiterName: order.waiterName,
+    ...(order.type === "delivery" ? {
+      deliveryAddress: order.deliveryAddress,
+      clientName: order.clientName,
+      clientPhone: order.clientPhone,
+    } : {}),
     station,
     items: lines.map((l) => ({
       lineId: l.id, name: l.name, qty: l.qty, note: l.note,

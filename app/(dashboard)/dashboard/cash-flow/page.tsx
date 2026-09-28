@@ -792,6 +792,7 @@ export default function CashFlowPage() {
     }
 
     const now = new Date();
+    const bName = (settingsStore.business as { name?: string }).name || getCurrentUser()?.businessName || "Point of Sale";
     const periodLabel = period === "custom" ? `${rangeStart} → ${filterEnd}` : cfg.label;
     const html = `<!DOCTYPE html>
 <html>
@@ -837,7 +838,7 @@ export default function CashFlowPage() {
   <div class="header">
     <div>
       <div class="logo-wm"><img src="${window.location.origin}/logo-dark.png" alt="Pointly" /></div>
-      <div style="font-size:12px;color:#a0a0b8;margin-top:6px">Point of Sale</div>
+      <div style="font-size:12px;color:#a0a0b8;margin-top:6px">${bName}</div>
     </div>
     <div class="report-meta">
       <div class="report-title">Cash Flow Report — ${periodLabel}</div>

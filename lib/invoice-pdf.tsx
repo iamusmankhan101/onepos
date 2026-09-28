@@ -110,7 +110,8 @@ function receiptHeight(
 
   h += RULE + line(9) + RULE_LIGHT;                             // rule, "SALES RECEIPT", rule
 
-  const metaRows = 4 + (invoice.staffName ? 1 : 0);             // no, date, customer, [staff], payment
+  const metaRows = 4 + (invoice.staffName ? 1 : 0)               // no, date, customer, [staff], payment
+    + (invoice.deliveryAddress ? Math.max(1, Math.ceil(invoice.deliveryAddress.length / 30)) : 0);
   h += metaRows * (line(7) + 2);
 
   h += RULE + line(6.5) + 3;                                    // rule + column header
@@ -203,6 +204,12 @@ function ReceiptDocument({ invoice, business }: {
           <Text style={styles.metaLabel}>Customer</Text>
           <Text style={styles.metaValue}>{invoice.clientName}</Text>
         </View>
+        {!!invoice.deliveryAddress && (
+          <View style={styles.metaRow}>
+            <Text style={styles.metaLabel}>Deliver to</Text>
+            <Text style={styles.metaValue}>{invoice.deliveryAddress}</Text>
+          </View>
+        )}
         {!!invoice.staffName && (
           <View style={styles.metaRow}>
             <Text style={styles.metaLabel}>Served by</Text>

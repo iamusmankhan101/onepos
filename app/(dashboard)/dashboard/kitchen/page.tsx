@@ -242,7 +242,11 @@ function TicketCard({ ticket, now, flash, accent, onPrint }: {
 }) {
   const [busy, setBusy] = useState(false);
   const mins = minutesSince(ticket.createdAt, now);
-  const next = NEXT[ticket.status];
+  const baseNext = NEXT[ticket.status];
+  // A takeaway isn't served at a table — it's picked up; a delivery goes out with the rider.
+  const next = baseNext && baseNext.to === "served" && ticket.orderType !== "dine-in"
+    ? { ...baseNext, label: ticket.orderType === "delivery" ? "Dispatched" : "Picked up" }
+    : baseNext;
   const prev = PREV[ticket.status];
   const allVoided = ticket.items.every((i) => i.voided);
 
@@ -265,6 +269,12 @@ function TicketCard({ ticket, now, flash, accent, onPrint }: {
               <span>· {STATION_LABEL[ticket.station]}</span>
               {ticket.waiterName && <span>· {ticket.waiterName}</span>}
             </div>
+            {ticket.orderType === "delivery" && ticket.deliveryAddress && (
+              <div style={{ marginTop: 5, fontSize: 12, fontWeight: 700, color: "#7c2d12", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "5px 8px", lineHeight: 1.4 }}>
+                Deliver to: {ticket.deliveryAddress}
+                {(ticket.clientName || ticket.clientPhone) && <div style={{ fontWeight: 600, color: "#9a3412" }}>{[ticket.clientName, ticket.clientPhone].filter(Boolean).join(" · ")}</div>}
+              </div>
+            )}
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 900, color: ageColor(mins) }}>

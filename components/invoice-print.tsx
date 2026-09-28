@@ -195,6 +195,7 @@ export default function InvoicePrint({
               ...(invoice.refundOfNumber ? [["Refund of", invoice.refundOfNumber]] : []),
               ["Date", fmtDate(invoice.date)],
               ["Customer", invoice.clientName],
+              ...(invoice.deliveryAddress ? [["Deliver to", invoice.deliveryAddress]] : []),
               ...(invoice.staffName ? [["Served by", invoice.staffName]] : []),
               ...(invoice.cashierName && invoice.cashierName !== invoice.staffName ? [["Cashier", invoice.cashierName]] : []),
               ["Payment", !isPaid ? "UNPAID" : invoice.payments?.length ? "Split" : (METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "—")],

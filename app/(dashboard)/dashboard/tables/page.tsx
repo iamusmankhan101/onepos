@@ -473,6 +473,12 @@ function OrderPanel({ order, tables, openOrders, staff, readyCount, tickets, now
             {order.guests ? <span>· {order.guests} guests</span> : null}
             {order.clientName && <span>· {order.clientName}</span>}
           </div>
+          {order.type === "delivery" && (
+            <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, color: order.deliveryAddress ? "#7c2d12" : "#dc2626", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 9, padding: "7px 10px", lineHeight: 1.45 }}>
+              {order.deliveryAddress ? <>Deliver to: {order.deliveryAddress}</> : "No delivery address"}
+              {order.clientPhone && <div style={{ fontWeight: 600 }}>{order.clientName ? `${order.clientName} · ` : ""}{order.clientPhone}</div>}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
             <select value={order.waiterId ?? ""} aria-label="Waiter"
               onChange={(e) => { const w = staff.find((s) => s.id === e.target.value); saveOrder({ ...order, waiterId: w?.id, waiterName: w?.name }); }}

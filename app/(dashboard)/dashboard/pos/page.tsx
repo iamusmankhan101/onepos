@@ -855,7 +855,11 @@ export default function POSPage() {
           orderId: settledOrder.id,
           orderType: settledOrder.type,
           tableNames: tableNames(settledOrder.tableIds).join(" + ") || undefined,
-        } : {}),
+          ...(settledOrder.type === "delivery" && settledOrder.deliveryAddress ? { deliveryAddress: settledOrder.deliveryAddress } : {}),
+        } : {
+          orderType: orderType,
+          ...(orderType === "delivery" && deliveryAddress.trim() ? { deliveryAddress: deliveryAddress.trim() } : {}),
+        }),
       });
       if (settledOrder) {
         await markOrderPaid(settledOrder.id, invoice);

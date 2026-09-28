@@ -179,7 +179,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
   },
 };
 
-export const DEFAULT_BUSINESS_TYPE_ID: BusinessTypeId = "general";
+export const DEFAULT_BUSINESS_TYPE_ID: BusinessTypeId = "restaurant";
 export const BUSINESS_TYPE_IDS = Object.keys(BUSINESS_TYPES) as BusinessTypeId[];
 
 /** The choices on the sign-up form — everything except the legacy "general". */

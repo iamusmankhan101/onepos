@@ -56,6 +56,12 @@ function TicketSlip({ ticket }: { ticket: KitchenTicket }) {
         <span>{ORDER_TYPE_LABEL[ticket.orderType]}{ticket.waiterName ? ` · ${ticket.waiterName}` : ""}</span>
         <span>{time(ticket.createdAt)}</span>
       </div>
+      {ticket.orderType === "delivery" && ticket.deliveryAddress && (
+        <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700 }}>
+          DELIVER TO: {ticket.deliveryAddress}
+          {(ticket.clientName || ticket.clientPhone) && <div>{[ticket.clientName, ticket.clientPhone].filter(Boolean).join(" · ")}</div>}
+        </div>
+      )}
       <div style={DASH} />
       {ticket.items.map((item) => (
         <div key={item.lineId} style={{ marginBottom: 6, textDecoration: item.voided ? "line-through" : "none" }}>
@@ -90,6 +96,12 @@ function BillSlip({ order }: { order: RestaurantOrder }) {
         {order.waiterName ? ` · Served by ${order.waiterName}` : ""}
         {order.guests ? ` · ${order.guests} guests` : ""}
       </div>
+      {order.type === "delivery" && order.deliveryAddress && (
+        <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700 }}>
+          DELIVER TO: {order.deliveryAddress}
+          {(order.clientName || order.clientPhone) && <div>{[order.clientName, order.clientPhone].filter(Boolean).join(" · ")}</div>}
+        </div>
+      )}
       <div style={DASH} />
       {lines.map((l) => (
         <div key={l.id} style={{ marginBottom: 3 }}>
