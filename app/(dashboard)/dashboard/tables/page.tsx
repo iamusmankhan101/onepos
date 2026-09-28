@@ -391,7 +391,7 @@ function TableEditor({ table, defaultArea, nextName, occupied, onClose, onHistor
         {table && (
           <button type="button" style={{ ...btn, color: "#dc2626", borderColor: "#fecaca" }} disabled={occupied}
             title={occupied ? "Close this table's order first" : undefined}
-            onClick={async () => { await deleteTable(table.id); onClose(); }}>
+            onClick={async () => { try { await deleteTable(table.id); } finally { onClose(); } }}>
             <Trash2 size={14} />
           </button>
         )}

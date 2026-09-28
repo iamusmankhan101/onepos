@@ -92,6 +92,7 @@ export default function InventoryPage() {
   const [waste, setWaste] = useState<{ itemId?: string } | null>(null);
   const [counting, setCounting] = useState(false);
   const [editSupplier, setEditSupplier] = useState<Supplier | "new" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ title: string; body?: string; confirmLabel?: string; onConfirm: () => Promise<void> } | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setBy(getCurrentUser()?.ownerName || undefined), 0);
@@ -151,7 +152,7 @@ export default function InventoryPage() {
     openWhatsAppChat(supplier.phone, message);
   }
 
-  async function removeOrder(po: PurchaseOrder) {
+  function removeOrder(po: PurchaseOrder) {
     const expense = po.status === "received"
       ? getExpenses().find((e) => e.description.startsWith(`Stock purchase ${po.number}`))
       : undefined;
@@ -159,33 +160,56 @@ export default function InventoryPage() {
       po.status === "received" ? "take its delivery back out of stock" : "",
       expense ? `delete its ${money(expense.amount)} expense on Cash Flow` : "",
     ].filter(Boolean);
-    if (!window.confirm(`Delete ${po.number}?${effects.length ? ` This will also ${effects.join(" and ")}.` : ""}`)) return;
-    await deletePurchaseOrder(po);
-    if (expense) await deleteExpense(expense.id);
-    refresh();
-    setNotice(`${po.number} deleted`);
+    setConfirmAction({
+      title: `Delete ${po.number}?`,
+      body: effects.length ? `This will also ${effects.join(" and ")}.` : undefined,
+      confirmLabel: "Delete PO",
+      onConfirm: async () => {
+        await deletePurchaseOrder(po);
+        if (expense) await deleteExpense(expense.id);
+        refresh();
+        setNotice(`${po.number} deleted`);
+      },
+    });
   }
 
-  async function removeSupplier(s: Supplier) {
-    if (!window.confirm(`Delete ${s.name}? Past purchase orders keep the name.`)) return;
-    await saveSuppliers(suppliers.filter((x) => x.id !== s.id), [s.id]);
-    refresh();
-    setNotice(`${s.name} deleted`);
+  function removeSupplier(s: Supplier) {
+    setConfirmAction({
+      title: `Delete ${s.name}?`,
+      body: "Past purchase orders keep the name.",
+      confirmLabel: "Delete Supplier",
+      onConfirm: async () => {
+        await saveSuppliers(suppliers.filter((x) => x.id !== s.id), [s.id]);
+        refresh();
+        setNotice(`${s.name} deleted`);
+      },
+    });
   }
 
-  async function undo(m: StockMovement) {
+  function undo(m: StockMovement) {
     const what = m.type === "waste" ? "wastage entry" : "stock count";
-    if (!window.confirm(`Undo this ${what}? The stock goes back to what it was before it.`)) return;
-    await undoMovement(m);
-    refresh();
-    setNotice(`${what === "wastage entry" ? "Wastage" : "Stock count"} undone — stock put back`);
+    setConfirmAction({
+      title: `Undo this ${what}?`,
+      body: "The stock goes back to what it was before it.",
+      confirmLabel: "Undo",
+      onConfirm: async () => {
+        await undoMovement(m);
+        refresh();
+        setNotice(`${what === "wastage entry" ? "Wastage" : "Stock count"} undone — stock put back`);
+      },
+    });
   }
 
-  async function cancelOrder(po: PurchaseOrder) {
-    if (!window.confirm(`Cancel ${po.number}?`)) return;
-    await savePurchaseOrder({ ...po, status: "cancelled" });
-    refresh();
-    setNotice(`${po.number} cancelled`);
+  function cancelOrder(po: PurchaseOrder) {
+    setConfirmAction({
+      title: `Cancel ${po.number}?`,
+      confirmLabel: "Cancel Order",
+      onConfirm: async () => {
+        await savePurchaseOrder({ ...po, status: "cancelled" });
+        refresh();
+        setNotice(`${po.number} cancelled`);
+      },
+    });
   }
 
   // ── History ──────────────────────────────────────────────────────────────
@@ -509,6 +533,39 @@ export default function InventoryPage() {
         </div>
       )}
       {editSupplier && <SupplierModal supplier={editSupplier === "new" ? undefined : editSupplier} suppliers={suppliers} onClose={closeAll} />}
+
+      {confirmAction && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 24, maxWidth: 400, width: "100%", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" }}>
+            <h3 style={{ margin: "0 0 12px 0", fontSize: 18, fontWeight: 600, color: "#111" }}>{confirmAction.title}</h3>
+            {confirmAction.body && (
+              <p style={{ margin: "0 0 20px 0", fontSize: 14, color: "#666", lineHeight: 1.5 }}>
+                {confirmAction.body}
+              </p>
+            )}
+            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => setConfirmAction(null)}
+                style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #ccc", background: "#fff", cursor: "pointer", fontWeight: 500, fontSize: 13 }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const act = confirmAction;
+                  setConfirmAction(null);
+                  await act.onConfirm();
+                }}
+                style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#ef4444", color: "#fff", cursor: "pointer", fontWeight: 500, fontSize: 13 }}
+              >
+                {confirmAction.confirmLabel || "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .inv-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }

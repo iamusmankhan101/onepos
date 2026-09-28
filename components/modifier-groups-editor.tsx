@@ -32,6 +32,7 @@ export default function ModifierGroupsEditor({ items, currency, onClose }: {
 }) {
   const [groups, setGroups] = useState<ModifierGroup[]>(() => getModifierGroups());
   const [editing, setEditing] = useState<ModifierGroup | null>(null);
+  const [deleteConfirmGroup, setDeleteConfirmGroup] = useState<ModifierGroup | null>(null);
   const [error, setError] = useState("");
   /** The option whose ingredients are open for editing. */
   const [recipeFor, setRecipeFor] = useState<string | null>(null);
@@ -60,9 +61,7 @@ export default function ModifierGroupsEditor({ items, currency, onClose }: {
   }
 
   function remove(group: ModifierGroup) {
-    const n = usedBy(group.id);
-    if (n > 0 && !window.confirm(`${group.name} is on ${n} menu item${n === 1 ? "" : "s"}. Delete it anyway? Those items stop offering it.`)) return;
-    commit(groups.filter((g) => g.id !== group.id), [group.id]);
+    setDeleteConfirmGroup(group);
   }
 
   function saveEditing() {
@@ -256,6 +255,39 @@ export default function ModifierGroupsEditor({ items, currency, onClose }: {
             <div style={{ display: "flex", gap: 10, paddingTop: 14, borderTop: "1px solid #f0f0f8" }}>
               <button type="button" onClick={() => { setEditing(null); setError(""); }} style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "1px solid #e8e8f0", background: "#fff", fontSize: 13, fontWeight: 600, color: "#6b6b8a", cursor: "pointer" }}>Back</button>
               <button type="button" onClick={saveEditing} style={{ flex: 2, padding: "11px 0", borderRadius: 10, border: "none", background: "linear-gradient(135deg, #9A3412, #F97316)", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer" }}>Save group</button>
+            </div>
+          </div>
+        )}
+
+        {deleteConfirmGroup && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div style={{ background: "#fff", borderRadius: 16, padding: 24, maxWidth: 400, width: "100%", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" }}>
+              <h3 style={{ margin: "0 0 12px 0", fontSize: 18, fontWeight: 600, color: "#111" }}>Delete Modifier Group?</h3>
+              <p style={{ margin: "0 0 20px 0", fontSize: 14, color: "#666", lineHeight: 1.5 }}>
+                {usedBy(deleteConfirmGroup.id) > 0
+                  ? `${deleteConfirmGroup.name} is on ${usedBy(deleteConfirmGroup.id)} menu item${usedBy(deleteConfirmGroup.id) === 1 ? "" : "s"}. Delete it anyway? Those items stop offering it.`
+                  : `Are you sure you want to delete "${deleteConfirmGroup.name}"?`}
+              </p>
+              <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmGroup(null)}
+                  style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #ccc", background: "#fff", cursor: "pointer", fontWeight: 500, fontSize: 13 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const g = deleteConfirmGroup;
+                    setDeleteConfirmGroup(null);
+                    commit(groups.filter((item) => item.id !== g.id), [g.id]);
+                  }}
+                  style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#ef4444", color: "#fff", cursor: "pointer", fontWeight: 500, fontSize: 13 }}
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -8,6 +8,8 @@ import { getManualCashIncome, saveManualCashIncome, type ManualCashIncome } from
 import type { Appointment } from "@/lib/types";
 import MobilePageHeader from "@/components/mobile-page-header";
 import PageTitle from "@/components/page-title";
+import { getCurrentUser } from "@/lib/auth";
+import { settingsStore } from "@/lib/settings-store";
 import { fmtCurrency as fmt } from "@/lib/format";
 import { syncFromDB } from "@/lib/turso-sync";
 import { getSectionOptions, getActiveSection, sectionsEnabled } from "@/lib/sections";
@@ -112,6 +114,271 @@ const EMPTY_FORM = {
   section: "",
 };
 
+async function downloadCashFlowTemplate() {
+  const XLSX = await import("xlsx");
+  const sample = [
+    { "Date": new Date().toISOString().slice(0, 10), "Category": "Sales", "Service Description": "Dining revenue", "Income Intake Amount": 15000, "Expense Amount": 0 },
+    { "Date": new Date().toISOString().slice(0, 10), "Category": "Inventory / Stock", "Service Description": "Ingredient restock", "Income Intake Amount": 0, "Expense Amount": 4500 },
+    { "Date": new Date().toISOString().slice(0, 10), "Category": "Utilities", "Service Description": "Electricity bill", "Income Intake Amount": 0, "Expense Amount": 12000 },
+  ];
+  const ws = XLSX.utils.json_to_sheet(sample, { header: ["Date", "Category", "Service Description", "Income Intake Amount", "Expense Amount"] });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Cash Flow Template");
+  XLSX.writeFile(wb, "cash-flow-import-template.xlsx");
+}
+
+function CashFlowImportModal({ onClose, onImport }: {
+  onClose: () => void;
+  onImport: (income: ManualCashIncome[], expenses: Expense[]) => Promise<{ addedIncome: number; addedExpenses: number; skipped: number }>;
+}) {
+  const [step, setStep] = useState<"pick" | "preview" | "done">("pick");
+  const [parsedIncome, setParsedIncome] = useState<ManualCashIncome[]>([]);
+  const [parsedExpenses, setParsedExpenses] = useState<Expense[]>([]);
+  const [problems, setProblems] = useState<string[]>([]);
+  const [result, setResult] = useState<{ addedIncome: number; addedExpenses: number; skipped: number } | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleFile(file: File) {
+    setError("");
+    setLoading(true);
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      if (!sheet) throw new Error("The workbook does not contain a worksheet.");
+
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      if (rows.length === 0) throw new Error("The import file has no cash-flow rows.");
+
+      const categoryMap = new Map<string, ExpenseCategory>();
+      EXPENSE_CATEGORIES.forEach(category => {
+        categoryMap.set(category.key, category.key);
+        categoryMap.set(category.label.toLowerCase(), category.key);
+      });
+
+      function field(row: Record<string, unknown>, ...names: string[]) {
+        const normalized = new Map(
+          Object.entries(row).map(([key, value]) => [key.trim().toLowerCase().replace(/[_-]+/g, " "), value]),
+        );
+        for (const name of names) {
+          const value = normalized.get(name);
+          if (value !== undefined) return value;
+        }
+        return "";
+      }
+
+      function parseDate(value: unknown): string {
+        if (value instanceof Date && !Number.isNaN(value.getTime())) return toDateStr(value);
+        if (typeof value === "number") {
+          const parsed = XLSX.SSF.parse_date_code(value);
+          if (parsed) return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+        }
+        const text = String(value).trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+        const parsed = new Date(text);
+        return Number.isNaN(parsed.getTime()) ? "" : toDateStr(parsed);
+      }
+
+      const importedExpenses: Expense[] = [];
+      const importedIncome: ManualCashIncome[] = [];
+      const errors: string[] = [];
+
+      rows.forEach((row, index) => {
+        const line = index + 2;
+        const hasAnyData = Object.values(row).some(val => {
+          const str = String(val).trim();
+          return str !== "" && str !== "0" && str !== "undefined" && str !== "null";
+        });
+        if (!hasAnyData) return;
+
+        const date = parseDate(field(row, "date"));
+        const categoryRaw = String(field(row, "category")).trim().toLowerCase();
+        const category = categoryMap.get(categoryRaw);
+        const categoryLabel = String(field(row, "category")).trim();
+        const description = String(field(row, "service description", "description")).trim();
+        const parseAmount = (value: unknown) => {
+          const text = String(value).replace(/[,₨\s]/g, "").trim();
+          return text === "" ? 0 : Number(text);
+        };
+        const incomeAmount = parseAmount(field(row, "income intake amount", "income amount", "income"));
+        const expenseAmount = parseAmount(field(row, "expense amount", "amount", "amount pkr"));
+
+        const rowErrors: string[] = [];
+        if (!date) rowErrors.push("invalid date");
+        if (!categoryLabel) rowErrors.push("missing category");
+        if (!description) rowErrors.push("missing description");
+        if (!Number.isFinite(incomeAmount) || incomeAmount < 0) rowErrors.push("invalid income amount");
+        if (!Number.isFinite(expenseAmount) || expenseAmount < 0) rowErrors.push("invalid expense amount");
+        if (incomeAmount <= 0 && expenseAmount <= 0) rowErrors.push("income or expense amount is required");
+        if (expenseAmount > 0 && !category) {
+          const validCategories = EXPENSE_CATEGORIES.map(c => c.label).join(", ");
+          rowErrors.push(`invalid expense category "${categoryLabel}"`);
+        }
+        if (rowErrors.length > 0) {
+          errors.push(`Row ${line}: ${rowErrors.join(", ")}`);
+          return;
+        }
+
+        const createdAt = new Date().toISOString();
+        if (incomeAmount > 0) {
+          importedIncome.push({ id: crypto.randomUUID(), date, category: categoryLabel, description, amount: incomeAmount, createdAt });
+        }
+        if (expenseAmount > 0) {
+          importedExpenses.push({
+            id: crypto.randomUUID(), date, category: category!, description, amount: expenseAmount,
+            paymentMethod: "cash", paymentStatus: "paid", notes: "Imported from cash-flow workbook", createdAt,
+          });
+        }
+      });
+
+      if (importedExpenses.length === 0 && importedIncome.length === 0 && errors.length === 0) {
+        throw new Error("No valid cash-flow rows found in file.");
+      }
+
+      setParsedIncome(importedIncome);
+      setParsedExpenses(importedExpenses);
+      setProblems(errors);
+      setStep("preview");
+    } catch (e) {
+      setError(`Could not read file: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function confirmImport() {
+    setLoading(true);
+    try {
+      const res = await onImport(parsedIncome, parsedExpenses);
+      setResult(res);
+      setStep("done");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const incomeTotal = parsedIncome.reduce((s, i) => s + i.amount, 0);
+  const expenseTotal = parsedExpenses.reduce((s, e) => s + e.amount, 0);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 540, padding: 28, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#9A3412,#F97316)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <FileSpreadsheet size={18} color="#fff" />
+            </div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#1a1a2e" }}>Import Cash Flow</div>
+              <div style={{ fontSize: 11, color: "#9898b0" }}>XLSX or CSV file</div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={18} color="#9898b0" /></button>
+        </div>
+
+        {step === "pick" && (
+          <>
+            <label style={{ display: "block", border: "2px dashed #fed7aa", borderRadius: 14, padding: "32px 20px", textAlign: "center", cursor: "pointer", background: "#faf9ff" }} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}>
+              <input type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+              <Upload size={28} color="#EA580C" style={{ marginBottom: 10 }} />
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#9A3412", marginBottom: 4 }}>Click to choose file or drag & drop</div>
+              <div style={{ fontSize: 12, color: "#9898b0" }}>Supports .xlsx, .xls, .csv</div>
+            </label>
+            {loading && <div style={{ textAlign: "center", marginTop: 16, color: "#EA580C", fontSize: 13, fontWeight: 600 }}>Reading file...</div>}
+            {error && <div style={{ marginTop: 12, padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, fontSize: 13, color: "#dc2626" }}>{error}</div>}
+
+            <div style={{ marginTop: 18, padding: "14px 16px", background: "#fff7ed", borderRadius: 12, fontSize: 12, color: "#9A3412", lineHeight: 1.8 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <strong style={{ fontSize: 12 }}>Column format</strong>
+                <button onClick={downloadCashFlowTemplate} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 8, border: "1px solid #fdba74", background: "#fff", fontSize: 11, fontWeight: 700, color: "#9A3412", cursor: "pointer", whiteSpace: "nowrap" }}>
+                  <Download size={12} /> Download Template
+                </button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 16px", fontSize: 11 }}>
+                {[
+                  ["Date", "YYYY-MM-DD"], ["Category", "Expense category or Sales"],
+                  ["Service Description", "Description of entry"], ["Income Amount", "Positive number"],
+                  ["Expense Amount", "Positive number"],
+                ].map(([col, hint]) => <div key={col}><strong>{col}</strong>: {hint}</div>)}
+              </div>
+            </div>
+          </>
+        )}
+
+        {step === "preview" && (
+          <>
+            <div style={{ padding: "14px 16px", background: "#f8f7ff", border: "1px solid #fed7aa", borderRadius: 12, marginBottom: 14 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#1a1a2e" }}>
+                {parsedIncome.length + parsedExpenses.length} entries parsed
+              </div>
+              <div style={{ fontSize: 12, color: "#6b6b8a", marginTop: 4 }}>
+                {parsedIncome.length > 0 && `${parsedIncome.length} Income (PKR ${incomeTotal.toLocaleString("en-PK")})`}
+                {parsedIncome.length > 0 && parsedExpenses.length > 0 && " · "}
+                {parsedExpenses.length > 0 && `${parsedExpenses.length} Expenses (PKR ${expenseTotal.toLocaleString("en-PK")})`}
+              </div>
+            </div>
+
+            {problems.length > 0 && (
+              <div style={{ padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, marginBottom: 14, maxHeight: 120, overflowY: "auto" }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "#92400e", marginBottom: 4 }}>{problems.length} problem row(s) skipped</div>
+                {problems.slice(0, 5).map((msg, i) => <div key={i} style={{ fontSize: 11.5, color: "#92400e", lineHeight: 1.5 }}>{msg}</div>)}
+                {problems.length > 5 && <div style={{ fontSize: 11, color: "#92400e" }}>+{problems.length - 5} more</div>}
+              </div>
+            )}
+
+            <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid #f0f0f8", borderRadius: 12 }}>
+              {parsedIncome.map((inc, i) => (
+                <div key={`inc-${i}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 12px", borderBottom: "1px solid #f8f8fc" }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: "#1a1a2e" }}>{inc.description}</div>
+                    <div style={{ fontSize: 11, color: "#9898b0" }}>{inc.date} · {inc.category}</div>
+                  </div>
+                  <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 800, color: "#059669" }}>
+                    +PKR {inc.amount.toLocaleString("en-PK")}
+                  </span>
+                </div>
+              ))}
+              {parsedExpenses.map((exp, i) => (
+                <div key={`exp-${i}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 12px", borderBottom: "1px solid #f8f8fc" }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: "#1a1a2e" }}>{exp.description}</div>
+                    <div style={{ fontSize: 11, color: "#9898b0" }}>{exp.date} · {exp.category}</div>
+                  </div>
+                  <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 800, color: "#dc2626" }}>
+                    -PKR {exp.amount.toLocaleString("en-PK")}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+              <button onClick={() => setStep("pick")} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "1px solid #e8e8f0", background: "#fff", fontSize: 13, fontWeight: 700, color: "#6b6b8a", cursor: "pointer" }}>Back</button>
+              <button onClick={confirmImport} disabled={loading || (parsedIncome.length === 0 && parsedExpenses.length === 0)} style={{ flex: 2, padding: "10px 0", borderRadius: 10, border: "none", background: "#EA580C", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer" }}>
+                {loading ? "Importing..." : "Confirm Import"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === "done" && result && (
+          <div style={{ textAlign: "center", padding: "24px 8px 8px" }}>
+            <div style={{ width: 60, height: 60, borderRadius: "50%", background: "#ecfdf5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><Check size={28} color="#059669" /></div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#1a1a2e", marginBottom: 6 }}>Import Complete</div>
+            <div style={{ fontSize: 13, color: "#6b6b8a", marginBottom: 20, lineHeight: 1.6 }}>
+              {result.addedIncome} income and {result.addedExpenses} expense entries saved
+              {result.skipped ? `, ${result.skipped} duplicate(s) skipped` : ""}.
+            </div>
+            <button onClick={onClose} style={{ padding: "10px 32px", borderRadius: 10, border: "none", background: "#EA580C", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Done</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function CashFlowPage() {
   const [period, setPeriod]           = useState<Period>("today");
   const [customStart, setCustomStart] = useState("");
@@ -127,6 +394,7 @@ export default function CashFlowPage() {
   const [form, setForm]               = useState({ ...EMPTY_FORM });
   const [formError, setFormError]     = useState("");
   const [hoveredBar, setHoveredBar]   = useState<number | null>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [fileMessage, setFileMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [previewImage, setPreviewImage] = useState<{ src: string; title: string } | null>(null);
   const [expenseSyncFailed, setExpenseSyncFailed] = useState(false);
@@ -1017,22 +1285,12 @@ export default function CashFlowPage() {
             <button onClick={exportExcel} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 12, border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#059669", fontSize: 13, fontWeight: 750, cursor: "pointer", transition: "all 0.15s" }} className="hover-scale">
               <FileSpreadsheet size={15} /> Excel
             </button>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={event => {
-                const file = event.target.files?.[0];
-                if (file) void importCashFlow(file);
-              }}
-              style={{ display: "none" }}
-            />
-            <button onClick={() => importInputRef.current?.click()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 12, border: "1px solid #e3e0eb", background: "#fff", color: "var(--accent)", fontSize: 13, fontWeight: 750, cursor: "pointer", transition: "all 0.15s" }} className="hover-bg-light">
+            <button onClick={() => setShowImportModal(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 12, border: "1px solid #e3e0eb", background: "#fff", color: "var(--accent)", fontSize: 13, fontWeight: 750, cursor: "pointer", transition: "all 0.15s" }} className="hover-bg-light">
               <Upload size={15} /> Import
             </button>
-            <a href="/templates/cash-flow-import-template.xlsx" download style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 12, border: "1px solid #e3e0eb", background: "#fff", color: "#6b6b8a", fontSize: 13, fontWeight: 750, textDecoration: "none", transition: "all 0.15s" }} className="hover-bg-light">
+            <button onClick={downloadCashFlowTemplate} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 12, border: "1px solid #e3e0eb", background: "#fff", color: "#6b6b8a", fontSize: 13, fontWeight: 750, cursor: "pointer", transition: "all 0.15s" }} className="hover-bg-light">
               <Download size={15} /> Template
-            </a>
+            </button>
             <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 12, border: "none", cursor: "pointer", background: "var(--accent-gradient)", color: "#fff", fontSize: 13, fontWeight: 750, boxShadow: "0 4px 14px var(--accent-glow)", transition: "all 0.18s ease" }} className="hover-scale page-header-btn">
               <Plus size={16} /> Add Expense
             </button>
@@ -1212,7 +1470,7 @@ export default function CashFlowPage() {
               </div>}
               <div style={{ gridColumn: "1 / -1" }}>
                 <label style={labelSt}>Description <span style={{ fontWeight: 500, textTransform: "none" }}>(optional)</span></label>
-                <input type="text" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="e.g. Shampoo & conditioner restock" style={inputSt} />
+                <input type="text" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="e.g. Produce & ingredient restock" style={inputSt} />
               </div>
               <div>
                 <label style={labelSt}>Notes</label>
@@ -1247,6 +1505,42 @@ export default function CashFlowPage() {
               </button>
             </div>
           </div>
+        )}
+
+        {showImportModal && (
+          <CashFlowImportModal
+            onClose={() => setShowImportModal(false)}
+            onImport={async (importedIncome, importedExpenses) => {
+              const storedExpenses = getExpenses();
+              const storedIncome = getManualCashIncome();
+              const existingExpenseKeys = new Set(storedExpenses.map(expenseKey));
+              const uniqueExpenses = importedExpenses.filter(expense => {
+                const key = expenseKey(expense);
+                if (existingExpenseKeys.has(key)) return false;
+                existingExpenseKeys.add(key);
+                return true;
+              });
+              const existingIncomeKeys = new Set(storedIncome.map(incomeKey));
+              const uniqueIncome = importedIncome.filter(income => {
+                const key = incomeKey(income);
+                if (existingIncomeKeys.has(key)) return false;
+                existingIncomeKeys.add(key);
+                return true;
+              });
+              const skipped = (importedExpenses.length - uniqueExpenses.length) + (importedIncome.length - uniqueIncome.length);
+
+              const mergedExpenses = [...storedExpenses, ...uniqueExpenses];
+              const mergedIncome = [...storedIncome, ...uniqueIncome];
+              const [expensesSaved, incomeSaved] = await Promise.all([
+                saveExpenses(mergedExpenses),
+                saveManualCashIncome(mergedIncome),
+              ]);
+              setExpenseSyncFailed(!expensesSaved || !incomeSaved);
+              setExpenses(mergedExpenses.filter(e => !cashFlowScoped || e.section === activeSection));
+              setManualIncome(cashFlowScoped ? [] : mergedIncome);
+              return { addedIncome: uniqueIncome.length, addedExpenses: uniqueExpenses.length, skipped };
+            }}
+          />
         )}
 
         {/* ── Income + Expense tables side by side ────────────────────── */}

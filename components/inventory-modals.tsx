@@ -118,12 +118,10 @@ export function IngredientModal({ item, suppliers, money, onClose }: {
     }
   }
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   function remove() {
     if (!item) return;
-    const msg = usedIn.length
-      ? `${item.name} is in the recipe for ${usedIn.map((i) => i.name).join(", ")}. Delete it anyway? Those recipes stop using it.`
-      : `Delete ${item.name}?`;
-    if (!window.confirm(msg)) return;
     saveInventory(refreshRecipeCosts(getStoredInventory().filter((i) => i.id !== item.id)), [item.id]);
     onClose(`${item.name} deleted`);
   }
@@ -170,7 +168,17 @@ export function IngredientModal({ item, suppliers, money, onClose }: {
         <div style={{ fontSize: 12, color: "#6b6b8a" }}>Used in: {usedIn.map((i) => i.name).join(", ")}</div>
       )}
       {item && (
-        <button type="button" onClick={remove} style={{ alignSelf: "flex-start", border: "none", background: "none", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>Delete ingredient</button>
+        confirmDelete ? (
+          <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#dc2626" }}>Delete {item.name}? {usedIn.length ? "This ingredient is used in recipes." : ""}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" onClick={() => setConfirmDelete(false)} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #e8e8f0", background: "#fff", fontSize: 12, fontWeight: 600 }}>Cancel</button>
+              <button type="button" onClick={remove} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: "#dc2626", color: "#fff", fontSize: 12, fontWeight: 700 }}>Confirm Delete</button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" onClick={() => setConfirmDelete(true)} style={{ alignSelf: "flex-start", border: "none", background: "none", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>Delete ingredient</button>
+        )
       )}
       <Buttons onCancel={() => onClose()} onSave={save} label={item ? "Save" : "Add ingredient"} disabled={!name.trim()} busy={busy} />
     </Modal>
@@ -529,8 +537,10 @@ export function SupplierModal({ supplier, suppliers, onClose }: { supplier?: Sup
     }
   }
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   async function remove() {
-    if (!supplier || !window.confirm(`Delete ${supplier.name}? Past purchase orders keep the name.`)) return;
+    if (!supplier) return;
     await saveSuppliers(suppliers.filter((s) => s.id !== supplier.id), [supplier.id]);
     onClose(`${supplier.name} deleted`);
   }
@@ -545,7 +555,17 @@ export function SupplierModal({ supplier, suppliers, onClose }: { supplier?: Sup
       </div>
       <Field label="Notes"><input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Delivery days, payment terms…" style={INP} /></Field>
       {supplier && (
-        <button type="button" onClick={remove} style={{ alignSelf: "flex-start", border: "none", background: "none", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>Delete supplier</button>
+        confirmDelete ? (
+          <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#dc2626" }}>Delete {supplier.name}? Past purchase orders keep the name.</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" onClick={() => setConfirmDelete(false)} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #e8e8f0", background: "#fff", fontSize: 12, fontWeight: 600 }}>Cancel</button>
+              <button type="button" onClick={remove} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: "#dc2626", color: "#fff", fontSize: 12, fontWeight: 700 }}>Confirm Delete</button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" onClick={() => setConfirmDelete(true)} style={{ alignSelf: "flex-start", border: "none", background: "none", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>Delete supplier</button>
+        )
       )}
       <Buttons onCancel={() => onClose()} onSave={save} label={supplier ? "Save" : "Add supplier"} disabled={!name.trim() || duplicate} busy={busy} />
     </Modal>
