@@ -17,7 +17,7 @@
 
 import { persistEntity } from "./turso-sync";
 import { entityStorageKey } from "./sync-records";
-import type { InventoryItem, RecipeLine } from "./types";
+import type { InventoryItem, ItemSize, RecipeLine } from "./types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -95,12 +95,40 @@ export function newMenuId(prefix: string): string {
  * same whichever way the order is served.
  */
 export function priceForOrderType(
-  item: Pick<InventoryItem, "retailPrice" | "takeawayPrice" | "deliveryPrice">,
+  item: Pick<InventoryItem, "retailPrice" | "takeawayPrice" | "deliveryPrice"> & { sizes?: ItemSize[] },
   orderType?: string,
 ): number {
+  // A sized item's price is its size's (the size option carries it in full).
+  if (item.sizes?.length) return 0;
   if (orderType === "takeaway" && (item.takeawayPrice ?? 0) > 0) return item.takeawayPrice!;
   if (orderType === "delivery" && (item.deliveryPrice ?? 0) > 0) return item.deliveryPrice!;
   return item.retailPrice ?? 0;
+}
+
+export const SIZE_GROUP_ID = "size";
+
+/**
+ * An item's own sizes as a required pick-one group whose options carry the
+ * full price — so the customize sheet, order lines, tickets and receipts
+ * treat "Large" exactly like any other option.
+ */
+export function sizeGroup(item: { sizes?: ItemSize[] } | undefined): ModifierGroup | null {
+  const sizes = (item?.sizes ?? []).filter((s) => s.name.trim());
+  if (!sizes.length) return null;
+  return {
+    id: SIZE_GROUP_ID,
+    name: "Size",
+    required: true,
+    multi: false,
+    defaultOptionIds: [sizes[0].id],
+    options: sizes.map((s) => ({ id: s.id, name: s.name, price: Math.max(0, s.price || 0) })),
+  };
+}
+
+/** "PKR 500 – 700" style range of an item's sizes, or null without sizes. */
+export function sizePriceRange(item: { sizes?: ItemSize[] }): [number, number] | null {
+  const prices = (item.sizes ?? []).map((s) => s.price).filter((p) => p > 0);
+  return prices.length ? [Math.min(...prices), Math.max(...prices)] : null;
 }
 
 /** The groups an item offers, in its own order, skipping any since deleted. */

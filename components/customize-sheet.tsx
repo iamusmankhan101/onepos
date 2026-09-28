@@ -12,7 +12,7 @@ import {
   type ChosenModifier, type ModifierGroup, type Selection,
 } from "@/lib/menu";
 
-export default function CustomizeSheet({ name, basePrice, groups, initial, initialQty = 1, initialNote = "", editing, money, onConfirm, onClose }: {
+export default function CustomizeSheet({ name, basePrice, groups, initial, initialQty = 1, initialNote = "", editing, noteLabel = "Note for the bar / kitchen", money, onConfirm, onClose }: {
   name: string;
   basePrice: number;
   groups: ModifierGroup[];
@@ -21,6 +21,8 @@ export default function CustomizeSheet({ name, basePrice, groups, initial, initi
   initialNote?: string;
   /** Changing a line already in the cart rather than adding a new one. */
   editing?: boolean;
+  /** A shop or salon has no kitchen — the note is just a note. */
+  noteLabel?: string;
   money: (n: number) => string;
   onConfirm: (modifiers: ChosenModifier[], qty: number, note: string) => void;
   onClose: () => void;
@@ -46,7 +48,8 @@ export default function CustomizeSheet({ name, basePrice, groups, initial, initi
         <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid #f2f2f8", display: "flex", alignItems: "flex-start", gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 900, color: "#1d1d2f" }}>{name}</div>
-            <div style={{ fontSize: 12, color: "#9999b0", marginTop: 2 }}>Base {money(basePrice)}</div>
+            {/* A sized item has no base price — its size carries the price. */}
+            {basePrice > 0 && <div style={{ fontSize: 12, color: "#9999b0", marginTop: 2 }}>Base {money(basePrice)}</div>}
           </div>
           <button type="button" onClick={onClose} aria-label="Close" style={{ border: "none", background: "none", cursor: "pointer", color: "#9999b0", display: "flex", padding: 2 }}><X size={18} /></button>
         </div>
@@ -81,7 +84,7 @@ export default function CustomizeSheet({ name, basePrice, groups, initial, initi
 
           <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 800, color: "#1d1d2f", textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
-              <StickyNote size={12} /> Note for the {groups.length ? "bar / kitchen" : "kitchen"}
+              <StickyNote size={12} /> {noteLabel}
             </span>
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Extra hot, less foam, name on cup…"
               style={{ height: 38, padding: "0 12px", borderRadius: 10, border: "1.5px solid #e8e8f4", fontSize: 13, outline: "none", background: "#fafafe" }} />

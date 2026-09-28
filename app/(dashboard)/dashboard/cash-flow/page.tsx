@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { getStoredAppointments } from "@/lib/storage";
 import { getInvoices, paymentParts } from "@/lib/invoices";
+import { activeBusinessType } from "@/lib/use-business-type";
 import { getExpenses, saveExpenses, addExpense, updateExpense, type Expense, type ExpenseCategory } from "@/lib/expenses";
 import { getManualCashIncome, saveManualCashIncome, type ManualCashIncome } from "@/lib/cash-flow-income";
 import type { Appointment } from "@/lib/types";
@@ -118,7 +119,7 @@ async function downloadCashFlowTemplate() {
   const XLSX = await import("xlsx");
   const sample = [
     { "Date": new Date().toISOString().slice(0, 10), "Category": "Sales", "Service Description": "Dining revenue", "Income Intake Amount": 15000, "Expense Amount": 0 },
-    { "Date": new Date().toISOString().slice(0, 10), "Category": "Inventory / Stock", "Service Description": "Ingredient restock", "Income Intake Amount": 0, "Expense Amount": 4500 },
+    { "Date": new Date().toISOString().slice(0, 10), "Category": "Products & Supplies", "Service Description": "Ingredient restock", "Income Intake Amount": 0, "Expense Amount": 4500 },
     { "Date": new Date().toISOString().slice(0, 10), "Category": "Utilities", "Service Description": "Electricity bill", "Income Intake Amount": 0, "Expense Amount": 12000 },
   ];
   const ws = XLSX.utils.json_to_sheet(sample, { header: ["Date", "Category", "Service Description", "Income Intake Amount", "Expense Amount"] });
@@ -1244,7 +1245,9 @@ export default function CashFlowPage() {
     <div style={{ background: "#ffffff", minHeight: "100vh" }}>
       <MobilePageHeader title="Cash Flow" subtitle={cfg.label} action={{ label: "Add Expense", onClick: openAdd }} />
 
-      <div className="dash-page dashboard-polish desktop-only" style={{ background: "#ffffff", display: "flex", flexDirection: "column", gap: 20, paddingTop: 20, minHeight: "100vh" }}>
+      {/* One layout for every screen — this used to be desktop-only with no phone
+          layout, so on a phone Cash Flow was a blank page. cf-* classes stack it. */}
+      <div className="dash-page dashboard-polish cf-page" style={{ background: "#ffffff", display: "flex", flexDirection: "column", gap: 20, paddingTop: 20, minHeight: "100vh" }}>
 
         {/* ── Header row ──────────────────────────────────────────────── */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
@@ -1315,7 +1318,7 @@ export default function CashFlowPage() {
         {/* ── Summary strip ───────────────────────────────────────────── */}
         <div className="stats-grid-3">
           {[
-            { label: "Income",    value: fmt(periodIncome),  color: "var(--accent)", bg: "rgba(234, 88, 12, 0.08)", sub: "Appointments & POS",          icon: TrendingUp  },
+            { label: "Income",    value: fmt(periodIncome),  color: "var(--accent)", bg: "rgba(234, 88, 12, 0.08)", sub: activeBusinessType().bookings ? "Appointments & POS" : "POS sales",          icon: TrendingUp  },
             { label: "Expenses",  value: fmt(totalExpense),  color: "#ef4444", bg: "#fef2f2", sub: pendingExpense > 0 ? `${fmt(pendingExpense)} pending` : `${periodExpenses.length} entries logged`, icon: TrendingDown },
             { label: "Net Flow",  value: (netCashFlow < 0 ? "−" : "+") + fmt(Math.abs(netCashFlow)), color: netCashFlow >= 0 ? "#059669" : "#ef4444", bg: netCashFlow >= 0 ? "#ecfdf5" : "#fef2f2", sub: netCashFlow >= 0 ? "Surplus" : "Deficit", icon: Wallet },
           ].map(({ label, value, color, bg, sub, icon: Icon }) => (
@@ -1544,7 +1547,7 @@ export default function CashFlowPage() {
         )}
 
         {/* ── Income + Expense tables side by side ────────────────────── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <div className="cf-two-col" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 20 }}>
 
           {/* Income table */}
           <div style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", overflow: "hidden" }}>
@@ -1616,7 +1619,7 @@ export default function CashFlowPage() {
           </div>
 
           {/* Expense table */}
-          <div style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", overflow: "hidden" }}>
+          <div className="cf-exp-card" style={{ background: "#fff", borderRadius: 18, border: "1px solid rgba(226,223,235,.95)", boxShadow: "0 8px 28px rgba(75,40,20,.04)", overflow: "hidden", minWidth: 0 }}>
             <div style={{ padding: "18px 20px", borderBottom: "1px solid #f0f0f5", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <div style={{ width: 34, height: 34, borderRadius: 10, background: "#fef2f2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -1647,7 +1650,7 @@ export default function CashFlowPage() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "80px 110px 1fr 70px 92px 80px 32px 32px", padding: "10px 20px", background: "#faf9fd", borderBottom: "1px solid #f0f0f5" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "80px 110px minmax(120px, 1fr) 70px 92px 80px 32px 32px", minWidth: 620, padding: "10px 20px", background: "#faf9fd", borderBottom: "1px solid #f0f0f5" }}>
               {["DATE", "CATEGORY", "DESCRIPTION", "BILL", "STATUS", "AMOUNT", "", ""].map((h, i) => (
                 <div key={i} style={{ fontSize: 10, fontWeight: 800, color: "#8d8880", letterSpacing: "0.08em" }}>{h}</div>
               ))}
@@ -1664,7 +1667,7 @@ export default function CashFlowPage() {
               const payColor = PAYMENT_COLORS[exp.paymentMethod];
               const status = expensePaymentStatus(exp);
               return (
-                <div key={exp.id} className="hover-bg-row" style={{ display: "grid", gridTemplateColumns: "80px 110px 1fr 70px 92px 80px 32px 32px", padding: "12px 20px", borderBottom: i === periodExpenses.length - 1 ? "none" : "1px solid #f8f8fc", alignItems: "center", transition: "background 0.15s" }}>
+                <div key={exp.id} className="hover-bg-row" style={{ display: "grid", gridTemplateColumns: "80px 110px minmax(120px, 1fr) 70px 92px 80px 32px 32px", minWidth: 620, padding: "12px 20px", borderBottom: i === periodExpenses.length - 1 ? "none" : "1px solid #f8f8fc", alignItems: "center", transition: "background 0.15s" }}>
                   <div style={{ fontSize: 12, color: "#9898b0", fontWeight: 500 }}>{exp.date}</div>
                   <div>
                     <span style={{ fontSize: 10, fontWeight: 750, color: cat?.color ?? "#888", background: `${cat?.color ?? "#888"}15`, padding: "3px 8px", borderRadius: 20, textTransform: "uppercase", letterSpacing: "0.03em" }}>{cat?.label ?? exp.category}</span>
@@ -1717,7 +1720,7 @@ export default function CashFlowPage() {
             })}
 
             {periodExpenses.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "80px 110px 1fr 70px 92px 80px 32px 32px", padding: "12px 20px", background: "#faf9fd", borderTop: "1px solid #f0f0f5" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "80px 110px minmax(120px, 1fr) 70px 92px 80px 32px 32px", minWidth: 620, padding: "12px 20px", background: "#faf9fd", borderTop: "1px solid #f0f0f5" }}>
                 <div style={{ gridColumn: "1 / 6", fontSize: 12, fontWeight: 800, color: "#1a1a2e", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total</div>
                 <div style={{ fontSize: 14, fontWeight: 850, color: "#ef4444" }}>{fmt(totalExpense)} paid{pendingExpense > 0 ? ` · ${fmt(pendingExpense)} pending` : ""}</div>
                 <div /><div />

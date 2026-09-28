@@ -10,7 +10,7 @@ import MobilePageHeader from "@/components/mobile-page-header";
 import PageTitle from "@/components/page-title";
 import { useBusinessType } from "@/lib/use-business-type";
 import ModifierGroupsEditor from "@/components/modifier-groups-editor";
-import { CAFE_MENU_CATEGORIES, RESTAURANT_MENU_CATEGORIES, getModifierGroups } from "@/lib/menu";
+import { CAFE_MENU_CATEGORIES, RESTAURANT_MENU_CATEGORIES, getModifierGroups, sizePriceRange } from "@/lib/menu";
 import { costPercent, recipeCandidates, recipeCost, refreshRecipeCosts, stockLevel, tracksStock } from "@/lib/stock";
 import RecipeEditor from "@/components/recipe-editor";
 import type { RecipeLine } from "@/lib/types";
@@ -55,6 +55,8 @@ const fmtV = (n: number) => {
 };
 
 function priceLabel(item: InventoryItem): string | undefined {
+  const range = sizePriceRange(item);
+  if (range) return range[0] === range[1] ? fmt(range[0]) : `${fmt(range[0])} – ${Math.round(range[1]).toLocaleString("en-PK")}`;
   if (item.variablePrice && item.priceRangeMin && item.priceRangeMax) {
     const currency = settingsStore.business.currency || "PKR";
     return `${currency} ${Math.round(item.priceRangeMin).toLocaleString("en-PK")} - ${Math.round(item.priceRangeMax).toLocaleString("en-PK")}`;
@@ -175,7 +177,17 @@ type ItemForm = {
   takeawayPrice: string; deliveryPrice: string;
   /** Restaurant mode: made to order from a recipe — no stock of its own. */
   useRecipe: boolean; recipe: RecipeLine[];
+  /** Sold in sizes, each at its own price (replaces the single selling price). */
+  useSizes: boolean; sizes: SizeDraft[];
 };
+
+type SizeDraft = { id: string; name: string; price: string };
+
+const PRESET_SIZES = ["Small", "Medium", "Large"];
+
+function newSizeId(): string {
+  return `sz_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
 
 type FormValue = ItemForm[keyof ItemForm];
 
@@ -187,6 +199,7 @@ const EMPTY_FORM: ItemForm = {
   menuCategory: "", modifierGroupIds: [],
   takeawayPrice: "", deliveryPrice: "",
   useRecipe: false, recipe: [],
+  useSizes: false, sizes: [],
 };
 
 function itemToForm(item: InventoryItem): ItemForm {
@@ -206,11 +219,17 @@ function itemToForm(item: InventoryItem): ItemForm {
     deliveryPrice: item.deliveryPrice ? String(item.deliveryPrice) : "",
     useRecipe: !!item.recipe?.length,
     recipe: item.recipe ?? [],
+    useSizes: !!item.sizes?.length,
+    sizes: (item.sizes ?? []).map((sz) => ({ id: sz.id, name: sz.name, price: String(sz.price) })),
   };
 }
 
 function formToItem(form: ItemForm, existing: InventoryItem | undefined, items: InventoryItem[]): InventoryItem {
   const recipe = form.useRecipe ? form.recipe.filter((l) => l.itemId && l.qty > 0) : [];
+  const sizes = form.useSizes
+    ? form.sizes.filter((sz) => sz.name.trim() && Number(sz.price) > 0).map((sz) => ({ id: sz.id, name: sz.name.trim(), price: Number(sz.price) }))
+    : [];
+  const sized = sizes.length > 0;
   const madeToOrder = recipe.length > 0;
   return {
     // Keeps what this form doesn't edit — the 86 flag, the kitchen station.
@@ -225,10 +244,14 @@ function formToItem(form: ItemForm, existing: InventoryItem | undefined, items: 
     minStock: madeToOrder ? 0 : Number(form.minStock),
     costPrice: madeToOrder ? Math.round(recipeCost(recipe, items) * 100) / 100 : Number(form.costPrice),
     recipe: madeToOrder ? recipe : undefined,
-    retailPrice: form.variablePrice
+    // A sized item's "price" is its cheapest size — what the POS tile shows as "from".
+    retailPrice: sized
+      ? Math.min(...sizes.map((sz) => sz.price))
+      : form.variablePrice
       ? (form.priceRangeMin ? Number(form.priceRangeMin) : undefined)
       : (form.retailPrice ? Number(form.retailPrice) : undefined),
-    variablePrice: form.variablePrice,
+    variablePrice: sized ? false : form.variablePrice,
+    sizes: sized ? sizes : undefined,
     priceRangeMin: form.variablePrice && form.priceRangeMin ? Number(form.priceRangeMin) : undefined,
     priceRangeMax: form.variablePrice && form.priceRangeMax ? Number(form.priceRangeMax) : undefined,
     barcode: form.barcode.trim() || undefined,
@@ -237,8 +260,8 @@ function formToItem(form: ItemForm, existing: InventoryItem | undefined, items: 
     notes: form.notes || undefined,
     menuCategory: form.menuCategory.trim() || undefined,
     modifierGroupIds: form.modifierGroupIds.length ? form.modifierGroupIds : undefined,
-    takeawayPrice: !form.variablePrice && Number(form.takeawayPrice) > 0 ? Number(form.takeawayPrice) : undefined,
-    deliveryPrice: !form.variablePrice && Number(form.deliveryPrice) > 0 ? Number(form.deliveryPrice) : undefined,
+    takeawayPrice: !sized && !form.variablePrice && Number(form.takeawayPrice) > 0 ? Number(form.takeawayPrice) : undefined,
+    deliveryPrice: !sized && !form.variablePrice && Number(form.deliveryPrice) > 0 ? Number(form.deliveryPrice) : undefined,
     lastRestocked: existing?.lastRestocked ?? new Date().toLocaleDateString("en-CA"),
   };
 }
@@ -369,7 +392,7 @@ function ItemFormFields({ form, set, items, selfId }: { form: ItemForm; set: (k:
         {!(businessType.restaurantMode && form.useRecipe) && (
           <Field label={`Cost Price (${cur()}) *`}><input type="number" min="0" value={form.costPrice} onChange={(e) => set("costPrice", e.target.value)} placeholder="0" style={INP} /></Field>
         )}
-        {!form.variablePrice && (
+        {!form.variablePrice && !form.useSizes && (
           <Field
             label={`Selling Price (${cur()})`}
             hint={form.retailPrice ? "Shown in the POS." : "Leave empty to track stock only — it won't appear in the POS."}
@@ -378,7 +401,8 @@ function ItemFormFields({ form, set, items, selfId }: { form: ItemForm; set: (k:
           </Field>
         )}
       </div>
-      {businessType.restaurantMode && !form.variablePrice && (
+      <SizesSection form={form} set={set} />
+      {businessType.restaurantMode && !form.variablePrice && !form.useSizes && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label={`Takeaway Price (${cur()})`} hint="Empty = selling price.">
             <input type="number" min="0" value={form.takeawayPrice} onChange={(e) => set("takeawayPrice", e.target.value)} placeholder={form.retailPrice || "0"} style={INP} />
@@ -388,11 +412,11 @@ function ItemFormFields({ form, set, items, selfId }: { form: ItemForm; set: (k:
           </Field>
         </div>
       )}
-      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+      {!form.useSizes && <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
         <input type="checkbox" checked={form.variablePrice} onChange={(e) => set("variablePrice", e.target.checked)}
           style={{ width: 14, height: 14, accentColor: "#EA580C", cursor: "pointer" }} />
         <span style={{ fontSize: 12, color: "#6b6b8a", fontWeight: 500 }}>Price is not fixed (varies per unit/batch)</span>
-      </label>
+      </label>}
       {form.variablePrice && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label={`Min Price (${cur()}) *`}><input type="number" min="0" value={form.priceRangeMin} onChange={(e) => set("priceRangeMin", e.target.value)} placeholder="e.g. 500" style={INP} /></Field>
@@ -449,12 +473,93 @@ function RecipeSection({ form, set, items, selfId }: { form: ItemForm; set: (k: 
   );
 }
 
+/**
+ * "Sold in sizes": tick Small / Medium / Large and/or add custom sizes, each
+ * with its own full price. The POS then asks which size (lib/menu.ts sizeGroup).
+ */
+function SizesSection({ form, set }: { form: ItemForm; set: (k: keyof ItemForm, v: FormValue) => void }) {
+  const sizes = form.sizes;
+  const byName = (name: string) => sizes.find((sz) => sz.name.trim().toLowerCase() === name.toLowerCase());
+  const update = (next: SizeDraft[]) => set("sizes", next);
+
+  function toggleOn(checked: boolean) {
+    set("useSizes", checked);
+    if (checked && sizes.length === 0) {
+      // Start from the three usual sizes, priced around the current selling price.
+      const base = Number(form.retailPrice) || 0;
+      update(PRESET_SIZES.map((name, i) => ({ id: newSizeId(), name, price: base ? String(base + (i - 1) * Math.round(base * 0.2)) : "" })));
+    }
+  }
+
+  function togglePreset(name: string) {
+    const hit = byName(name);
+    if (hit) { update(sizes.filter((sz) => sz.id !== hit.id)); return; }
+    // Keep presets in Small → Medium → Large order ahead of custom sizes.
+    const next = [...sizes, { id: newSizeId(), name, price: "" }];
+    next.sort((a, b) => {
+      const ia = PRESET_SIZES.indexOf(a.name), ib = PRESET_SIZES.indexOf(b.name);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+    update(next);
+  }
+
+  return (
+    <div style={{ border: "1px solid #ecebf3", borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 10, background: form.useSizes ? "#fcfcfe" : "#fff" }}>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={form.useSizes} onChange={(e) => toggleOn(e.target.checked)} style={{ marginTop: 2, accentColor: "#EA580C" }} />
+        <span>
+          <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#1a1a2e" }}>Sold in sizes</span>
+          <span style={{ display: "block", fontSize: 11, color: "#9898b0", marginTop: 2 }}>Each size has its own price. The POS asks which size when it&apos;s added.</span>
+        </span>
+      </label>
+      {form.useSizes && (
+        <>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {PRESET_SIZES.map((name) => {
+              const on = !!byName(name);
+              return (
+                <button key={name} type="button" onClick={() => togglePreset(name)} aria-pressed={on}
+                  style={{ padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${on ? "#EA580C" : "#e8e8f0"}`, background: on ? "#fff7ed" : "#fff", color: on ? "#c2410c" : "#6b6b8a", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  {on ? "✓ " : "+ "}{name}
+                </button>
+              );
+            })}
+            <button type="button" onClick={() => update([...sizes, { id: newSizeId(), name: "", price: "" }])}
+              style={{ padding: "6px 12px", borderRadius: 20, border: "1.5px dashed #d1d5db", background: "#fafafd", color: "#6b6b8a", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              + Custom size
+            </button>
+          </div>
+          {sizes.length === 0 && <div style={{ fontSize: 12, color: "#9898b0" }}>Pick at least one size.</div>}
+          {sizes.map((sz, index) => {
+            const preset = PRESET_SIZES.includes(sz.name);
+            return (
+              <div key={sz.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 130px 30px", gap: 8, alignItems: "center" }}>
+                <input value={sz.name} readOnly={preset} placeholder="e.g. Family, 500 ml, Double"
+                  onChange={(e) => update(sizes.map((x) => (x.id === sz.id ? { ...x, name: e.target.value } : x)))}
+                  aria-label={`Size ${index + 1} name`} style={{ ...INP, background: preset ? "#f7f7fb" : "#fff", fontWeight: 700 }} />
+                <input type="number" min="0" value={sz.price} placeholder={`Price (${cur()})`}
+                  onChange={(e) => update(sizes.map((x) => (x.id === sz.id ? { ...x, price: e.target.value } : x)))}
+                  aria-label={`${sz.name || "Size"} price`} style={{ ...INP, borderColor: sz.price && Number(sz.price) > 0 ? "#e8e8f0" : "#fbbf24" }} />
+                <button type="button" onClick={() => update(sizes.filter((x) => x.id !== sz.id))} aria-label={`Remove ${sz.name || "size"}`}
+                  style={{ padding: 6, borderRadius: 7, border: "1px solid #fee2e2", background: "#fff5f5", cursor: "pointer", display: "flex", justifyContent: "center" }}>
+                  <Trash2 size={13} color="#dc2626" />
+                </button>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
 function stockFieldsValid(form: ItemForm): boolean {
   if (form.useRecipe) return form.recipe.some((l) => l.itemId && l.qty > 0);
   return Boolean(form.currentStock && form.minStock && form.costPrice);
 }
 
 function priceFieldsValid(form: ItemForm): boolean {
+  if (form.useSizes) return form.sizes.some((sz) => sz.name.trim() && Number(sz.price) > 0);
   if (!form.variablePrice) return true;
   const min = Number(form.priceRangeMin);
   const max = Number(form.priceRangeMax);
@@ -468,7 +573,24 @@ const PRODUCT_EXPORT_COLS = [
   // Restaurant mode — without these a re-import turned recipe dishes into
   // plain stock items with 0 stock and lost their sections and prices.
   "Menu Section", "Takeaway Price", "Delivery Price", "Recipe", "Options",
+  "Sizes",
 ];
+
+/** "Small 500; Medium 600; Large 700" — sizes as one spreadsheet cell. */
+function sizesToText(sizes: InventoryItem["sizes"]): string {
+  return (sizes ?? []).map((sz) => `${sz.name} ${sz.price}`).join("; ");
+}
+
+function textToSizes(text: string): { sizes: NonNullable<InventoryItem["sizes"]>; problems: string[] } {
+  const sizes: NonNullable<InventoryItem["sizes"]> = [];
+  const problems: string[] = [];
+  for (const part of text.split(";").map((x) => x.trim()).filter(Boolean)) {
+    const m = part.match(/^(.*?)\s+(\d+(?:\.\d+)?)$/);
+    if (!m || !m[1].trim() || !(Number(m[2]) > 0)) { problems.push(`size "${part}" isn't "name price"`); continue; }
+    sizes.push({ id: newSizeId(), name: m[1].trim(), price: Number(m[2]) });
+  }
+  return { sizes, problems };
+}
 
 /** "Coffee beans 18 g; Full cream milk 250 ml" — a recipe as one spreadsheet cell. */
 function recipeToText(recipe: RecipeLine[] | undefined, items: InventoryItem[]): string {
@@ -536,6 +658,7 @@ function itemsToRows(list: InventoryItem[], allItems?: InventoryItem[]) {
     "Delivery Price": item.deliveryPrice ?? "",
     "Recipe": recipeToText(item.recipe, lookupList),
     "Options": (item.modifierGroupIds ?? []).map((id) => groupNames.get(id)).filter(Boolean).join(", "),
+    "Sizes": sizesToText(item.sizes),
   }));
 }
 
@@ -652,6 +775,10 @@ function ProductImportModal({ existing, onClose, onImport }: {
         const modifierGroupIds = optionNames.map((n) => groupsByName.get(n.toLowerCase())).filter((x): x is string => !!x);
         const missingGroups = optionNames.filter((n) => !groupsByName.has(n.toLowerCase()));
         if (missingGroups.length) problems.push(`Row ${rowNo} (${name}): option group${missingGroups.length === 1 ? "" : "s"} ${missingGroups.join(", ")} not found — create ${missingGroups.length === 1 ? "it" : "them"} under Menu options first.`);
+        const sizesCell = String(row["Sizes"] ?? "").trim();
+        const parsedSizes = sizesCell ? textToSizes(sizesCell) : null;
+        parsedSizes?.problems.forEach((msg) => problems.push(`Row ${rowNo} (${name}): ${msg}.`));
+        const sizes = parsedSizes?.sizes.length ? parsedSizes.sizes : undefined;
         const recipeCell = String(row["Recipe"] ?? "").trim();
         if (recipeCell) recipeText.set(id, { text: recipeCell, row: rowNo });
 
@@ -687,6 +814,7 @@ function ProductImportModal({ existing, onClose, onImport }: {
             takeawayPrice: takeawayPrice && takeawayPrice > 0 ? takeawayPrice : existingItem?.takeawayPrice,
             deliveryPrice: deliveryPrice && deliveryPrice > 0 ? deliveryPrice : existingItem?.deliveryPrice,
             modifierGroupIds: optionNames.length ? modifierGroupIds : existingItem?.modifierGroupIds,
+            ...(sizes ? { sizes, retailPrice: Math.min(...sizes.map((sz) => sz.price)), variablePrice: false } : {}),
           },
         });
       });
@@ -718,7 +846,7 @@ function ProductImportModal({ existing, onClose, onImport }: {
     const XLSX = await import("xlsx");
     const sample = businessType.restaurantMode ? [
       { "Item ID": "", "Name": "Coffee beans", "Brand": "", "Category": "supplies", "Section": "", "Unit": "kg", "Current Stock": 5, "Min Stock": 1, "Cost Price": 4000, "Variable Price": "No", "Retail Price": "", "Min Price": "", "Max Price": "", "Barcode": "", "Supplier": "Bean Co", "Last Restocked": "", "Notes": "An ingredient: no selling price, so it lives on Inventory", "Menu Section": "", "Takeaway Price": "", "Delivery Price": "", "Recipe": "", "Options": "" },
-      { "Item ID": "", "Name": "Latte", "Brand": "", "Category": "drinks", "Section": "", "Unit": "pcs", "Current Stock": "", "Min Stock": "", "Cost Price": "", "Variable Price": "No", "Retail Price": 600, "Min Price": "", "Max Price": "", "Barcode": "", "Supplier": "", "Last Restocked": "", "Notes": "Made to order from its recipe", "Menu Section": "Coffee", "Takeaway Price": 650, "Delivery Price": 700, "Recipe": "Coffee beans 18 g", "Options": "Size, Milk" },
+      { "Item ID": "", "Name": "Latte", "Brand": "", "Category": "drinks", "Section": "", "Unit": "pcs", "Current Stock": "", "Min Stock": "", "Cost Price": "", "Variable Price": "No", "Retail Price": 600, "Min Price": "", "Max Price": "", "Barcode": "", "Supplier": "", "Last Restocked": "", "Notes": "Made to order from its recipe", "Menu Section": "Coffee", "Takeaway Price": 650, "Delivery Price": 700, "Recipe": "Coffee beans 18 g", "Options": "Milk", "Sizes": "Small 500; Medium 600; Large 700" },
     ] : [{
       "Item ID": "",
       "Name": "500ml Water Bottle",
@@ -797,6 +925,7 @@ function ProductImportModal({ existing, onClose, onImport }: {
                     ["Menu Section", "POS tab — Coffee, Bakery…"], ["Takeaway / Delivery Price", "Optional, instead of the selling price"],
                     ["Recipe", "\"Coffee beans 18 g; Milk 250 ml\" by ingredient name"], ["Options", "Option group names, comma separated"],
                   ] : []),
+                  ["Sizes", "\"Small 500; Medium 600; Large 700\" — optional, each with its own price"],
                 ].map(([col, hint]) => <div key={col}><strong>{col}</strong>: {hint}</div>)}
               </div>
             </div>

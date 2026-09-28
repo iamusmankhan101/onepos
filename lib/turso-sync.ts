@@ -1,7 +1,6 @@
 import { getCurrentUser, userKey } from "./auth";
 import { getActiveLocationFilter, locationUserKey } from "./locations";
 import { appendDeletions, getDeletedRecords, DELETED_RECORDS_ENTITY } from "./deleted-records";
-import { purgeTestDataLocally } from "./cleanup-test-data";
 import {
   entityStorageKey,
   noteSyncedArrivals,
@@ -54,7 +53,6 @@ export async function syncFromDB(): Promise<void> {
   // unioned across devices by the same loop, so by the time it finishes we hold
   // every deletion any device has recorded.
   applyDeletions(locationId);
-  await purgeTestDataLocally();
 
   // Sync settings
   try {

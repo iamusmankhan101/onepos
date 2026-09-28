@@ -17,7 +17,7 @@ import KotPrint from "@/components/kot-print";
 import ManagerApproval from "@/components/manager-approval";
 import CustomizeSheet from "@/components/customize-sheet";
 import {
-  MENU_CHANGED_EVENT, defaultSelection, getModifierGroups, groupsForItem, lineDescription,
+  MENU_CHANGED_EVENT, defaultSelection, getModifierGroups, groupsForItem, lineDescription, sizeGroup, sizePriceRange,
   modifierSummary, modifiersTotal, priceForOrderType, sameModifiers, selectionFromModifiers,
   type ChosenModifier, type ModifierGroup,
 } from "@/lib/menu";
@@ -73,6 +73,8 @@ interface CatalogItem {
   /** Restaurant mode: POS menu tab, and the option groups (lib/menu.ts) asked on adding. */
   menuCategory?: string;
   modifierGroupIds?: string[];
+  /** Sold in sizes: the size (with its full price) is picked on adding; `price` is then 0. */
+  sizes?: InventoryItem["sizes"];
 }
 
 interface CartEntry {
@@ -353,7 +355,9 @@ export default function POSPage() {
       .map(i => ({
         // Restaurant mode prices by how the order is served (takeaway/delivery prices).
         id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`,
-        price: restaurant ? priceForOrderType(i, orderType) : i.retailPrice ?? 0,
+        // A sized item's price comes from the size picked, so its base is 0.
+        price: i.sizes?.length ? 0 : restaurant ? priceForOrderType(i, orderType) : i.retailPrice ?? 0,
+        sizes: i.sizes,
         category: i.category, section: i.section, stock: i.currentStock, unit: i.unit, barcode: i.barcode, image: i.image,
         variablePrice: i.variablePrice, priceRangeMin: i.priceRangeMin, priceRangeMax: i.priceRangeMax,
         unavailable: i.unavailable, menuCategory: i.menuCategory?.trim() || undefined, modifierGroupIds: i.modifierGroupIds,
@@ -443,20 +447,26 @@ export default function POSPage() {
     });
   }, []);
 
+  /** What the customize pop-up asks: the item's sizes first, then (restaurant mode) its option groups. */
+  const optionGroupsFor = useCallback((item: CatalogItem | undefined): ModifierGroup[] => {
+    const size = sizeGroup(item);
+    return [...(size ? [size] : []), ...(restaurant ? groupsForItem(item, modifierGroups) : [])];
+  }, [modifierGroups, restaurant]);
+
   const addToCart = useCallback((item: CatalogItem) => {
-    const groups = restaurant ? groupsForItem(item, modifierGroups) : [];
+    const groups = optionGroupsFor(item);
     if (groups.length > 0) {
       setCustomizing({ item, groups, initial: defaultSelection(groups), qty: 1, note: "" });
       return;
     }
     addLine(item);
-  }, [addLine, modifierGroups, restaurant]);
+  }, [addLine, optionGroupsFor]);
 
   /** Re-opens the customize pop-up for an unsent cart line. */
   function editEntryOptions(entry: CartEntry) {
     const item = catalogItems.find(i => i.id === entry.itemId) ?? inventoryCatalogItem(entry.itemId);
     if (!item) return;
-    const groups = groupsForItem(item, modifierGroups);
+    const groups = optionGroupsFor(item);
     if (groups.length === 0) return;
     setCustomizing({ item, groups, cartId: entry.cartId, initial: selectionFromModifiers(entry.modifiers), qty: entry.qty, note: entry.note ?? "" });
   }
@@ -466,8 +476,9 @@ export default function POSPage() {
     const i = inventory.find(x => x.id === itemId);
     if (!i) return undefined;
     return {
-      id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`, price: priceForOrderType(i, orderType),
-      category: i.category, modifierGroupIds: i.modifierGroupIds,
+      id: i.id, type: "product", name: `${i.brand ? i.brand + " " : ""}${i.name}`,
+      price: i.sizes?.length ? 0 : priceForOrderType(i, orderType),
+      category: i.category, modifierGroupIds: i.modifierGroupIds, sizes: i.sizes,
     };
   }
 
@@ -521,7 +532,8 @@ export default function POSPage() {
       id: product.id,
       type: "product",
       name: `${product.brand ? product.brand + " " : ""}${product.name}`,
-      price: restaurant ? priceForOrderType(product, orderType) : product.retailPrice,
+      price: product.sizes?.length ? 0 : restaurant ? priceForOrderType(product, orderType) : product.retailPrice,
+      sizes: product.sizes,
       modifierGroupIds: product.modifierGroupIds,
       category: product.category,
       stock: product.currentStock,
@@ -1577,7 +1589,8 @@ export default function POSPage() {
                 {shownItems.map(item => {
                   const inCartQty = cart.filter(e => e.itemId === item.id).reduce((n, e) => n + e.qty, 0);
                   const inCart  = inCartQty > 0 ? { qty: inCartQty } : undefined;
-                  const hasOptions = restaurant && groupsForItem(item, modifierGroups).length > 0;
+                  const hasOptions = optionGroupsFor(item).length > 0;
+                  const sizeRange = sizePriceRange(item);
                   const { fg, bg } = catColor(item.category, item.type);
                   // A restaurant sells made-to-order dishes, so stock doesn't gate
                   // them — the 86 list (kitchen display) does.
@@ -1624,7 +1637,9 @@ export default function POSPage() {
 
                         {/* Price */}
                         <div style={{ fontSize: 15, fontWeight: 900, color: fg, marginBottom: 5 }}>
-                          {item.variablePrice
+                          {sizeRange
+                            ? (sizeRange[0] === sizeRange[1] ? pkr(sizeRange[0]) : `from ${pkr(sizeRange[0])}`)
+                            : item.variablePrice
                             ? (item.priceRangeMin && item.priceRangeMax ? `${pkr(item.priceRangeMin)}–${pkr(item.priceRangeMax)}` : "Varies")
                             : pkr(item.price)}
                         </div>
@@ -1712,7 +1727,7 @@ export default function POSPage() {
                           {entry.modifiers && entry.modifiers.length > 0 && (
                             <div style={{ fontSize: 11, fontWeight: 600, color: "#1d4ed8", marginTop: 3, lineHeight: 1.4 }}>{modifierSummary(entry.modifiers)}</div>
                           )}
-                          {restaurant && !entry.firedAt && groupsForItem(catalogItems.find(i => i.id === entry.itemId) ?? inventoryCatalogItem(entry.itemId), modifierGroups).length > 0 && (
+                          {!entry.firedAt && optionGroupsFor(catalogItems.find(i => i.id === entry.itemId) ?? inventoryCatalogItem(entry.itemId)).length > 0 && (
                             <button type="button" onClick={() => editEntryOptions(entry)}
                               style={{ marginTop: 3, border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: 11, fontWeight: 700, color: "#1d4ed8", textDecoration: "underline" }}>
                               Change options
@@ -2147,6 +2162,7 @@ export default function POSPage() {
           initialQty={customizing.qty}
           initialNote={customizing.note}
           editing={!!customizing.cartId}
+          noteLabel={restaurant ? undefined : "Note"}
           money={pkr}
           onConfirm={confirmCustomizing}
           onClose={() => setCustomizing(null)}

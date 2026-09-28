@@ -186,6 +186,14 @@ export interface RecipeLine {
   unit: InventoryUnit;
 }
 
+/** One size an item is sold in, at its own full price (lib/menu.ts sizeGroup). */
+export interface ItemSize {
+  id: string;
+  /** "Small", "Medium", "Large" or anything custom — "Family", "500 ml". */
+  name: string;
+  price: number;
+}
+
 export interface InventoryItem {
   id: string;
   name: string;
@@ -232,6 +240,11 @@ export interface InventoryItem {
   deliveryPrice?: number;
   /** Restaurant mode: option groups (lib/menu.ts) the POS asks for, in this order. */
   modifierGroupIds?: string[];
+  /**
+   * Sold in sizes, each at its own price. The POS asks for one before adding
+   * it; retailPrice then holds the cheapest, for "from" labels and sorting.
+   */
+  sizes?: ItemSize[];
   /**
    * Restaurant mode: what one of this item is made from (lib/stock.ts). An item
    * with a recipe is made to order — it has no stock of its own, and selling

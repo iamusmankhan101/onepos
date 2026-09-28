@@ -1217,3 +1217,14 @@ input, textarea, select { font-family: inherit; }
   .client-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   .client-main { grid-template-columns: minmax(0, 1fr) !important; }
 }
+
+/* Cash Flow on a phone: the income/expense tables stack, the expense table
+   scrolls sideways inside its card, and the header buttons wrap. */
+@media (max-width: 900px) {
+  .cf-page .cf-two-col { grid-template-columns: minmax(0, 1fr) !important; }
+  .cf-page .cf-exp-card { overflow-x: auto !important; }
+}
+@media (max-width: 640px) {
+  .cf-page { padding-left: 12px !important; padding-right: 12px !important; }
+  .cf-page .cf-exp-card > div:first-child { flex-wrap: wrap; gap: 8px; }
+}
