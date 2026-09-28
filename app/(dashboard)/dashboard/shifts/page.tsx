@@ -67,7 +67,7 @@ export default function ShiftsPage() {
   const [floatInput, setFloatInput] = useState("");
   const [move, setMove] = useState<{ type: "in" | "out"; amount: string; reason: string } | null>(null);
   const [closing, setClosing] = useState<{ counted: string; notes: string } | null>(null);
-  const [report, setReport] = useState<CashShift | null>(null);
+  const [report, setReport] = useState<{ shift: CashShift; print?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("history");
   const [range, setRange] = useState<Range>("7d");
@@ -133,6 +133,7 @@ export default function ShiftsPage() {
   const closedShifts = shifts.filter((s) => s.status === "closed" && localDateKey(new Date(s.openedAt)) >= start);
   const onNow = entries.filter((e) => !e.clockOut);
   const countedNum = closing ? Number(closing.counted) : NaN;
+  const floatReady = floatInput.trim() !== "" && Number.isFinite(Number(floatInput)) && Number(floatInput) >= 0;
 
   const RangePicker = (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -168,11 +169,17 @@ export default function ShiftsPage() {
             </div>
 
             {!current ? (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <input type="number" min={0} value={floatInput} onChange={(e) => setFloatInput(e.target.value)} placeholder="Opening float (cash in drawer)" aria-label="Opening float" style={{ ...inp, flex: "1 1 180px" }} />
-                <button type="button" style={primary} disabled={busy} onClick={() => run(async () => { await openShift(Number(floatInput) || 0, me); setFloatInput(""); })}>
-                  <LogIn size={14} /> Open shift
-                </button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <label htmlFor="opening-float" style={{ fontSize: 12, fontWeight: 800, color: "#1d1d2f" }}>Starting cash in the drawer</label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <input id="opening-float" type="number" min={0} value={floatInput} onChange={(e) => setFloatInput(e.target.value)}
+                    placeholder="Count it — enter 0 if the drawer is empty" style={{ ...inp, flex: "1 1 220px" }} />
+                  {/* No silent zero: the float is what the closing count is checked against. */}
+                  <button type="button" style={{ ...primary, opacity: floatReady ? 1 : 0.5, cursor: floatReady ? "pointer" : "not-allowed" }} disabled={busy || !floatReady}
+                    onClick={() => run(async () => { await openShift(Number(floatInput), me); setFloatInput(""); })}>
+                    <LogIn size={14} /> Open shift
+                  </button>
+                </div>
               </div>
             ) : live && (
               <>
@@ -217,7 +224,7 @@ export default function ShiftsPage() {
                     <div style={{ display: "flex", gap: 8 }}>
                       <button type="button" style={btn} onClick={() => setClosing(null)}>Cancel</button>
                       <button type="button" style={primary} disabled={busy || closing.counted === ""}
-                        onClick={() => run(async () => { const closed = await closeShift(current, Number(closing.counted), me, closing.notes); setClosing(null); setReport(closed); })}>
+                        onClick={() => run(async () => { const closed = await closeShift(current, Number(closing.counted), me, closing.notes); setClosing(null); setReport({ shift: closed, print: true }); })}>
                         <Lock size={14} /> Close shift & print Z report
                       </button>
                     </div>
@@ -226,7 +233,7 @@ export default function ShiftsPage() {
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button type="button" style={btn} onClick={() => setMove({ type: "in", amount: "", reason: "" })}><ArrowDownToLine size={14} /> Pay in</button>
                     <button type="button" style={btn} onClick={() => setMove({ type: "out", amount: "", reason: "" })}><ArrowUpFromLine size={14} /> Pay out</button>
-                    <button type="button" style={btn} onClick={() => setReport(current)}><FileText size={14} /> X report</button>
+                    <button type="button" style={btn} onClick={() => setReport({ shift: current })}><FileText size={14} /> X report</button>
                     <button type="button" style={{ ...primary, marginLeft: "auto" }} onClick={() => setClosing({ counted: "", notes: "" })}><Lock size={14} /> Close shift</button>
                   </div>
                 )}
@@ -293,7 +300,7 @@ export default function ShiftsPage() {
                   <div style={{ flex: "0 0 auto", fontSize: 12, fontWeight: 800, color: diff === 0 ? "#059669" : diff !== null && diff < 0 ? "#dc2626" : "#b45309", minWidth: 110, textAlign: "right" }}>
                     {diff === null ? "—" : diff === 0 ? "Balanced" : `${fmt(Math.abs(diff))} ${diff < 0 ? "short" : "over"}`}
                   </div>
-                  <button type="button" style={{ ...btn, height: 32 }} onClick={() => setReport(s)}><FileText size={13} /> Z report</button>
+                  <button type="button" style={{ ...btn, height: 32 }} onClick={() => setReport({ shift: s })}><FileText size={13} /> Z report</button>
                 </div>
               );
             })}
@@ -334,7 +341,7 @@ export default function ShiftsPage() {
         )}
       </div>
 
-      {report && <ZReport shift={report} onClose={() => setReport(null)} />}
+      {report && <ZReport shift={report.shift} autoPrint={report.print} onClose={() => setReport(null)} />}
 
       <style>{`
         .shift-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; align-items: start; }

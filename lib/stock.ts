@@ -432,6 +432,14 @@ export function movementFor(type: MovementType, record: { id: string; number: st
     ?? movements.find((m) => !m.refId && m.ref === record.number);
 }
 
+/** Every stock movement an invoice made — the sale, plus any edits to it since. */
+export function movementsFor(type: MovementType, record: { id: string; number: string }): StockMovement[] {
+  const byId = getMovements().filter((m) => m.type === type && m.refId === record.id);
+  if (byId.length) return byId;
+  const legacy = movementFor(type, record);
+  return legacy ? [legacy] : [];
+}
+
 /** Deletes a purchase order; a received one also takes its delivery back out of stock. */
 export async function deletePurchaseOrder(po: PurchaseOrder): Promise<void> {
   if (po.status === "received") {

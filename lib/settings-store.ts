@@ -171,6 +171,7 @@ const defaults = {
     taxLabel: "Tax",
     serviceChargeRate: 0,    // percent
     serviceChargeDineInOnly: true,
+    taxOnServiceCharge: true, // tax is worked out on net + service charge
   },
   // Till controls — see lib/pos-rules.ts.
   posRules: {

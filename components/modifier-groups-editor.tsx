@@ -16,6 +16,10 @@ import {
 import type { InventoryItem } from "@/lib/types";
 import { subscribeToStoredData } from "@/lib/storage";
 
+// A fixed last column (the three row buttons) so the header, whose last cell
+// is empty, lays out the same widths as the rows beneath it.
+const MG_COLUMNS = "minmax(0, 1fr) 84px 52px 40px 90px";
+
 const INP: React.CSSProperties = {
   width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #e8e8f0",
   fontSize: 13, color: "#1a1a2e", outline: "none", background: "#fff", boxSizing: "border-box",
@@ -199,7 +203,7 @@ export default function ModifierGroupsEditor({ items, currency, onClose }: {
             </div>
 
             <div>
-              <div className="mg-head" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 84px 52px 40px auto", gap: 8, fontSize: 10, fontWeight: 800, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+              <div className="mg-head" style={{ display: "grid", gridTemplateColumns: MG_COLUMNS, gap: 8, fontSize: 10, fontWeight: 800, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
                 <span>Option</span><span>Extra ({currency})</span><span>Default</span><span title="Ingredients this choice uses">Recipe</span><span />
               </div>
               {editing.options.map((o, i) => {
@@ -207,7 +211,7 @@ export default function ModifierGroupsEditor({ items, currency, onClose }: {
                 const recipeCount = (o.recipe ?? []).length;
                 return (
                   <div key={o.id}>
-                  <div className="mg-row" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 84px 52px 40px auto", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                  <div className="mg-row" style={{ display: "grid", gridTemplateColumns: MG_COLUMNS, gap: 8, alignItems: "center", marginBottom: 6 }}>
                     <input className="mg-name" value={o.name} onChange={(e) => patchOption(o.id, { name: e.target.value })} placeholder={i === 0 ? "e.g. Large" : "Option"} style={INP} aria-label="Option name" />
                     <input type="number" min={0} value={o.price || ""} onChange={(e) => patchOption(o.id, { price: Number(e.target.value) || 0 })} placeholder="0" style={INP} aria-label={`Extra price for ${o.name || "option"}`} />
                     <button type="button" onClick={() => toggleDefault(o.id)} aria-pressed={isDefault} title="Pre-selected when the item is added"

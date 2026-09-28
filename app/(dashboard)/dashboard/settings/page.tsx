@@ -568,6 +568,7 @@ function ChargesSection() {
       taxLabel: c.taxLabel,
       serviceChargeRate: c.serviceChargeRate ? String(c.serviceChargeRate) : "",
       serviceChargeDineInOnly: c.serviceChargeDineInOnly,
+      taxOnServiceCharge: c.taxOnServiceCharge,
     };
   });
   const { commit, saved, error, saving } = useSettingsSave(markSaved);
@@ -578,12 +579,13 @@ function ChargesSection() {
       taxLabel: form.taxLabel.trim() || "Tax",
       serviceChargeRate: pct(form.serviceChargeRate),
       serviceChargeDineInOnly: form.serviceChargeDineInOnly,
+      taxOnServiceCharge: form.taxOnServiceCharge,
     });
   });
 
   const preview = billCharges(1000, "dine-in", {
     taxRate: pct(form.taxRate), taxLabel: form.taxLabel, serviceChargeRate: pct(form.serviceChargeRate),
-    serviceChargeDineInOnly: form.serviceChargeDineInOnly,
+    serviceChargeDineInOnly: form.serviceChargeDineInOnly, taxOnServiceCharge: form.taxOnServiceCharge,
   });
   const currency = (settingsStore.business as { currency?: string }).currency || "PKR";
 
@@ -618,6 +620,14 @@ function ChargesSection() {
           <Toggle value={form.serviceChargeDineInOnly} onChange={() => setForm(f => ({ ...f, serviceChargeDineInOnly: !f.serviceChargeDineInOnly }))} />
         </div>
       )}
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: "#f9f9fb", borderRadius: 10 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>Charge {form.taxLabel.trim() || "tax"} on the service charge</div>
+          <div style={{ fontSize: 11, color: "#9898b0", marginTop: 2 }}>Off: {form.taxLabel.trim() || "tax"} is worked out on the food and drink only</div>
+        </div>
+        <Toggle value={form.taxOnServiceCharge} onChange={() => setForm(f => ({ ...f, taxOnServiceCharge: !f.taxOnServiceCharge }))} />
+      </div>
 
       {(preview.serviceCharge > 0 || preview.tax > 0) && (
         <div style={{ padding: "12px 14px", background: "#f9f9fb", borderRadius: 8, fontSize: 12, color: "#6b6b8a", lineHeight: 1.8 }}>

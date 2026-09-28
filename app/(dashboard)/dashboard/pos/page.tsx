@@ -21,14 +21,14 @@ import {
   modifierSummary, modifiersTotal, priceForOrderType, sameModifiers, selectionFromModifiers,
   type ChosenModifier, type ModifierGroup,
 } from "@/lib/menu";
-import { billCharges, getChargeSettings } from "@/lib/charges";
+import { billCharges, discountAmounts, getChargeSettings, type DiscountType } from "@/lib/charges";
 import { recordMovement, saleChanges, tracksStock } from "@/lib/stock";
 import { SHIFTS_CHANGED_EVENT, getOpenShift, type CashShift } from "@/lib/shifts";
 import { discountNeedsApproval, getPosRules } from "@/lib/pos-rules";
 import { getCurrentUser } from "@/lib/auth";
 import {
   ORDER_TYPE_LABEL, fireOrder, getOpenOrders, getOrder, getTables, markOrderPaid, newId,
-  nextOrderNumber, orderRef, orderSubtotal, saveOrder, stationFor, tableNames, voidLine,
+  nextOrderNumber, orderBill, orderRef, saveOrder, stationFor, tableNames, voidLine,
   type Approval, type DiningTable, type KitchenTicket, type OrderLine, type OrderType, type RestaurantOrder,
 } from "@/lib/restaurant";
 import { awardPoints, loyaltyActive, redeemPoints, type LoyaltySettings } from "@/lib/loyalty";
@@ -52,7 +52,6 @@ import type { Service, Client, InventoryItem, Staff, PaymentMethod } from "@/lib
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type CatalogTab = "all" | "services" | "products";
-type DiscountType = "flat" | "pct";
 
 interface CatalogItem {
   id: string;
@@ -390,12 +389,13 @@ export default function POSPage() {
   const cartLineItems: InvoiceItem[] = cart.map(e => ({
     id: e.cartId, type: e.type, description: lineDescription(e.name, e.modifiers),
     qty: e.qty, unitPrice: wholePkr(e.unitPrice), total: wholePkr(e.total),
+    ...(e.type === "product" ? { itemId: e.itemId, ...(e.modifiers?.length ? { modifiers: e.modifiers } : {}) } : {}),
   }));
   const rawSubtotal    = wholePkr(cartLineItems.reduce((s, i) => s + i.total, 0));
-  const baseDiscountAmount = discType === "pct" ? wholePkr(rawSubtotal * discount / 100) : wholePkr(discount);
-  const discountAmount = Math.min(baseDiscountAmount, rawSubtotal);
-  const baseDiscountAmount2 = discType2 === "pct" ? wholePkr(rawSubtotal * discount2 / 100) : wholePkr(discount2);
-  const discountAmount2 = Math.min(baseDiscountAmount2, Math.max(0, rawSubtotal - discountAmount));
+  // Same maths as orderBill() (lib/restaurant.ts), which prices a held tab on the floor plan.
+  const [discountAmount, discountAmount2] = discountAmounts(
+    rawSubtotal, { type: discType, value: discount }, { type: discType2, value: discount2 },
+  );
 
   const loyaltySettings       = settingsStore.loyalty as LoyaltySettings;
   const availableLoyaltyPts   = selectedClient?.id ? (selectedClient.loyaltyPoints ?? 0) : 0;
@@ -421,11 +421,14 @@ export default function POSPage() {
     : null;
   const noPaymentSelected = split ? !!splitProblem : (!isCredit && !payMethod);
   const shiftBlocked = restaurant && posRules.requireOpenShift && !openShift;
+  // An unpaid sale has to be on someone's account, or there's nobody to collect it from.
+  const creditNeedsCustomer = isCredit && !selectedClient?.id;
   // The staff discount is the owner's own rule, so it never needs sign-off itself.
   const approvableDiscount = (staffDiscountOn && discType === "pct" && discount === posRules.staffDiscountRate ? 0 : discountAmount) + discountAmount2;
   const discountPct = rawSubtotal > 0 ? (approvableDiscount / rawSubtotal) * 100 : 0;
   const signedInRole = typeof window === "undefined" ? undefined : getCurrentUser()?.role;
   const discountNeedsSignOff = signedInRole === "staff" && discountNeedsApproval(discountPct, posRules);
+  const checkoutBlocked = completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked || creditNeedsCustomer;
   const cashChange = !split && payMethod === "cash" && Number(cashGiven) > 0 ? Number(cashGiven) - total : null;
 
   // ── Cart ops ──────────────────────────────────────────────────────────────
@@ -643,6 +646,10 @@ export default function POSPage() {
     setRush(!!order.rush);
     setSaleNotes(order.notes ?? "");
     setSelectedStaffId(order.waiterId ?? "");
+    setDiscount(order.discount?.value ?? 0); setDiscType(order.discount?.type ?? "flat");
+    setDiscount2(order.discount2?.value ?? 0); setDiscType2(order.discount2?.type ?? "flat");
+    setShowDiscount2(!!order.discount2);
+    setStaffDiscountOn(!!order.staffDiscount);
     knownLineIds.current = new Set(order.lines.map(l => l.id));
     setCart(order.lines.filter(l => !l.voided).map(l => ({
       cartId: l.id, lineId: l.id, itemId: l.itemId, type: "product" as const, name: l.name,
@@ -695,6 +702,9 @@ export default function POSPage() {
       clientName: selectedClient?.name || undefined,
       clientPhone: selectedClient?.phone || undefined,
       notes: saleNotes.trim() || undefined,
+      discount: discount > 0 ? { type: discType, value: discount } : undefined,
+      discount2: discount2 > 0 ? { type: discType2, value: discount2 } : undefined,
+      staffDiscount: discount > 0 && staffDiscountOn ? true : undefined,
       lines: [...kept, ...cartLines],
     };
   }
@@ -725,7 +735,7 @@ export default function POSPage() {
       }
       setCart([]); setDiscount(0); setDiscount2(0); setLoyaltyRedeem(0); setSaleNotes(""); setPayMethod(null);
       setSelectedClient(null); setClientQ(""); setSelectedStaffId(""); setIsCredit(false);
-      setSplit(false); setSplitRows([]); setCashGiven(""); setStaffDiscountOn(false); setShowDiscount2(false); setShowDiscount2(false);
+      setSplit(false); setSplitRows([]); setCashGiven(""); setStaffDiscountOn(false); setShowDiscount2(false);
       clearOrder();
       refreshRestaurant();
     } finally {
@@ -806,7 +816,7 @@ export default function POSPage() {
     // Mirrors the Complete Sale button's disabled condition — a payment method (or
     // explicit Pay Later/Credit, or a split that adds up) must be chosen, never
     // silently defaulted.
-    if (noPaymentSelected || shiftBlocked) return;
+    if (noPaymentSelected || shiftBlocked || creditNeedsCustomer) return;
     if (discountNeedsSignOff && !discountApproval) { setAskDiscountApproval(true); return; }
     if (restaurant) {
       const problem = orderProblem();
@@ -2070,6 +2080,11 @@ export default function POSPage() {
                   <AlertCircle size={13} /> {splitProblem ?? "Choose how they're paying"}
                 </div>
               )}
+              {creditNeedsCustomer && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#b91c1c" }}>
+                  <AlertCircle size={13} /> A credit sale needs a named customer — pick one or add them, so there&apos;s someone to collect from
+                </div>
+              )}
               {shiftBlocked && (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#b91c1c" }}>
                   <AlertCircle size={13} /> Open the cash drawer on the <Link href="/dashboard/shifts" style={{ color: "#b91c1c" }}>Shifts</Link> page before taking payment
@@ -2081,14 +2096,14 @@ export default function POSPage() {
                 </div>
               )}
               {/* Complete button */}
-              <button type="button" onClick={() => completeSale()} disabled={completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked}
+              <button type="button" onClick={() => completeSale()} disabled={checkoutBlocked}
                 style={{
                   width: "100%", padding: "14px 0", borderRadius: 13, border: "none",
-                  background: (completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked) ? "#e8e8f0" : isCredit ? "linear-gradient(135deg,#d97706,#f59e0b)" : "linear-gradient(135deg,#9A3412,#F97316)",
-                  color: (completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked) ? "#aaaabc" : "#fff",
-                  fontSize: 15, fontWeight: 900, cursor: (completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked) ? "not-allowed" : "pointer",
+                  background: checkoutBlocked ? "#e8e8f0" : isCredit ? "linear-gradient(135deg,#d97706,#f59e0b)" : "linear-gradient(135deg,#9A3412,#F97316)",
+                  color: checkoutBlocked ? "#aaaabc" : "#fff",
+                  fontSize: 15, fontWeight: 900, cursor: checkoutBlocked ? "not-allowed" : "pointer",
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 9,
-                  boxShadow: (completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked) ? "none" : isCredit ? "0 5px 20px rgba(217,119,6,0.40)" : "0 5px 20px rgba(154,52,18,0.42)",
+                  boxShadow: checkoutBlocked ? "none" : isCredit ? "0 5px 20px rgba(217,119,6,0.40)" : "0 5px 20px rgba(154,52,18,0.42)",
                   letterSpacing: "-0.01em", transition: "all 0.15s",
                 }}
                 onMouseEnter={e => { if (!completing) e.currentTarget.style.transform = "translateY(-1px)"; }}
@@ -2197,7 +2212,7 @@ export default function POSPage() {
                   <span style={{ fontSize: 14, fontWeight: 900, color: "#1d1d2f", flex: 1 }}>{orderRef(o, diningTables)}</span>
                 </div>
                 <div style={{ fontSize: 11, color: "#9999b0", marginTop: 3 }}>
-                  {ORDER_TYPE_LABEL[o.type]} · {o.lines.filter(l => !l.voided).length} items · {pkr(orderSubtotal(o))}
+                  {ORDER_TYPE_LABEL[o.type]} · {o.lines.filter(l => !l.voided).length} items · {pkr(orderBill(o).total)}
                   {o.lines.some(l => !l.voided && !l.firedAt) ? " · not all sent" : ""}
                   {o.waiterName ? ` · ${o.waiterName}` : ""}
                 </div>

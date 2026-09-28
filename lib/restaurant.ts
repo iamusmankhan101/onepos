@@ -28,6 +28,7 @@ import { persistEntity } from "./turso-sync";
 import { entityStorageKey } from "./sync-records";
 import type { InventoryItem } from "./types";
 import type { ChosenModifier } from "./menu";
+import { billCharges, discountAmounts, type BillDiscount } from "./charges";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -99,6 +100,17 @@ export interface RestaurantOrder {
   cancelled?: Approval;
   /** For a "merged" order: the order its lines moved into. */
   mergedInto?: string;
+  /**
+   * Discounts the cashier gave on this tab, kept with it so sending a round to
+   * the kitchen or holding the order doesn't lose them. Loyalty points are
+   * redeemed at payment, so they aren't here.
+   */
+  discount?: BillDiscount;
+  discount2?: BillDiscount;
+  /** `discount` is the Settings → POS Rules staff discount. */
+  staffDiscount?: boolean;
+  /** The manager who signed off on the discount, if it needed it. */
+  discountApprovedBy?: string;
 }
 
 export interface TicketItem {
@@ -116,8 +128,10 @@ export interface KitchenTicket {
   orderId: string;
   orderNumber: string;
   orderType: OrderType;
-  /** Table names at the moment of firing — a later table move doesn't rewrite a printed ticket. */
+  /** Where the food goes. Moving or merging the order rewrites it on tickets not yet served. */
   tableNames: string[];
+  /** The tables it was fired for, when the order has since moved — the paper ticket still says these. */
+  movedFrom?: string[];
   waiterName?: string;
   /** Delivery orders: where it's going and who to call — the rider reads it off the ticket. */
   deliveryAddress?: string;
@@ -249,6 +263,17 @@ export function orderSubtotal(order: Pick<RestaurantOrder, "lines">): number {
   return liveLines(order).reduce((sum, l) => sum + l.qty * l.unitPrice, 0);
 }
 
+/** What the order's bill comes to right now: discounts, service charge and tax included. */
+export function orderBill(order: Pick<RestaurantOrder, "lines" | "type" | "discount" | "discount2">): {
+  subtotal: number; discount: number; serviceCharge: number; tax: number; total: number;
+} {
+  const subtotal = Math.round(liveLines(order).reduce((sum, l) => sum + l.qty * Math.round(l.unitPrice), 0));
+  const [a, b] = discountAmounts(subtotal, order.discount, order.discount2);
+  const discount = a + b;
+  const { serviceCharge, tax } = billCharges(subtotal - discount, order.type);
+  return { subtotal, discount, serviceCharge, tax, total: subtotal - discount + serviceCharge + tax };
+}
+
 export function unfiredLines(order: Pick<RestaurantOrder, "lines">): OrderLine[] {
   return liveLines(order).filter((l) => !l.firedAt);
 }
@@ -265,6 +290,21 @@ export function nextOrderNumber(now = new Date()): string {
     .filter((o) => new Date(o.createdAt).toDateString() === today)
     .reduce((max, o) => Math.max(max, parseInt(o.number, 10) || 0), 0);
   return String(highest + 1);
+}
+
+/**
+ * Where a new table goes on the floor plan: the first slot of a loose grid
+ * that no table in the same area covers, so it never lands on top of one.
+ * Positions are percentages of the floor, as on DiningTable.
+ */
+export function freeTableSpot(existing: Pick<DiningTable, "x" | "y">[]): { x: number; y: number } {
+  const W = 16, H = 22; // a table plus breathing room, in % of the floor
+  for (let y = 5; y <= 71; y += H) {
+    for (let x = 3; x <= 83; x += W) {
+      if (!existing.some((t) => Math.abs(t.x - x) < W && Math.abs(t.y - y) < H)) return { x, y };
+    }
+  }
+  return { x: 6 + Math.random() * 70, y: 8 + Math.random() * 60 };
 }
 
 export type TableState = "free" | "occupied" | "ready" | "bill";
@@ -406,18 +446,40 @@ export async function markOrderPaid(orderId: string, invoice: { id: string; numb
   });
 }
 
-/** Moves an order to other table(s). */
+/**
+ * Points the order's unserved kitchen tickets at where the order is now, so
+ * food fired before a table move or merge goes to the right table. The
+ * tables it was fired for are kept as `movedFrom`, since a printed ticket
+ * still says those.
+ */
+async function retargetTickets(orderIds: string[], order: RestaurantOrder): Promise<void> {
+  const names = tableNames(order.tableIds);
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every((n, i) => n === b[i]);
+  const changed = getTickets()
+    .filter((t) => orderIds.includes(t.orderId) && t.status !== "served" && !same(t.tableNames, names))
+    .map((t) => ({
+      ...t,
+      orderType: order.type,
+      tableNames: names,
+      movedFrom: t.movedFrom ?? t.tableNames,
+      waiterName: order.waiterName ?? t.waiterName,
+    }));
+  await saveTickets(changed);
+}
+
+/** Moves an order to other table(s); the kitchen's tickets follow it. */
 export async function moveOrder(order: RestaurantOrder, tableIds: string[]): Promise<RestaurantOrder> {
   const moved = { ...order, type: "dine-in" as const, tableIds };
   await saveOrder(moved);
+  await retargetTickets([order.id], moved);
   return moved;
 }
 
 /**
  * Merges `source` into `target`: its lines (fired state and all), tables and
  * guests move across, and `source` is closed as "merged" so it drops off the
- * floor. Kitchen tickets keep pointing at the source order and still show the
- * right table names, which is all the kitchen needs.
+ * floor. Kitchen tickets keep pointing at the source order; their table names
+ * are brought up to date with the merged order's tables.
  */
 export async function mergeOrders(target: RestaurantOrder, source: RestaurantOrder): Promise<RestaurantOrder> {
   const merged: RestaurantOrder = {
@@ -431,6 +493,7 @@ export async function mergeOrders(target: RestaurantOrder, source: RestaurantOrd
   };
   await saveOrder({ ...source, status: "merged", mergedInto: target.id, closedAt: new Date().toISOString() });
   await saveOrder(merged);
+  await retargetTickets([target.id, source.id], merged);
   return merged;
 }
 
@@ -452,6 +515,10 @@ export async function splitOrder(order: RestaurantOrder, lineIds: string[]): Pro
     guests: undefined,
     billRequested: false,
     createdAt: new Date().toISOString(),
+    // A percentage discount applies to both parts; a flat one stays with the original, not counted twice.
+    discount: order.discount?.type === "pct" ? order.discount : undefined,
+    discount2: order.discount2?.type === "pct" ? order.discount2 : undefined,
+    staffDiscount: order.discount?.type === "pct" ? order.staffDiscount : undefined,
   };
   const original = { ...order, lines: order.lines.filter((l) => !ids.has(l.id)) };
   await saveOrder(split);

@@ -10,6 +10,8 @@ import { useState } from "react";
 import { Minus, Plus, RotateCcw, X } from "lucide-react";
 import ManagerApproval from "@/components/manager-approval";
 import { createRefund, refundable, refundAmount, type Invoice } from "@/lib/invoices";
+import { restockRefund } from "@/lib/invoice-audit";
+import { useBusinessType } from "@/lib/use-business-type";
 import { getOpenShift } from "@/lib/shifts";
 import { getCurrentUser } from "@/lib/auth";
 import { getStoredClients, saveClients } from "@/lib/storage";
@@ -35,6 +37,11 @@ export default function RefundModal({ invoice, onClose, onDone }: {
   const [custom, setCustom] = useState("");
   const [approving, setApproving] = useState(false);
   const [error, setError] = useState("");
+  // A returned shop item goes back on the shelf; a refunded meal usually doesn't.
+  const restaurant = useBusinessType().restaurantMode;
+  const hasProducts = invoice.items.some((i) => i.type === "product" && i.qty > 0);
+  const [restock, setRestock] = useState<boolean | null>(null);
+  const putBack = hasProducts && (restock ?? !restaurant);
 
   const left = refundable(invoice);
   const computed = refundAmount(invoice, qty);
@@ -58,6 +65,7 @@ export default function RefundModal({ invoice, onClose, onDone }: {
         shiftId: getOpenShift()?.id,
         amount: custom ? amount : undefined,
       });
+      if (putBack) await restockRefund(invoice, refund, qty);
       // The customer spent that much less with us.
       if (invoice.clientId) {
         const clients = getStoredClients();
@@ -121,6 +129,13 @@ export default function RefundModal({ invoice, onClose, onDone }: {
           <div style={{ fontSize: 11.5, color: "#9898b0", marginTop: -6 }}>
             Worked out from what was charged for those items, so any discount, tax and service charge come back in proportion.
           </div>
+
+          {hasProducts && (
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#1a1a2e", cursor: "pointer" }}>
+              <input type="checkbox" checked={putBack} onChange={(e) => setRestock(e.target.checked)} />
+              Put these items back in stock
+            </label>
+          )}
 
           {error && <div style={{ fontSize: 12, fontWeight: 700, color: "#dc2626" }}>{error}</div>}
 

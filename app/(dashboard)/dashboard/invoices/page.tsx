@@ -3,12 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Search, Eye, Trash2, CheckCircle, Clock, Pencil, FileEdit,
-  ReceiptText, ShoppingCart, TrendingUp, Users,
+  ReceiptText, ShoppingCart, TrendingUp, Users, RotateCcw, History, X,
 } from "lucide-react";
 import {
-  getInvoices, deleteInvoice, markInvoicePaid, updateInvoice, localDateKey,
+  getInvoices, deleteInvoice, markInvoicePaid, updateInvoice, localDateKey, refundable,
   type Invoice,
 } from "@/lib/invoices";
+import { canDelete, getInvoiceAudit, recordInvoiceDelete, type InvoiceAuditEntry } from "@/lib/invoice-audit";
+import ManagerApproval from "@/components/manager-approval";
+import type { Approval } from "@/lib/restaurant";
 import type { PaymentMethod } from "@/lib/types";
 import { getStoredAppointments, saveAppointments, getStoredClients, saveClients } from "@/lib/storage";
 import { settingsStore } from "@/lib/settings-store";
@@ -16,7 +19,7 @@ import { syncFromDB } from "@/lib/turso-sync";
 import InvoicePrint from "@/components/invoice-print";
 import InvoiceEdit from "@/components/invoice-edit";
 import RefundModal from "@/components/refund-modal";
-import { movementFor, undoMovement } from "@/lib/stock";
+import { movementsFor, undoMovement } from "@/lib/stock";
 import MobilePageHeader from "@/components/mobile-page-header";
 import PageTitle from "@/components/page-title";
 import { fmtCurrency as fmt } from "@/lib/format";
@@ -78,7 +81,8 @@ export default function InvoicesPage() {
   const [search, setSearch]             = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "paid" | "unpaid">("all");
   const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null);
-  const [deleteConfirm, setDeleteConfirm]   = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm]   = useState<Invoice | null>(null);
+  const [showLog, setShowLog] = useState(false);
   const [markPaidPromptId, setMarkPaidPromptId] = useState<string | null>(null);
   const [markPaidDate, setMarkPaidDate] = useState(() => localDateKey());
   const [editDateInvoice, setEditDateInvoice] = useState<Invoice | null>(null);
@@ -146,7 +150,8 @@ export default function InvoicesPage() {
         const matchSearch = !q ||
           inv.clientName.toLowerCase().includes(q) ||
           inv.number.toLowerCase().includes(q) ||
-          inv.staffName.toLowerCase().includes(q);
+          inv.staffName.toLowerCase().includes(q) ||
+          (inv.cashierName ?? "").toLowerCase().includes(q);
         const matchStatus = filterStatus === "all" || inv.status === filterStatus;
         return matchSearch && matchStatus;
       })
@@ -192,16 +197,24 @@ export default function InvoicesPage() {
     if (viewingInvoice?.id === updated.id) setViewingInvoice(updated);
   }
 
-  async function handleDelete(id: string) {
+  /**
+   * Deletes an unpaid invoice or a refund note once a manager has approved it.
+   * A paid sale is never deleted — it's refunded (lib/invoice-audit.ts).
+   */
+  async function handleDelete(target: Invoice, approval: Approval) {
+    const id = target.id;
     const invoice = getInvoices().find((item) => item.id === id);
+    if (!invoice || !canDelete(invoice)) { setDeleteConfirm(null); return; }
+    // The whole invoice is kept in the change log before it goes.
+    await recordInvoiceDelete(invoice, approval);
     // Off the list straight away; the stored copy is gone once deleteInvoice settles.
     setInvoices((list) => list.filter((inv) => inv.id !== id));
     setDeleteConfirm(null);
     if (viewingInvoice?.id === id) setViewingInvoice(null);
     await deleteInvoice(id);
-    // The sale took stock out (lib/stock.ts) — a deleted sale puts it back.
-    const sale = invoice ? movementFor("sale", invoice) : undefined;
-    if (sale) await undoMovement(sale);
+    // The sale took stock out (lib/stock.ts), and edits or a refund may have
+    // moved some back since — undoing them all leaves stock as if it never happened.
+    for (const movement of movementsFor("sale", invoice)) await undoMovement(movement);
     // A deleted refund no longer counts against the sale it refunded.
     if (invoice?.refundOf) {
       const original = getInvoices().find((i) => i.id === invoice.refundOf);
@@ -297,7 +310,7 @@ export default function InvoicesPage() {
               <div className="mobile-list-icon" style={{ background: sm.bg }}><Icon size={18} color={sm.color} /></div>
               <div className="mobile-list-body">
                 <div className="mobile-list-title">{inv.clientName}</div>
-                <div className="mobile-list-sub">{inv.number} · {fmtDate(inv.date)}{inv.staffName ? ` · ${inv.staffName}` : ""}</div>
+                <div className="mobile-list-sub">{inv.number} · {fmtDate(inv.date)}{inv.staffName || inv.cashierName ? ` · ${inv.staffName || inv.cashierName}` : ""}</div>
               </div>
               <div className="mobile-list-right">
                 <div className="mobile-list-amount">{fmt(inv.total)}</div>
@@ -327,7 +340,7 @@ export default function InvoicesPage() {
           onMarkPaid={() => setMarkPaidPromptId(viewingInvoice.id)}
           onEdit={() => setEditingInvoice(viewingInvoice)}
           onRefund={() => setRefundingInvoice(viewingInvoice)}
-          onDelete={() => setDeleteConfirm(viewingInvoice.id)}
+          onDelete={canDelete(viewingInvoice) ? () => setDeleteConfirm(viewingInvoice) : undefined}
         />
       )}
       {refundingInvoice && (
@@ -342,23 +355,21 @@ export default function InvoicesPage() {
           invoice={editingInvoice}
           onClose={() => setEditingInvoice(null)}
           onSaved={handleInvoiceSaved}
+          onRefund={() => { setRefundingInvoice(editingInvoice); setEditingInvoice(null); }}
         />
       )}
       {deleteConfirm && (
-        <div onClick={() => setDeleteConfirm(null)} className="modal-overlay" style={{ zIndex: 350 }}>
-          <div onClick={(e) => e.stopPropagation()} className="modal-sheet" style={{ background: "#fff", borderRadius: 16, padding: "28px 32px", maxWidth: 360, width: "100%", boxShadow: "0 16px 50px rgba(0,0,0,0.2)", textAlign: "center" }}>
-            <div style={{ width: 52, height: 52, borderRadius: 14, background: "#fef2f2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-              <Trash2 size={22} color="#dc2626" />
-            </div>
-            <div style={{ fontWeight: 800, fontSize: 16, color: "#1a1a2e", marginBottom: 6 }}>Delete Invoice?</div>
-            <div style={{ fontSize: 13, color: "#6b6b8a", marginBottom: 24 }}>This action cannot be undone.</div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-              <button onClick={() => setDeleteConfirm(null)} style={{ padding: "9px 20px", borderRadius: 9, border: "1px solid #e8e8f0", background: "#fff", fontSize: 13, fontWeight: 600, color: "#6b6b8a", cursor: "pointer" }}>Cancel</button>
-              <button onClick={() => handleDelete(deleteConfirm)} style={{ padding: "9px 20px", borderRadius: 9, border: "none", background: "#dc2626", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer" }}>Delete</button>
-            </div>
-          </div>
-        </div>
+        <ManagerApproval
+          title={`Delete ${deleteConfirm.number}?`}
+          detail={deleteConfirm.refundOf
+            ? `This takes the ${fmt(-deleteConfirm.total)} refund off ${deleteConfirm.refundOfNumber ?? "the sale"}. A copy is kept in the change log.`
+            : `An unpaid invoice for ${fmt(deleteConfirm.total)} to ${deleteConfirm.clientName}. Any stock it used goes back. A copy is kept in the change log.`}
+          confirmLabel="Delete invoice"
+          onClose={() => setDeleteConfirm(null)}
+          onApproved={(approval) => handleDelete(deleteConfirm, approval)}
+        />
       )}
+      {showLog && <ChangeLog onClose={() => setShowLog(false)} onOpen={(inv) => { setShowLog(false); setViewingInvoice(inv); }} />}
       {markPaidPromptId && (
         <div onClick={() => setMarkPaidPromptId(null)} className="modal-overlay" style={{ zIndex: 350 }}>
           <div onClick={(e) => e.stopPropagation()} className="modal-sheet" style={{ background: "#fff", borderRadius: 16, padding: "28px 32px", maxWidth: 360, width: "100%", boxShadow: "0 16px 50px rgba(0,0,0,0.2)", textAlign: "center" }}>
@@ -460,6 +471,14 @@ export default function InvoicesPage() {
                 style={{ ...inputStyle, paddingLeft: 38, maxWidth: 360, borderRadius: 12, border: "1px solid #e3e0eb", padding: "10px 14px 10px 38px", boxShadow: "0 2px 8px rgba(0,0,0,0.01)", transition: "border-color 0.15s" }}
               />
             </div>
+            <button
+              onClick={() => setShowLog(true)}
+              title="Every edit and delete, with who approved it and why"
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: "1px solid #e3e0eb", background: "#fff", fontSize: 13, fontWeight: 750, color: "#6b6b8a", cursor: "pointer" }}
+              className="hover-bg-light"
+            >
+              <History size={14} /> Change log
+            </button>
             {(["all", "paid", "unpaid"] as const).map((s) => (
               <button
                 key={s}
@@ -482,7 +501,7 @@ export default function InvoicesPage() {
             <div style={{ background: "#fff" }}>
 
               {/* Column headers */}
-              <div style={{ display: "grid", gridTemplateColumns: "150px 1fr 150px 110px 120px 80px 110px 100px 100px", padding: "12px 24px", borderBottom: "1px solid #f0f0f5", background: "#faf9fd", alignItems: "center" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "150px 1fr 150px 110px 120px 80px 110px 100px 150px", padding: "12px 24px", borderBottom: "1px solid #f0f0f5", background: "#faf9fd", alignItems: "center" }}>
                 {["Invoice #", "Client", "Staff", "Date", "Created", "Items", "Method", "Amount", "Actions"].map((h) => (
                   <div key={h} style={{ fontSize: 10, fontWeight: 800, color: "#8d8880", letterSpacing: "0.08em", textTransform: "uppercase" }}>{h}</div>
                 ))}
@@ -506,7 +525,7 @@ export default function InvoicesPage() {
                     key={inv.id}
                     className="hover-bg-row"
                     style={{
-                      display: "grid", gridTemplateColumns: "150px 1fr 150px 110px 120px 80px 110px 100px 100px",
+                      display: "grid", gridTemplateColumns: "150px 1fr 150px 110px 120px 80px 110px 100px 150px",
                       padding: "16px 24px",
                       borderBottom: i < filtered.length - 1 ? "1px solid #f8f8fc" : "none",
                       alignItems: "center", transition: "background 0.15s",
@@ -517,6 +536,11 @@ export default function InvoicesPage() {
                       <div style={{ fontSize: 13, fontWeight: 800, color: inv.refundOf ? "#dc2626" : "var(--accent)", fontFamily: "monospace", letterSpacing: "-0.02em" }}>{inv.number}</div>
                       {inv.refundOfNumber && <div style={{ fontSize: 10, fontWeight: 700, color: "#dc2626", marginTop: 2 }}>Refund of {inv.refundOfNumber}</div>}
                       {(inv.refundedAmount ?? 0) > 0 && <div style={{ fontSize: 10, fontWeight: 700, color: "#b45309", marginTop: 2 }}>{fmt(inv.refundedAmount!)} refunded</div>}
+                      {(inv.edits?.length ?? 0) > 0 && (
+                        <div title={inv.edits!.map((e) => `${e.by}: ${e.reason}`).join("\n")} style={{ fontSize: 10, fontWeight: 700, color: "#6d28d9", marginTop: 2 }}>
+                          Edited{inv.edits!.length > 1 ? ` ×${inv.edits!.length}` : ""}
+                        </div>
+                      )}
                     </div>
 
                     {/* Client */}
@@ -525,8 +549,13 @@ export default function InvoicesPage() {
                       {inv.clientPhone && <div style={{ fontSize: 11, color: "#9898b0", marginTop: 2, fontWeight: 500 }}>{inv.clientPhone}</div>}
                     </div>
 
-                    {/* Staff */}
-                    <div style={{ fontSize: 13, color: "#4a4a6a", fontWeight: 600 }}>{inv.staffName || "—"}</div>
+                    {/* Staff — who it's credited to, else who rang it up */}
+                    <div>
+                      <div style={{ fontSize: 13, color: "#4a4a6a", fontWeight: 600 }}>{inv.staffName || inv.cashierName || "—"}</div>
+                      {inv.staffName && inv.cashierName && inv.cashierName !== inv.staffName && (
+                        <div style={{ fontSize: 11, color: "#9898b0", marginTop: 2, fontWeight: 500 }}>Cashier: {inv.cashierName}</div>
+                      )}
+                    </div>
 
                     {/* Date */}
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -570,14 +599,24 @@ export default function InvoicesPage() {
                       >
                         <Eye size={14} color="#9898b0" />
                       </button>
-                      <button
+                      {!inv.refundOf && <button
                         onClick={() => setEditingInvoice(inv)}
                         title="Edit Invoice"
                         style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #e3e0eb", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.15s" }}
                         className="hover-bg-light"
                       >
                         <FileEdit size={14} color="#9898b0" />
-                      </button>
+                      </button>}
+                      {refundable(inv) > 0 && (
+                        <button
+                          onClick={() => setRefundingInvoice(inv)}
+                          title="Refund"
+                          style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #fed7aa", background: "#fff7ed", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.15s" }}
+                          className="hover-scale"
+                        >
+                          <RotateCcw size={14} color="#c2410c" />
+                        </button>
+                      )}
                       {inv.status === "unpaid" && (
                         <button
                           onClick={() => setMarkPaidPromptId(inv.id)}
@@ -588,14 +627,14 @@ export default function InvoicesPage() {
                           <CheckCircle size={14} color="#059669" />
                         </button>
                       )}
-                      <button
-                        onClick={() => setDeleteConfirm(inv.id)}
+                      {canDelete(inv) && <button
+                        onClick={() => setDeleteConfirm(inv)}
                         title="Delete"
                         style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #fecaca", background: "#fef2f2", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.15s" }}
                         className="hover-scale"
                       >
                         <Trash2 size={14} color="#dc2626" />
-                      </button>
+                      </button>}
                     </div>
                   </div>
                 );
@@ -603,6 +642,67 @@ export default function InvoicesPage() {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Every edit and delete made to an invoice after the sale, newest first (lib/invoice-audit.ts). */
+function ChangeLog({ onClose, onOpen }: { onClose: () => void; onOpen: (inv: Invoice) => void }) {
+  const [entries] = useState<InvoiceAuditEntry[]>(() => getInvoiceAudit());
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <div onClick={onClose} className="modal-overlay" style={{ zIndex: 340 }}>
+      <div onClick={(e) => e.stopPropagation()} className="modal-sheet" style={{ background: "#fff", borderRadius: 16, maxWidth: 640, width: "100%", maxHeight: "86vh", overflowY: "auto", boxShadow: "0 16px 50px rgba(0,0,0,0.2)" }}>
+        <div style={{ display: "flex", alignItems: "center", padding: "18px 22px 12px", borderBottom: "1px solid #f0f0f5", position: "sticky", top: 0, background: "#fff" }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 16, color: "#1a1a2e" }}>Invoice change log</div>
+            <div style={{ fontSize: 12, color: "#9898b0", marginTop: 2 }}>Every edit and delete after the sale, who approved it and why</div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ border: "none", background: "none", cursor: "pointer", color: "#9898b0" }}><X size={18} /></button>
+        </div>
+        {entries.length === 0 && <div style={{ padding: 32, textAlign: "center", fontSize: 13, color: "#9898b0" }}>No invoice has been changed or deleted.</div>}
+        {entries.map((e) => {
+          const expanded = open === e.id;
+          const current = e.action === "edit" ? getInvoices().find((i) => i.id === e.invoiceId) : undefined;
+          return (
+            <div key={e.id} style={{ padding: "12px 22px", borderBottom: "1px solid #f6f6fa" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", padding: "2px 7px", borderRadius: 6, background: e.action === "delete" ? "#fef2f2" : "#f5f3ff", color: e.action === "delete" ? "#dc2626" : "#6d28d9" }}>
+                  {e.action === "delete" ? "Deleted" : "Edited"}
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#1a1a2e", fontFamily: "monospace" }}>{e.invoiceNumber}</span>
+                <span style={{ fontSize: 12, color: "#6b6b8a" }}>
+                  {e.after ? `${fmt(e.before.total)} → ${fmt(e.after.total)}` : fmt(e.before.total)} · {e.before.clientName}
+                </span>
+                <span style={{ marginLeft: "auto", fontSize: 11, color: "#9898b0" }}>{fmtCreatedAt(e.at)}</span>
+              </div>
+              <div style={{ fontSize: 12, color: "#4a4a6a", marginTop: 4 }}>
+                “{e.reason}” — {e.by}{e.approvedBy && e.approvedBy !== e.by ? `, approved by ${e.approvedBy}` : ""}
+              </div>
+              <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+                <button type="button" onClick={() => setOpen(expanded ? null : e.id)} style={{ border: "none", background: "none", padding: 0, fontSize: 11, fontWeight: 700, color: "#EA580C", cursor: "pointer" }}>
+                  {expanded ? "Hide details" : "Details"}
+                </button>
+                {current && <button type="button" onClick={() => onOpen(current)} style={{ border: "none", background: "none", padding: 0, fontSize: 11, fontWeight: 700, color: "#6b6b8a", cursor: "pointer" }}>Open invoice</button>}
+              </div>
+              {expanded && (
+                <div style={{ display: "grid", gridTemplateColumns: e.after ? "1fr 1fr" : "1fr", gap: 12, marginTop: 8 }}>
+                  {[{ label: "Before", inv: e.before }, ...(e.after ? [{ label: "After", inv: e.after }] : [])].map(({ label, inv }) => (
+                    <div key={label} style={{ fontSize: 11.5, color: "#4a4a6a", background: "#faf9fd", borderRadius: 10, padding: "8px 10px" }}>
+                      <div style={{ fontWeight: 800, color: "#9898b0", textTransform: "uppercase", fontSize: 10, marginBottom: 4 }}>{label}</div>
+                      {inv.items.map((it) => <div key={it.id}>{it.qty} × {it.description} — {fmt(it.total)}</div>)}
+                      {inv.discountAmount + (inv.discount2Amount ?? 0) > 0 && <div>Discount −{fmt(inv.discountAmount + (inv.discount2Amount ?? 0))}</div>}
+                      {(inv.serviceChargeAmount ?? 0) > 0 && <div>Service {fmt(inv.serviceChargeAmount!)}</div>}
+                      {inv.taxAmount > 0 && <div>{inv.taxLabel || "Tax"} {fmt(inv.taxAmount)}</div>}
+                      <div style={{ fontWeight: 800, marginTop: 2 }}>Total {fmt(inv.total)}{inv.paymentMethod ? ` · ${METHOD_LABELS[inv.paymentMethod] ?? inv.paymentMethod}` : ""} · {inv.status}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

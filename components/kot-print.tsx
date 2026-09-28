@@ -11,13 +11,13 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Printer, X } from "lucide-react";
 import {
-  ORDER_TYPE_LABEL, STATION_LABEL, liveLines, orderLabel, orderSubtotal,
+  ORDER_TYPE_LABEL, STATION_LABEL, liveLines, orderBill, orderLabel,
   type KitchenTicket, type RestaurantOrder,
 } from "@/lib/restaurant";
 import { settingsStore } from "@/lib/settings-store";
 import { fmtCurrency as fmt } from "@/lib/format";
 import { modifierSummary } from "@/lib/menu";
-import { billCharges, getChargeSettings } from "@/lib/charges";
+import { getChargeSettings } from "@/lib/charges";
 
 const PRINT_STYLES = `
   @media print {
@@ -52,6 +52,7 @@ function TicketSlip({ ticket }: { ticket: KitchenTicket }) {
         <span>{where}</span>
         <span>#{ticket.orderNumber}</span>
       </div>
+      {ticket.movedFrom?.length ? <div style={{ fontWeight: 800, fontSize: 12 }}>MOVED FROM {ticket.movedFrom.join(" + ")}</div> : null}
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 3 }}>
         <span>{ORDER_TYPE_LABEL[ticket.orderType]}{ticket.waiterName ? ` · ${ticket.waiterName}` : ""}</span>
         <span>{time(ticket.createdAt)}</span>
@@ -78,9 +79,8 @@ function TicketSlip({ ticket }: { ticket: KitchenTicket }) {
 function BillSlip({ order }: { order: RestaurantOrder }) {
   const business = settingsStore.business as { name?: string; phone?: string; address?: string };
   const lines = liveLines(order);
-  const subtotal = orderSubtotal(order);
   const charges = getChargeSettings();
-  const { serviceCharge, tax } = billCharges(subtotal, order.type, charges);
+  const { subtotal, discount, serviceCharge, tax, total } = orderBill(order);
   return (
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", color: "#000", fontSize: 12 }}>
       <div style={{ textAlign: "center", fontWeight: 900, fontSize: 15 }}>{business.name || "Bill"}</div>
@@ -113,16 +113,17 @@ function BillSlip({ order }: { order: RestaurantOrder }) {
         </div>
       ))}
       <div style={DASH} />
-      {(serviceCharge > 0 || tax > 0) && (
+      {(discount > 0 || serviceCharge > 0 || tax > 0) && (
         <>
           <div style={{ display: "flex", justifyContent: "space-between" }}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
+          {discount > 0 && <div style={{ display: "flex", justifyContent: "space-between" }}><span>Discount</span><span>-{fmt(discount)}</span></div>}
           {serviceCharge > 0 && <div style={{ display: "flex", justifyContent: "space-between" }}><span>Service charge ({charges.serviceChargeRate}%)</span><span>{fmt(serviceCharge)}</span></div>}
           {tax > 0 && <div style={{ display: "flex", justifyContent: "space-between" }}><span>{charges.taxLabel} ({charges.taxRate}%)</span><span>{fmt(tax)}</span></div>}
         </>
       )}
       <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 15 }}>
         <span>TOTAL</span>
-        <span>{fmt(subtotal + serviceCharge + tax)}</span>
+        <span>{fmt(total)}</span>
       </div>
       <div style={{ textAlign: "center", fontSize: 11, marginTop: 10 }}>This is not a receipt — please pay at the counter.</div>
     </div>

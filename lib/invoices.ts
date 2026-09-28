@@ -4,6 +4,7 @@
 // TO the business owner).
 
 import type { PaymentMethod } from "@/lib/types";
+import type { ChosenModifier } from "@/lib/menu";
 import { persistEntity, recordDeletions } from "@/lib/turso-sync";
 import { locationUserKey } from "@/lib/locations";
 
@@ -18,6 +19,17 @@ export interface InvoiceItem {
   qty: number;
   unitPrice: number;
   total: number;
+  /** Products: the inventory item sold and its options, so an edit or refund can put stock back. */
+  itemId?: string;
+  modifiers?: ChosenModifier[];
+}
+
+/** One change made to an invoice after the sale (lib/invoice-audit.ts); the full before/after is in the audit log. */
+export interface InvoiceEdit {
+  at: string;
+  by: string;
+  approvedBy: string;
+  reason: string;
 }
 
 export interface Invoice {
@@ -75,6 +87,8 @@ export interface Invoice {
   approvedBy?: string;
   /** On a sale: how much of it has been refunded so far (positive). */
   refundedAmount?: number;
+  /** Changes made after the sale, oldest first. */
+  edits?: InvoiceEdit[];
 }
 
 /** The invoice's payment split into methods — one part unless it was a split payment. */

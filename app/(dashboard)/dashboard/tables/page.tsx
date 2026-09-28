@@ -22,12 +22,13 @@ import KotPrint from "@/components/kot-print";
 import ManagerApproval from "@/components/manager-approval";
 import { useRestaurantData, chime } from "@/lib/use-restaurant";
 import {
-  ORDER_TYPE_LABEL, cancelOrder, deleteTable, liveLines, mergeOrders, minutesSince, moveOrder,
-  newId, nextOrderNumber, orderLabel, orderSubtotal, saveOrder, saveTable, serveOrder, splitOrder,
+  ORDER_TYPE_LABEL, cancelOrder, deleteTable, freeTableSpot, getTables, liveLines, mergeOrders, minutesSince, moveOrder,
+  newId, nextOrderNumber, orderBill, orderLabel, saveOrder, saveTable, serveOrder, splitOrder,
   tableState, type DiningTable, type KitchenTicket, type RestaurantOrder, type TableState,
 } from "@/lib/restaurant";
 import { getStoredStaff } from "@/lib/storage";
 import { fmtCurrency as fmt } from "@/lib/format";
+import { getChargeSettings } from "@/lib/charges";
 import type { Staff } from "@/lib/types";
 
 const STATE_STYLE: Record<TableState, { label: string; color: string; bg: string; border: string }> = {
@@ -243,7 +244,7 @@ export default function TablesPage() {
                 <span style={{ fontSize: 14, fontWeight: 900, color: "#1d1d2f", lineHeight: 1 }}>{table.name}</span>
                 {order && !editing ? (
                   <>
-                    <span style={{ fontSize: 11, fontWeight: 800, color: style.color }}>{fmt(orderSubtotal(order))}</span>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: style.color }}>{fmt(orderBill(order).total)}</span>
                     <span style={{ fontSize: 10, fontWeight: 700, color: "#9999b0", display: "flex", alignItems: "center", gap: 3 }}>
                       <Clock size={9} /> {minutesSince(order.createdAt, now)}m{order.guests ? ` · ${order.guests}p` : ""}
                     </span>
@@ -278,7 +279,7 @@ export default function TablesPage() {
                       {ready && <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 900, color: "#047857" }}>READY</span>}
                     </div>
                     <div style={{ fontSize: 11, color: "#9999b0", marginTop: 4 }}>
-                      {o.clientName || "Walk-in"} · {liveLines(o).length} item{liveLines(o).length === 1 ? "" : "s"} · {fmt(orderSubtotal(o))} · {minutesSince(o.createdAt, now)}m
+                      {o.clientName || "Walk-in"} · {liveLines(o).length} item{liveLines(o).length === 1 ? "" : "s"} · {fmt(orderBill(o).total)} · {minutesSince(o.createdAt, now)}m
                     </div>
                   </button>
                 );
@@ -360,9 +361,8 @@ function TableEditor({ table, defaultArea, nextName, occupied, onClose, onHistor
       area: areaName.trim(),
       seats: Math.max(1, parseInt(seats, 10) || 1),
       shape,
-      // New tables land in a free-ish spot; drag them into place after.
-      x: table?.x ?? 6 + Math.random() * 70,
-      y: table?.y ?? 8 + Math.random() * 60,
+      // A new table lands in the first empty spot of its area; drag it into place after.
+      ...(table ? { x: table.x, y: table.y } : freeTableSpot(getTables().filter((t) => t.area === areaName.trim()))),
     });
     onClose();
   }
@@ -450,6 +450,7 @@ function OrderPanel({ order, tables, openOrders, staff, readyCount, tickets, now
   const freeTables = tables.filter((t) => !occupiedIds.has(t.id));
   const otherOrders = openOrders.filter((o) => o.id !== order.id);
   const hasFired = liveLines(order).some((l) => l.firedAt);
+  const bill = orderBill(order);
 
   async function run(action: () => Promise<unknown>) {
     setError("");
@@ -559,9 +560,21 @@ function OrderPanel({ order, tables, openOrders, staff, readyCount, tickets, now
         {/* Footer */}
         <div style={{ padding: "14px 20px 18px", borderTop: "1px solid #f2f2f8" }}>
           {error && <div style={{ fontSize: 12, fontWeight: 700, color: "#dc2626", marginBottom: 8 }}>{error}</div>}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#9999b0" }}>Total so far</span>
-            <span style={{ fontSize: 22, fontWeight: 900, color: "#1d1d2f" }}>{fmt(orderSubtotal(order))}</span>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#9999b0", minWidth: 0 }}>
+              Total so far
+              {(bill.discount > 0 || bill.serviceCharge > 0 || bill.tax > 0) && (
+                <span style={{ display: "block", fontSize: 11, fontWeight: 600, marginTop: 2 }}>
+                  {[
+                    `${fmt(bill.subtotal)} items`,
+                    bill.discount > 0 ? `− ${fmt(bill.discount)} discount` : "",
+                    bill.serviceCharge > 0 ? `+ ${fmt(bill.serviceCharge)} service` : "",
+                    bill.tax > 0 ? `+ ${fmt(bill.tax)} ${getChargeSettings().taxLabel}` : "",
+                  ].filter(Boolean).join(" ")}
+                </span>
+              )}
+            </span>
+            <span style={{ fontSize: 22, fontWeight: 900, color: "#1d1d2f", whiteSpace: "nowrap" }}>{fmt(bill.total)}</span>
           </div>
           {readyCount > 0 && (
             <button type="button" style={{ ...primary, width: "100%", marginBottom: 8, background: "#059669" }} onClick={() => run(() => serveOrder(order.id))}>
@@ -623,7 +636,7 @@ function TableHistory({ table, orders, onClose }: { table: DiningTable; orders: 
             </span>
           </div>
           <div style={{ fontSize: 12, color: "#6b6b8a", marginTop: 3 }}>
-            {liveLines(o).map((l) => `${l.qty}× ${l.name}`).join(", ") || "—"} · {fmt(orderSubtotal(o))}
+            {liveLines(o).map((l) => `${l.qty}× ${l.name}`).join(", ") || "—"} · {fmt(orderBill(o).total)}
           </div>
           {o.cancelled?.approvedBy && <div style={{ fontSize: 11, color: "#dc2626", marginTop: 2 }}>Cancelled: {o.cancelled.reason} ({o.cancelled.approvedBy})</div>}
         </div>

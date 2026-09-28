@@ -263,6 +263,11 @@ function TicketCard({ ticket, now, flash, accent, onPrint }: {
             <div style={{ fontSize: 16, fontWeight: 900, color: "#1d1d2f", lineHeight: 1.15 }}>
               {where(ticket)} <span style={{ color: "#9999b0", fontWeight: 800 }}>#{ticket.orderNumber}</span>
             </div>
+            {ticket.movedFrom?.length ? (
+              <div style={{ display: "inline-block", marginTop: 4, fontSize: 11, fontWeight: 800, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "2px 6px" }}>
+                Moved from {ticket.movedFrom.join(" + ")}
+              </div>
+            ) : null}
             <div style={{ fontSize: 11, color: "#9999b0", marginTop: 3, display: "flex", gap: 6, flexWrap: "wrap" }}>
               <span>{ORDER_TYPE_LABEL[ticket.orderType]}</span>
               <span>· {STATION_LABEL[ticket.station]}</span>

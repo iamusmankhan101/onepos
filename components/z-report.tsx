@@ -42,9 +42,20 @@ function when(iso?: string) {
   return iso ? new Date(iso).toLocaleString("en-PK", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 }
 
-export default function ZReport({ shift, onClose }: { shift: CashShift; onClose: () => void }) {
+export default function ZReport({ shift, autoPrint, onClose }: {
+  shift: CashShift;
+  /** Opens the print dialog as soon as the report is on screen — closing a shift prints its Z report. */
+  autoPrint?: boolean;
+  onClose: () => void;
+}) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { const t = window.setTimeout(() => setMounted(true), 0); return () => window.clearTimeout(t); }, []);
+  useEffect(() => {
+    if (!mounted || !autoPrint) return;
+    // After the portal has painted, or the browser prints an empty page.
+    const t = window.setTimeout(() => window.print(), 300);
+    return () => window.clearTimeout(t);
+  }, [mounted, autoPrint]);
   if (!mounted) return null;
 
   const open = shift.status === "open";
