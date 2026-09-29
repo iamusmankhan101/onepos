@@ -8,6 +8,7 @@
  * different id in the query string or request body.
  */
 
+import { timingSafeEqual } from "crypto";
 import { NextRequest } from "next/server";
 import { COOKIE_NAME, LEGACY_COOKIE_NAME, tokenId, verifySessionToken } from "./session";
 import { getEffectivePlan, getUserById, isSessionRevoked, type AuthUser } from "./auth-db";
@@ -117,6 +118,9 @@ export async function resolveActor(
  * caller's own scope.
  */
 export async function requireAdmin(req: NextRequest): Promise<AuthUser | null> {
+  const linkedAdmin = linkedConsoleAdmin(req);
+  if (linkedAdmin) return linkedAdmin;
+
   const actorId = await sessionUserId(req);
   const actor = actorId ? await getUserById(actorId) : null;
   if (!actor || actor.role !== "admin") return null;
@@ -124,4 +128,50 @@ export async function requireAdmin(req: NextRequest): Promise<AuthUser | null> {
   const { password: _password, ...withoutPassword } = actor;
   void _password;
   return withoutPassword;
+}
+
+// ─── Linked admin console (Salon Central) ─────────────────────────────────────
+
+/**
+ * The Salon Central admin console also manages Pointly: its server proxies the
+ * console's calls to /api/admin/* here, carrying a shared key in
+ * `x-linked-admin-key` and the Salon Central admin's email in
+ * `x-linked-admin-email`. The key is only ever sent server to server — the
+ * browser never sees it — and Salon Central checks its own admin session
+ * before forwarding anything.
+ *
+ * Unset (or shorter than 32 characters) disables the link entirely, so a
+ * deployment that never configured it has no way in through here.
+ */
+const LINKED_ADMIN_KEY = process.env.LINKED_ADMIN_KEY ?? "";
+const LINKED_ADMIN_ID = "linked:salon-central";
+
+function linkedConsoleAdmin(req: NextRequest): AuthUser | null {
+  if (LINKED_ADMIN_KEY.length < 32) return null;
+  const presented = req.headers.get("x-linked-admin-key");
+  if (!presented) return null;
+
+  const a = Buffer.from(presented);
+  const b = Buffer.from(LINKED_ADMIN_KEY);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+
+  // Only shown in the audit log, so the actor stays attributable.
+  const email = (req.headers.get("x-linked-admin-email") ?? "").trim().slice(0, 200) || "unknown";
+  return {
+    id: LINKED_ADMIN_ID,
+    email: `${email} (Salon Central)`,
+    ownerName: "Salon Central admin",
+    businessName: "",
+    phone: "",
+    role: "admin",
+    emailVerified: true,
+    approvalStatus: "approved",
+    accountFrozen: false,
+    freezeReason: null,
+    plan: "starter",
+    businessType: "general",
+    customPricePkr: null,
+    billingCycleMonths: null,
+    createdAt: new Date(0).toISOString(),
+  };
 }
