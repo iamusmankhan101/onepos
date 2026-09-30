@@ -12,6 +12,7 @@ import {
   Send, Pause, StickyNote, ListOrdered, Bike, ShoppingBag, UtensilsCrossed, Flame, ChefHat,
   Pencil, LayoutGrid, Utensils, Coffee, Pizza, Hamburger, Sandwich, Salad, Soup, Croissant, Cake,
   IceCreamCone, Cookie, Fish, Drumstick, Beef, Egg, Citrus, CupSoda, Wine, Beer, Martini,
+  ArrowLeft, Wallet,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useBusinessType } from "@/lib/use-business-type";
@@ -352,6 +353,17 @@ export default function POSPage() {
   const [posTab, setPosTab] = useState<"customer" | "catalog" | "cart">("catalog");
   // Desktop: customer, staff and notes live in a drawer over the order panel.
   const [customerOpen, setCustomerOpen] = useState(false);
+  // The order panel is two steps: build the order, then check out (customer,
+  // discounts, payment). Keeps the payment and Complete button on screen.
+  const [checkingOut, setCheckingOut] = useState(false);
+  // Back to the order step when it empties (a sale completed, the order was
+  // cleared) or a different open order is picked up.
+  const [checkoutOrderId, setCheckoutOrderId] = useState(activeOrder?.id ?? "");
+  if (checkoutOrderId !== (activeOrder?.id ?? "")) {
+    setCheckoutOrderId(activeOrder?.id ?? "");
+    setCheckingOut(false);
+  }
+  if (checkingOut && cart.length === 0) setCheckingOut(false);
 
   /** The customer details — the drawer on a wide screen, the Customer tab on a phone. */
   function openCustomer() {
@@ -1147,6 +1159,160 @@ export default function POSPage() {
 
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Who the sale is for — shown in the details drawer and in the checkout step.
+  const customerPicker = (
+    <>
+    {!selectedClient ? (
+      <>
+        {/* Search */}
+        <div style={{ position: "relative" }}>
+          <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#b0b0c8", pointerEvents: "none" }} />
+          <input
+            value={clientQ}
+            onChange={e => { setClientQ(e.target.value); setShowDrop(true); }}
+            onFocus={() => setShowDrop(true)}
+            onBlur={() => setTimeout(() => setShowDrop(false), 150)}
+            placeholder="Search by name or phone…"
+            style={{ width: "100%", height: 40, padding: "0 12px 0 34px", borderRadius: 10, border: "1.5px solid #e8e8f4", fontSize: 13, color: "#1d1d2f", outline: "none", background: "#fafafe", boxSizing: "border-box" }}
+          />
+          {/* Dropdown */}
+          {showDrop && dropClients.length > 0 && (
+            <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "#fff", border: "1px solid #e8e8f4", borderRadius: 12, boxShadow: "0 10px 32px rgba(0,0,0,0.12)", zIndex: 99, overflow: "hidden" }}>
+              {dropClients.map((c, i) => (
+                <button key={c.id} type="button"
+                  onMouseDown={() => { setSelectedClient(c); setClientQ(""); setShowDrop(false); }}
+                  style={{ width: "100%", padding: "10px 12px", border: "none", background: "none", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 10, borderBottom: i < dropClients.length - 1 ? "1px solid #f8f8fc" : "none" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "#f5f4ff")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                >
+                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg,#9A3412,#F97316)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                    {initials(c.name)}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#1d1d2f" }}>{c.name}</div>
+                    <div style={{ fontSize: 11, color: "#9999b0", marginTop: 1 }}>{c.phone || "No phone"}</div>
+                  </div>
+                  {c.totalVisits > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 800, background: "#ffedd5", color: "#EA580C", borderRadius: 20, padding: "2px 8px", flexShrink: 0 }}>
+                      {c.totalVisits}× visits
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Quick actions */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <button type="button"
+            onClick={() => setSelectedClient({ id: "", name: "Walk-in Customer", phone: "", tags: [], source: "walk-in", createdAt: "", totalVisits: 0, totalSpend: 0 })}
+            style={{ padding: "11px 0", borderRadius: 10, border: "1.5px dashed #d1d5db", background: "#fafafd", fontSize: 12, fontWeight: 700, color: "#6b7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, transition: "all 0.12s" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#f4f4f8"; e.currentTarget.style.borderColor = "#9999b0"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "#fafafd"; e.currentTarget.style.borderColor = "#d1d5db"; }}>
+            <User size={13} /> Walk-in
+          </button>
+          <button type="button" onClick={() => setShowNewForm(v => !v)}
+            style={{ padding: "11px 0", borderRadius: 10, border: "1.5px solid #fdba74", background: showNewForm ? "#fff7ed" : "#faf8ff", fontSize: 12, fontWeight: 700, color: "#EA580C", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, transition: "all 0.12s" }}>
+            <UserPlus size={13} /> New Client
+          </button>
+        </div>
+
+        {/* New client form */}
+        {showNewForm && (
+          <div style={{ padding: 14, border: "1.5px solid #fed7aa", borderRadius: 12, background: "#faf8ff", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#EA580C", display: "flex", alignItems: "center", gap: 6 }}>
+              <UserPlus size={13} /> Quick Add Client
+            </div>
+            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Full name *"
+              style={{ width: "100%", height: 36, padding: "0 12px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, outline: "none", background: "#fff", boxSizing: "border-box" }} />
+            <input value={newPhone} onChange={e => setNewPhone(e.target.value)} placeholder="Phone (for WhatsApp)"
+              style={{ width: "100%", height: 36, padding: "0 12px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, outline: "none", background: "#fff", boxSizing: "border-box" }} />
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 10, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Date of Birth
+              <input type="date" value={newDob} onChange={e => setNewDob(e.target.value)}
+                style={{ width: "100%", height: 36, padding: "0 12px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, outline: "none", background: "#fff", boxSizing: "border-box", color: "#1d1d2f" }} />
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button type="button" onClick={() => setShowNewForm(false)}
+                style={{ flex: 1, height: 34, borderRadius: 8, border: "1px solid #e8e8f0", background: "#fff", fontSize: 12, color: "#9999b0", cursor: "pointer", fontWeight: 600 }}>Cancel</button>
+              <button type="button" onClick={quickAddClient} disabled={!newName.trim()}
+                style={{ flex: 2, height: 34, borderRadius: 8, border: "none", background: newName.trim() ? "#EA580C" : "#e8e8f0", color: newName.trim() ? "#fff" : "#aaaabc", fontSize: 12, fontWeight: 700, cursor: newName.trim() ? "pointer" : "not-allowed" }}>
+                Add Client
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Recent clients hint */}
+        {!showNewForm && !clientQ && clients.length > 0 && (
+          <div style={{ marginTop: 4 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#b0b0c8", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Recent Clients</div>
+            {clients.slice(0, 4).map(c => (
+              <button key={c.id} type="button"
+                onMouseDown={() => setSelectedClient(c)}
+                style={{ width: "100%", padding: "8px 10px", border: "none", background: "none", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 8, borderRadius: 9, marginBottom: 2, transition: "background 0.1s" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "#f5f4ff")}
+                onMouseLeave={e => (e.currentTarget.style.background = "none")}
+              >
+                <div style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(135deg,#9A3412,#F97316)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                  {initials(c.name)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#1d1d2f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                  {c.lastVisitDate && <div style={{ fontSize: 10, color: "#b0b0c8" }}>Last: {c.lastVisitDate}</div>}
+                </div>
+                <ChevronRight size={12} color="#d0d0e0" />
+              </button>
+            ))}
+          </div>
+        )}
+      </>
+    ) : (
+      /* ── Selected client card ── */
+      <div>
+        <div style={{ padding: "14px", border: "2px solid #fed7aa", borderRadius: 14, background: "linear-gradient(145deg, #faf8ff, #fff7ed)", position: "relative" }}>
+          {/* Change button */}
+          <button type="button" onClick={() => setSelectedClient(null)}
+            style={{ position: "absolute", top: 10, right: 10, border: "1px solid #fed7aa", background: "#fff", borderRadius: 7, cursor: "pointer", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", color: "#EA580C", fontSize: 10, fontWeight: 700 }}>
+            <X size={12} color="#EA580C" />
+          </button>
+
+          {/* Avatar + info */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+            <div style={{ width: 44, height: 44, borderRadius: "50%", background: "linear-gradient(135deg,#9A3412,#F97316)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 900, color: "#fff", flexShrink: 0, boxShadow: "0 3px 10px rgba(154,52,18,0.3)" }}>
+              {initials(selectedClient.name)}
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#1d1d2f" }}>{selectedClient.name}</div>
+              {selectedClient.phone
+                ? <div style={{ fontSize: 11, color: "#EA580C", display: "flex", alignItems: "center", gap: 4, marginTop: 2, fontWeight: 600 }}><Phone size={10} />{selectedClient.phone}</div>
+                : <div style={{ fontSize: 11, color: "#c8c8d8", marginTop: 2 }}>No phone number</div>
+              }
+            </div>
+          </div>
+
+          {/* Stats */}
+          {selectedClient.id && (
+            <div style={{ display: "grid", gridTemplateColumns: loyaltyActive(loyaltySettings) ? "1fr 1fr 1fr" : "1fr 1fr", gap: 6 }}>
+              {[
+                { label: "Visits", value: selectedClient.totalVisits, color: "#EA580C", bg: "rgba(234,88,12,0.07)" },
+                { label: "Spent", value: selectedClient.totalSpend >= 1000 ? `${(selectedClient.totalSpend / 1000).toFixed(1)}k` : selectedClient.totalSpend, color: "#059669", bg: "rgba(5,150,105,0.07)" },
+                ...(loyaltyActive(loyaltySettings) ? [{ label: "Points", value: selectedClient.loyaltyPoints ?? 0, color: "#d97706", bg: "rgba(217,119,6,0.07)" }] : []),
+              ].map(s => (
+                <div key={s.label} style={{ padding: "8px 6px", borderRadius: 9, background: s.bg, textAlign: "center" }}>
+                  <div style={{ fontSize: 16, fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.value}</div>
+                  <div style={{ fontSize: 9, color: "#9999b0", marginTop: 2, fontWeight: 600, textTransform: "uppercase" }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+    </>
+  );
+
   return (
     <div className="dashboard-polish pos-polish" style={{ height: "100vh", background: "#f4f5fa", display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "inherit" }}>
 
@@ -1322,154 +1488,7 @@ export default function POSPage() {
 
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
 
-            {!selectedClient ? (
-              <>
-                {/* Search */}
-                <div style={{ position: "relative" }}>
-                  <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#b0b0c8", pointerEvents: "none" }} />
-                  <input
-                    value={clientQ}
-                    onChange={e => { setClientQ(e.target.value); setShowDrop(true); }}
-                    onFocus={() => setShowDrop(true)}
-                    onBlur={() => setTimeout(() => setShowDrop(false), 150)}
-                    placeholder="Search by name or phone…"
-                    style={{ width: "100%", height: 40, padding: "0 12px 0 34px", borderRadius: 10, border: "1.5px solid #e8e8f4", fontSize: 13, color: "#1d1d2f", outline: "none", background: "#fafafe", boxSizing: "border-box" }}
-                  />
-                  {/* Dropdown */}
-                  {showDrop && dropClients.length > 0 && (
-                    <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "#fff", border: "1px solid #e8e8f4", borderRadius: 12, boxShadow: "0 10px 32px rgba(0,0,0,0.12)", zIndex: 99, overflow: "hidden" }}>
-                      {dropClients.map((c, i) => (
-                        <button key={c.id} type="button"
-                          onMouseDown={() => { setSelectedClient(c); setClientQ(""); setShowDrop(false); }}
-                          style={{ width: "100%", padding: "10px 12px", border: "none", background: "none", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 10, borderBottom: i < dropClients.length - 1 ? "1px solid #f8f8fc" : "none" }}
-                          onMouseEnter={e => (e.currentTarget.style.background = "#f5f4ff")}
-                          onMouseLeave={e => (e.currentTarget.style.background = "none")}
-                        >
-                          <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg,#9A3412,#F97316)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
-                            {initials(c.name)}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 700, color: "#1d1d2f" }}>{c.name}</div>
-                            <div style={{ fontSize: 11, color: "#9999b0", marginTop: 1 }}>{c.phone || "No phone"}</div>
-                          </div>
-                          {c.totalVisits > 0 && (
-                            <span style={{ fontSize: 10, fontWeight: 800, background: "#ffedd5", color: "#EA580C", borderRadius: 20, padding: "2px 8px", flexShrink: 0 }}>
-                              {c.totalVisits}× visits
-                            </span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Quick actions */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <button type="button"
-                    onClick={() => setSelectedClient({ id: "", name: "Walk-in Customer", phone: "", tags: [], source: "walk-in", createdAt: "", totalVisits: 0, totalSpend: 0 })}
-                    style={{ padding: "11px 0", borderRadius: 10, border: "1.5px dashed #d1d5db", background: "#fafafd", fontSize: 12, fontWeight: 700, color: "#6b7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, transition: "all 0.12s" }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "#f4f4f8"; e.currentTarget.style.borderColor = "#9999b0"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "#fafafd"; e.currentTarget.style.borderColor = "#d1d5db"; }}>
-                    <User size={13} /> Walk-in
-                  </button>
-                  <button type="button" onClick={() => setShowNewForm(v => !v)}
-                    style={{ padding: "11px 0", borderRadius: 10, border: "1.5px solid #fdba74", background: showNewForm ? "#fff7ed" : "#faf8ff", fontSize: 12, fontWeight: 700, color: "#EA580C", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, transition: "all 0.12s" }}>
-                    <UserPlus size={13} /> New Client
-                  </button>
-                </div>
-
-                {/* New client form */}
-                {showNewForm && (
-                  <div style={{ padding: 14, border: "1.5px solid #fed7aa", borderRadius: 12, background: "#faf8ff", display: "flex", flexDirection: "column", gap: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: "#EA580C", display: "flex", alignItems: "center", gap: 6 }}>
-                      <UserPlus size={13} /> Quick Add Client
-                    </div>
-                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Full name *"
-                      style={{ width: "100%", height: 36, padding: "0 12px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, outline: "none", background: "#fff", boxSizing: "border-box" }} />
-                    <input value={newPhone} onChange={e => setNewPhone(e.target.value)} placeholder="Phone (for WhatsApp)"
-                      style={{ width: "100%", height: 36, padding: "0 12px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, outline: "none", background: "#fff", boxSizing: "border-box" }} />
-                    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 10, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      Date of Birth
-                      <input type="date" value={newDob} onChange={e => setNewDob(e.target.value)}
-                        style={{ width: "100%", height: 36, padding: "0 12px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, outline: "none", background: "#fff", boxSizing: "border-box", color: "#1d1d2f" }} />
-                    </label>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button type="button" onClick={() => setShowNewForm(false)}
-                        style={{ flex: 1, height: 34, borderRadius: 8, border: "1px solid #e8e8f0", background: "#fff", fontSize: 12, color: "#9999b0", cursor: "pointer", fontWeight: 600 }}>Cancel</button>
-                      <button type="button" onClick={quickAddClient} disabled={!newName.trim()}
-                        style={{ flex: 2, height: 34, borderRadius: 8, border: "none", background: newName.trim() ? "#EA580C" : "#e8e8f0", color: newName.trim() ? "#fff" : "#aaaabc", fontSize: 12, fontWeight: 700, cursor: newName.trim() ? "pointer" : "not-allowed" }}>
-                        Add Client
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Recent clients hint */}
-                {!showNewForm && !clientQ && clients.length > 0 && (
-                  <div style={{ marginTop: 4 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#b0b0c8", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Recent Clients</div>
-                    {clients.slice(0, 4).map(c => (
-                      <button key={c.id} type="button"
-                        onMouseDown={() => setSelectedClient(c)}
-                        style={{ width: "100%", padding: "8px 10px", border: "none", background: "none", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 8, borderRadius: 9, marginBottom: 2, transition: "background 0.1s" }}
-                        onMouseEnter={e => (e.currentTarget.style.background = "#f5f4ff")}
-                        onMouseLeave={e => (e.currentTarget.style.background = "none")}
-                      >
-                        <div style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(135deg,#9A3412,#F97316)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
-                          {initials(c.name)}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: "#1d1d2f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
-                          {c.lastVisitDate && <div style={{ fontSize: 10, color: "#b0b0c8" }}>Last: {c.lastVisitDate}</div>}
-                        </div>
-                        <ChevronRight size={12} color="#d0d0e0" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </>
-            ) : (
-              /* ── Selected client card ── */
-              <div>
-                <div style={{ padding: "14px", border: "2px solid #fed7aa", borderRadius: 14, background: "linear-gradient(145deg, #faf8ff, #fff7ed)", position: "relative" }}>
-                  {/* Change button */}
-                  <button type="button" onClick={() => setSelectedClient(null)}
-                    style={{ position: "absolute", top: 10, right: 10, border: "1px solid #fed7aa", background: "#fff", borderRadius: 7, cursor: "pointer", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", color: "#EA580C", fontSize: 10, fontWeight: 700 }}>
-                    <X size={12} color="#EA580C" />
-                  </button>
-
-                  {/* Avatar + info */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                    <div style={{ width: 44, height: 44, borderRadius: "50%", background: "linear-gradient(135deg,#9A3412,#F97316)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 900, color: "#fff", flexShrink: 0, boxShadow: "0 3px 10px rgba(154,52,18,0.3)" }}>
-                      {initials(selectedClient.name)}
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: "#1d1d2f" }}>{selectedClient.name}</div>
-                      {selectedClient.phone
-                        ? <div style={{ fontSize: 11, color: "#EA580C", display: "flex", alignItems: "center", gap: 4, marginTop: 2, fontWeight: 600 }}><Phone size={10} />{selectedClient.phone}</div>
-                        : <div style={{ fontSize: 11, color: "#c8c8d8", marginTop: 2 }}>No phone number</div>
-                      }
-                    </div>
-                  </div>
-
-                  {/* Stats */}
-                  {selectedClient.id && (
-                    <div style={{ display: "grid", gridTemplateColumns: loyaltyActive(loyaltySettings) ? "1fr 1fr 1fr" : "1fr 1fr", gap: 6 }}>
-                      {[
-                        { label: "Visits", value: selectedClient.totalVisits, color: "#EA580C", bg: "rgba(234,88,12,0.07)" },
-                        { label: "Spent", value: selectedClient.totalSpend >= 1000 ? `${(selectedClient.totalSpend / 1000).toFixed(1)}k` : selectedClient.totalSpend, color: "#059669", bg: "rgba(5,150,105,0.07)" },
-                        ...(loyaltyActive(loyaltySettings) ? [{ label: "Points", value: selectedClient.loyaltyPoints ?? 0, color: "#d97706", bg: "rgba(217,119,6,0.07)" }] : []),
-                      ].map(s => (
-                        <div key={s.label} style={{ padding: "8px 6px", borderRadius: 9, background: s.bg, textAlign: "center" }}>
-                          <div style={{ fontSize: 16, fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.value}</div>
-                          <div style={{ fontSize: 9, color: "#9999b0", marginTop: 2, fontWeight: 600, textTransform: "uppercase" }}>{s.label}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            {customerPicker}
 
             {/* Divider */}
             <div style={{ height: 1, background: "#f4f4fc", margin: "2px 0" }} />
@@ -1751,7 +1770,7 @@ export default function POSPage() {
           </div>
 
           {/* Dine in / Take away / Delivery */}
-          {restaurant && (
+          {restaurant && !checkingOut && (
             <div style={{ padding: "0 18px 12px", display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
               <div className="pos-segment" role="group" aria-label="Order type">
                 {([
@@ -1786,8 +1805,22 @@ export default function POSPage() {
             </div>
           )}
 
+          {/* Checkout step: the order folds to one line, tap to go back and edit */}
+          {checkingOut && (
+            <div style={{ padding: "0 14px 12px", flexShrink: 0 }}>
+              <button type="button" onClick={() => setCheckingOut(false)} className="pos-checkout-recap">
+                <ArrowLeft size={14} style={{ flexShrink: 0 }} />
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
+                  {totalQty} item{totalQty !== 1 ? "s" : ""}
+                  <span style={{ color: "#a3a3b8", fontWeight: 600 }}> · {cart.map(e => e.name).join(", ")}</span>
+                </span>
+                <span style={{ flexShrink: 0 }}>Edit order</span>
+              </button>
+            </div>
+          )}
+
           {/* Order lines */}
-          <div className="pos-cart-lines" style={{ flex: cart.length === 0 ? 1 : "1 1 auto", minHeight: cart.length === 0 ? 0 : 96, overflowY: "auto", padding: "2px 14px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
+          {!checkingOut && <div className="pos-cart-lines" style={{ flex: cart.length === 0 ? 1 : "1 1 auto", minHeight: cart.length === 0 ? 0 : 96, overflowY: "auto", padding: "2px 14px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
             {cart.length === 0 ? (
               <div className="pos-cart-empty" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "48px 16px", textAlign: "center" }}>
                 <div className="pos-cart-empty-icon" style={{ width: 64, height: 64, borderRadius: 18, background: "#f4f4fc", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
@@ -1885,14 +1918,21 @@ export default function POSPage() {
                 );
               })
             )}
-          </div>
+          </div>}
 
           {/* ── Order footer ── */}
           {cart.length > 0 && (
             <div style={{ padding: "4px 14px 18px", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
 
+              {checkingOut && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Customer</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{customerPicker}</div>
+                </div>
+              )}
+
               {/* Discounts & loyalty */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {checkingOut && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <div className="pos-adjust-row">
                   <Tag size={13} color="#d97706" style={{ flexShrink: 0 }} />
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#7a7a96" }}>Discount</span>
@@ -1976,7 +2016,7 @@ export default function POSPage() {
                     </div>
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* Summary */}
               <div className="pos-summary">
@@ -2005,6 +2045,7 @@ export default function POSPage() {
                 </div>
               </div>
 
+              {checkingOut && <>
               {/* Payment */}
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
@@ -2110,7 +2151,9 @@ export default function POSPage() {
                 </div>
               )}
 
-              {restaurant && (
+              </>}
+
+              {restaurant && !checkingOut && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
                   <button type="button" onClick={() => saveCurrentOrder(false)} disabled={sendingOrder}
                     title="Save the order without sending it to the kitchen"
@@ -2124,16 +2167,27 @@ export default function POSPage() {
                 </div>
               )}
 
+              {!checkingOut && hasUnpricedVariable && (
+                <div className="pos-warning" style={{ color: "#d97706" }}>
+                  <AlertCircle size={13} /> Enter a price for the variable-priced item(s) before checkout
+                </div>
+              )}
+              {!checkingOut && (
+                <button type="button" onClick={() => setCheckingOut(true)} disabled={hasUnpricedVariable} className="pos-place-btn">
+                  <Wallet size={17} /> Checkout · {pkr(total)}
+                </button>
+              )}
+
               {/* Complete */}
-              <button type="button" onClick={() => completeSale()} disabled={checkoutBlocked}
-                className={`pos-place-btn${isCredit ? " is-credit" : ""}`}>
+              {checkingOut && <button type="button" onClick={() => completeSale()} disabled={checkoutBlocked}
+                className={`pos-place-btn${isCredit ? " is-credit" : ""}`} style={{ position: "sticky", bottom: 12, zIndex: 2 }}>
                 {completing
                   ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Processing…</>
                   : isCredit
                     ? <><Clock size={17} /> Create Credit Invoice</>
                     : <><ReceiptText size={17} /> Complete Sale · {pkr(total)}</>
                 }
-              </button>
+              </button>}
             </div>
           )}
         </div>
