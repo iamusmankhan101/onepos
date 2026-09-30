@@ -6,6 +6,7 @@
  * POST  { action: "record", ownerId, plan, months | days, amountPkr, method, paidAt, reference?, note? }
  *       { action: "void", paymentId, reason? }
  *       { action: "set-terms", ownerId, customPricePkr: number | null, billingCycleMonths: number | null }
+ *       { action: "set-payment-method", ownerId, paymentMethodId: string | null }  — null = the default account
  *
  * Gated on requireAdmin(); every write is audit-logged alongside the other
  * admin actions.
@@ -16,6 +17,7 @@ import { requireAdmin } from "@/lib/api-auth";
 import { logAdminAction } from "@/lib/admin-db";
 import { getBillingOverview, recordPayment, voidPayment } from "@/lib/billing-db";
 import { getUserById, setBillingTerms } from "@/lib/auth-db";
+import { listPaymentMethods, setPaymentMethodForUser } from "@/lib/invoice-settings-db";
 import {
   cycleLabel, durationLabel, isIsoDate, MAX_PAYMENT_DAYS, MAX_PAYMENT_MONTHS, monthlyPrice, PAYMENT_METHODS,
   todayIso, type PeriodLength,
@@ -173,6 +175,27 @@ export async function POST(req: NextRequest) {
         detail: `${customPricePkr === null ? "List price" : "Custom price"}: ${cycleLabel(price, billingCycleMonths)}.`,
       });
 
+      return Response.json({ ok: true, ...(await getBillingOverview()) });
+    }
+
+    if (body.action === "set-payment-method") {
+      const ownerId = text(body.ownerId, 200);
+      const owner = ownerId ? await getUserById(ownerId) : null;
+      if (!owner) return Response.json({ ok: false, error: "Account not found." }, { status: 404 });
+      if (owner.businessOwnerId || owner.role !== "owner") {
+        return Response.json({ ok: false, error: "The payment method is set on the business owner's account." }, { status: 400 });
+      }
+      const paymentMethodId = text(body.paymentMethodId, 200);
+      await setPaymentMethodForUser(owner.id, paymentMethodId);
+      const method = paymentMethodId ? (await listPaymentMethods()).find((m) => m.id === paymentMethodId) : null;
+      await logAdminAction({
+        actorId: admin.id,
+        actorEmail: admin.email,
+        action: "set-payment-method",
+        targetId: owner.id,
+        targetEmail: owner.email,
+        detail: `Invoices now show ${method ? method.label : "the default account"}.`,
+      });
       return Response.json({ ok: true, ...(await getBillingOverview()) });
     }
 

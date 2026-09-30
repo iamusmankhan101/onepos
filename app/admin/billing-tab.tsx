@@ -12,6 +12,7 @@ import {
   Plus, Receipt, Search, Tag, TrendingUp, Wallet,
 } from "lucide-react";
 import { Modal, Pill, StatCard } from "./ui";
+import { DEFAULT_BANK_DETAILS, type PaymentMethod } from "@/lib/invoice-settings";
 import { PLAN_IDS, PLANS, planPriceLabel, type PlanId } from "@/lib/plans";
 import {
   billingStatus, cycleLabel, daysBetween, durationLabel, MAX_PAYMENT_DAYS, MAX_PAYMENT_MONTHS, monthlyPrice,
@@ -154,6 +155,8 @@ interface TermsDraft {
   useCustom: boolean;
   price: string;
   cycle: string;
+  /** "" = the default account. */
+  paymentMethodId: string;
 }
 
 export default function BillingTab({ refreshKey, recordRequest, onToast }: {
@@ -186,7 +189,14 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
     setPayments(data.payments);
   }, []);
 
+  // The bank accounts a business's invoices can point at (Payment methods tab).
+  const [methods, setMethods] = useState<PaymentMethod[]>([]);
+
   const load = useCallback(async () => {
+    fetch("/api/admin/invoice-settings", { cache: "no-store", credentials: "same-origin" })
+      .then((res) => res.json() as Promise<{ ok: boolean; methods?: PaymentMethod[] }>)
+      .then((data) => { if (data.ok && data.methods) setMethods(data.methods); })
+      .catch(() => { /* the picker just shows the default */ });
     try {
       const res = await fetch("/api/admin/billing", { cache: "no-store", credentials: "same-origin" });
       const data = await res.json() as { ok: boolean; error?: string } & Partial<Overview>;
@@ -272,19 +282,23 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
       useCustom: account.customPricePkr !== null,
       price: String(account.customPricePkr ?? PLANS[account.plan].pricePkr),
       cycle: String(account.billingCycleMonths ?? 1),
+      paymentMethodId: account.paymentMethodId ?? "",
     });
   }
 
   async function submitTerms() {
     if (!terms) return;
-    const ok = await post({
+    const account = accounts.find((a) => a.id === terms.ownerId);
+    let ok = await post({
       action: "set-terms",
       ownerId: terms.ownerId,
       customPricePkr: terms.useCustom ? Number(terms.price) : null,
       billingCycleMonths: Number(terms.cycle),
     });
+    if (ok && (account?.paymentMethodId ?? "") !== terms.paymentMethodId) {
+      ok = await post({ action: "set-payment-method", ownerId: terms.ownerId, paymentMethodId: terms.paymentMethodId || null });
+    }
     if (ok) {
-      const account = accounts.find((a) => a.id === terms.ownerId);
       onToast({ tone: "ok", text: `Pricing updated for ${account?.businessName || "the account"}.` });
       setTerms(null);
     }
@@ -801,10 +815,22 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
               <div style={{ fontSize: 11, color: "#8b8ba3", marginTop: 5 }}>New payments for this business start from this many months.</div>
             </div>
 
+            <div>
+              <label style={label} htmlFor="bt-pay-method">Payment method on invoices</label>
+              <select id="bt-pay-method" className="ac-input" style={{ cursor: "pointer" }}
+                value={terms.paymentMethodId} onChange={(e) => setTerms({ ...terms, paymentMethodId: e.target.value })}>
+                <option value="">Default — {DEFAULT_BANK_DETAILS.bankTitle}, {DEFAULT_BANK_DETAILS.bankName}</option>
+                {methods.map((m) => <option key={m.id} value={m.id}>{m.label} — {m.bankName}</option>)}
+              </select>
+              <div style={{ fontSize: 11, color: "#8b8ba3", marginTop: 5 }}>
+                The bank account this business is told to pay into. Add accounts on the Payment methods tab.
+              </div>
+            </div>
+
             {termsValid && (
               <div style={{ padding: "12px 14px", borderRadius: 12, background: "#f5f3ff", border: "1px solid #ddd6fe", fontSize: 12.5, color: "#4c1d95", lineHeight: 1.6 }}>
                 <div style={{ fontWeight: 800 }}>{cycleLabel(termsPrice, termsCycle)}</div>
-                <div>Shown to the business in Settings → Subscription, and used for MRR and payment reminders.</div>
+                <div>Shown to the business on its Billing page, and used for MRR and payment reminders.</div>
               </div>
             )}
           </div>

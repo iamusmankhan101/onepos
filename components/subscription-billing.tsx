@@ -40,12 +40,13 @@ function esc(value: string): string {
 }
 
 /** The invoice as a standalone page — previewed in an iframe and printed from it. */
-function invoiceHtml(invoice: Invoice, account: OwnSubscription["account"]): string {
+function invoiceHtml(invoice: Invoice, sub: Pick<OwnSubscription, "account" | "billedFrom" | "payTo">): string {
+  const { account, billedFrom: from, payTo } = sub;
   const plan = PLANS[invoice.plan];
   const free = invoice.amountPkr === 0;
   const period = `${fmtDay(invoice.periodStart)} – ${fmtDay(lastDay(invoice.periodEnd))}`;
   const row = (label: string, value: string) => `<div class="kv"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(invoice.invoiceNo)} · Pointly</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(invoice.invoiceNo)} · ${esc(from.name)}</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1a1a2e; background: #fff; }
@@ -53,6 +54,9 @@ function invoiceHtml(invoice: Invoice, account: OwnSubscription["account"]): str
   .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
   .brand { font-size: 26px; font-weight: 900; letter-spacing: -0.03em; color: #EA580C; }
   .brand-sub { font-size: 12px; color: #8b8ba3; margin-top: 4px; }
+  .brand-lines { font-size: 12px; color: #55556f; margin-top: 8px; line-height: 1.6; }
+  .pay { margin-top: 30px; padding: 16px 18px; border: 1px solid #ececf3; border-radius: 12px; background: #fcfcfe; width: 360px; max-width: 100%; }
+  .pay .kv b { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
   .title { text-align: right; }
   .title h1 { margin: 0; font-size: 28px; letter-spacing: 0.08em; font-weight: 900; }
   .title .no { font-size: 13px; color: #6b6b8a; margin-top: 4px; font-weight: 700; }
@@ -77,7 +81,11 @@ function invoiceHtml(invoice: Invoice, account: OwnSubscription["account"]): str
   @media print { .page { padding: 12mm 10mm; } @page { margin: 8mm; } }
 </style></head><body><div class="page">
   <div class="top">
-    <div><div class="brand">Pointly</div><div class="brand-sub">Point of sale for your business</div></div>
+    <div>
+      <div class="brand">${esc(from.name)}</div>
+      ${from.tagline ? `<div class="brand-sub">${esc(from.tagline)}</div>` : ""}
+      <div class="brand-lines">${[from.address, from.phone, from.email].filter(Boolean).map((line) => `<div>${esc(line)}</div>`).join("")}</div>
+    </div>
     <div class="title"><h1>INVOICE</h1><div class="no">${esc(invoice.invoiceNo)}</div><div class="stamp">${free ? "COMPLIMENTARY" : "PAID"}</div></div>
   </div>
   <div class="meta">
@@ -111,7 +119,14 @@ function invoiceHtml(invoice: Invoice, account: OwnSubscription["account"]): str
     ${row("Amount paid", pkrAmount(invoice.amountPkr))}
     ${row("Balance due", "PKR 0")}
   </div>
-  <div class="foot">Thank you for choosing Pointly. For questions about this invoice, contact the Pointly team and quote ${esc(invoice.invoiceNo)}.</div>
+  <div class="pay">
+    <div class="label">How to pay</div>
+    ${payTo.bankName ? row("Bank", payTo.bankName) : ""}
+    ${row("Account title", payTo.bankTitle)}
+    ${row("Account number", payTo.accountNumber)}
+    ${row("IBAN", payTo.iban)}
+  </div>
+  <div class="foot">Thank you for choosing ${esc(from.name)}. For questions about this invoice${from.phone ? `, call ${esc(from.phone)}` : ""}${from.email ? ` or email ${esc(from.email)}` : ""} and quote ${esc(invoice.invoiceNo)}.</div>
 </div></body></html>`;
 }
 
@@ -152,7 +167,7 @@ export default function SubscriptionBilling() {
     }
     const frame = document.createElement("iframe");
     frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
-    frame.srcdoc = invoiceHtml(invoice, sub.account);
+    frame.srcdoc = invoiceHtml(invoice, sub);
     frame.onload = () => {
       frame.contentWindow?.print();
       window.setTimeout(() => frame.remove(), 1000);
@@ -290,7 +305,7 @@ export default function SubscriptionBilling() {
               <button type="button" className="sb-inv-btn" onClick={() => printInvoice(viewing)}><Printer size={13} /> Print / Save PDF</button>
               <button type="button" className="sb-inv-btn" onClick={() => setViewing(null)} aria-label="Close"><X size={14} /></button>
             </div>
-            <iframe ref={frameRef} title={`Invoice ${viewing.invoiceNo}`} srcDoc={invoiceHtml(viewing, sub.account)} style={{ flex: 1, width: "100%", border: 0, background: "#fff" }} />
+            <iframe ref={frameRef} title={`Invoice ${viewing.invoiceNo}`} srcDoc={invoiceHtml(viewing, sub)} style={{ flex: 1, width: "100%", border: 0, background: "#fff" }} />
           </div>
         </div>
       )}

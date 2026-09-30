@@ -84,6 +84,8 @@ export interface BillingAccount {
   daysLeft: number | null;
   lastPayment: { paidAt: string; amountPkr: number; method: string } | null;
   totalPaidPkr: number;
+  /** The bank account printed on this business's invoices; null = the platform default. */
+  paymentMethodId: string | null;
 }
 
 export interface BillingSummary {

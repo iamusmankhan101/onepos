@@ -10,6 +10,8 @@
 
 import { db } from "@/lib/db";
 import { ensureAuthTables, getAllUsers, getUserById, setUserPlan } from "@/lib/auth-db";
+import { getBilledFrom, paymentMethodAssignments, payToFor } from "@/lib/invoice-settings-db";
+import type { BilledFrom, PayTo } from "@/lib/invoice-settings";
 import { PLAN_IDS, PLANS, normalizePlanId, type PlanId } from "@/lib/plans";
 import {
   addMonths,
@@ -209,7 +211,7 @@ export async function getBillingOverview(): Promise<{
   summary: BillingSummary;
   payments: SubscriptionPayment[];
 }> {
-  const [users, payments] = await Promise.all([getAllUsers(), listPayments(2000)]);
+  const [users, payments, assignments] = await Promise.all([getAllUsers(), listPayments(2000), paymentMethodAssignments()]);
   const today = todayIso();
   const thisMonth = today.slice(0, 7);
   const lastMonth = addMonths(`${thisMonth}-01`, -1).slice(0, 7);
@@ -250,6 +252,7 @@ export async function getBillingOverview(): Promise<{
         daysLeft,
         lastPayment: last ? { paidAt: last.paidAt, amountPkr: last.amountPkr, method: last.method } : null,
         totalPaidPkr: own.reduce((sum, p) => sum + p.amountPkr, 0),
+        paymentMethodId: assignments.get(u.id) ?? null,
       };
     });
 
@@ -287,6 +290,9 @@ export async function getBillingOverview(): Promise<{
 export interface OwnSubscription {
   /** Who the invoices are billed to. */
   account: { businessName: string; ownerName: string; email: string; phone: string };
+  /** Who they're from, and the bank account to pay into — set on the admin console. */
+  billedFrom: BilledFrom;
+  payTo: PayTo;
   plan: PlanId;
   listPricePkr: number;
   monthlyPricePkr: number;
@@ -318,11 +324,15 @@ async function invoiceNumbers(ownerId: string): Promise<Map<string, string>> {
 export async function getOwnSubscription(ownerId: string): Promise<OwnSubscription | null> {
   const owner = await getUserById(ownerId);
   if (!owner) return null;
-  const [live, numbers] = await Promise.all([livePaymentsFor(owner.id), invoiceNumbers(owner.id)]);
+  const [live, numbers, billedFrom, payTo] = await Promise.all([
+    livePaymentsFor(owner.id), invoiceNumbers(owner.id), getBilledFrom(), payToFor(owner.id),
+  ]);
   const paidUntil = live.reduce<string | null>((max, p) => (!max || p.periodEnd > max ? p.periodEnd : max), null);
   const { status, daysLeft } = billingStatus(paidUntil);
   return {
     account: { businessName: owner.businessName, ownerName: owner.ownerName, email: owner.email, phone: owner.phone },
+    billedFrom,
+    payTo,
     plan: owner.plan,
     listPricePkr: PLANS[owner.plan].pricePkr,
     monthlyPricePkr: monthlyPrice(PLANS[owner.plan].pricePkr, owner.customPricePkr),
