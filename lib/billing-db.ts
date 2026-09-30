@@ -285,6 +285,8 @@ export async function getBillingOverview(): Promise<{
  * payments. Voided payments are left out — to the business they never happened.
  */
 export interface OwnSubscription {
+  /** Who the invoices are billed to. */
+  account: { businessName: string; ownerName: string; email: string; phone: string };
   plan: PlanId;
   listPricePkr: number;
   monthlyPricePkr: number;
@@ -293,16 +295,34 @@ export interface OwnSubscription {
   paidUntil: string | null;
   status: BillingStatus;
   daysLeft: number | null;
-  payments: Pick<SubscriptionPayment, "id" | "paidAt" | "amountPkr" | "months" | "days" | "method" | "periodStart" | "periodEnd" | "plan">[];
+  payments: (Pick<SubscriptionPayment, "id" | "paidAt" | "amountPkr" | "months" | "days" | "method" | "reference" | "periodStart" | "periodEnd" | "plan"> & {
+    /** Stable per-account invoice number, e.g. PL-2026-003 — see invoiceNumbers(). */
+    invoiceNo: string;
+  })[];
+}
+
+/**
+ * Numbers every payment an account has had, oldest first, as PL-<year>-<nnn>.
+ * Voided payments keep their number (and are simply not shown), so an invoice
+ * a business already downloaded never changes number.
+ */
+async function invoiceNumbers(ownerId: string): Promise<Map<string, string>> {
+  await ensureBillingTable();
+  const res = await db.execute({
+    sql: "SELECT id, paid_at FROM subscription_payments WHERE owner_id = ? ORDER BY created_at ASC, id ASC",
+    args: [ownerId],
+  });
+  return new Map(res.rows.map((r, i) => [String(r.id), `PL-${String(r.paid_at).slice(0, 4)}-${String(i + 1).padStart(3, "0")}`]));
 }
 
 export async function getOwnSubscription(ownerId: string): Promise<OwnSubscription | null> {
   const owner = await getUserById(ownerId);
   if (!owner) return null;
-  const live = await livePaymentsFor(owner.id);
+  const [live, numbers] = await Promise.all([livePaymentsFor(owner.id), invoiceNumbers(owner.id)]);
   const paidUntil = live.reduce<string | null>((max, p) => (!max || p.periodEnd > max ? p.periodEnd : max), null);
   const { status, daysLeft } = billingStatus(paidUntil);
   return {
+    account: { businessName: owner.businessName, ownerName: owner.ownerName, email: owner.email, phone: owner.phone },
     plan: owner.plan,
     listPricePkr: PLANS[owner.plan].pricePkr,
     monthlyPricePkr: monthlyPrice(PLANS[owner.plan].pricePkr, owner.customPricePkr),
@@ -313,9 +333,10 @@ export async function getOwnSubscription(ownerId: string): Promise<OwnSubscripti
     daysLeft,
     payments: live
       .sort((a, b) => b.paidAt.localeCompare(a.paidAt) || b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 24)
-      .map(({ id, paidAt, amountPkr, months, days, method, periodStart, periodEnd: end, plan }) => ({
-        id, paidAt, amountPkr, months, days, method, periodStart, periodEnd: end, plan,
+      .slice(0, 120)
+      .map(({ id, paidAt, amountPkr, months, days, method, reference, periodStart, periodEnd: end, plan }) => ({
+        id, paidAt, amountPkr, months, days, method, reference, periodStart, periodEnd: end, plan,
+        invoiceNo: numbers.get(id) ?? id,
       })),
   };
 }

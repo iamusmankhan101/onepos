@@ -22,24 +22,3 @@ export const db: Client = createClient({
 export function getDb(): Client {
   return db;
 }
-
-// Which database and which server instance answered — shown on the admin
-// Billing tab so writes that seem to "undo" can be traced to a mismatched
-// TURSO_DATABASE_URL or an instance with its own database. Host only, never
-// the token.
-const INSTANCE_ID = Math.random().toString(36).slice(2, 8);
-const BOOTED_AT = new Date().toISOString();
-
-export function dbInfo(): { db: string; instance: string; bootedAt: string; region: string | null } {
-  const raw = DB_URL;
-  let where = "(database URL not set)";
-  if (raw) {
-    try {
-      const url = new URL(raw);
-      where = url.protocol === "file:" ? `file:${url.pathname}` : `${url.protocol}//${url.host}`;
-    } catch {
-      where = "(unparseable database URL)";
-    }
-  }
-  return { db: where, instance: INSTANCE_ID, bootedAt: BOOTED_AT, region: process.env.VERCEL_REGION ?? null };
-}

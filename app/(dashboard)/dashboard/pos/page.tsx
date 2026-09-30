@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   Search, Scissors, Package, Plus, Minus, Trash2, Phone,
   X, ShoppingCart, ReceiptText, Banknote, CreditCard,
@@ -370,6 +371,13 @@ export default function POSPage() {
     if (window.matchMedia("(max-width: 768px)").matches) setPosTab("customer");
     else setCustomerOpen(true);
   }
+
+  useEffect(() => {
+    if (!checkingOut) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCheckingOut(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [checkingOut]);
 
   useEffect(() => {
     if (!customerOpen) return;
@@ -1159,6 +1167,157 @@ export default function POSPage() {
 
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Shown on the order panel and again in the checkout window.
+  const summaryBlock = (
+                  <div className="pos-summary">
+      <div className="pos-summary-row">
+        <span>Sub Total <span style={{ color: "#b0b0c8" }}>· {totalQty} item{totalQty !== 1 ? "s" : ""}</span></span>
+        <b>{pkr(rawSubtotal)}</b>
+      </div>
+      {discountAmount > 0 && (
+        <div className="pos-summary-row" style={{ color: "#059669" }}><span>Discount</span><b style={{ color: "#059669" }}>− {pkr(discountAmount)}</b></div>
+      )}
+      {discountAmount2 > 0 && (
+        <div className="pos-summary-row" style={{ color: "#059669" }}><span>Discount 2</span><b style={{ color: "#059669" }}>− {pkr(discountAmount2)}</b></div>
+      )}
+      {loyaltyDiscount > 0 && (
+        <div className="pos-summary-row" style={{ color: "#d97706" }}><span>Points redeemed</span><b style={{ color: "#d97706" }}>− {pkr(loyaltyDiscount)}</b></div>
+      )}
+      {serviceChargeAmount > 0 && (
+        <div className="pos-summary-row"><span>Service charge {chargeSettings.serviceChargeRate}%</span><b>+ {pkr(serviceChargeAmount)}</b></div>
+      )}
+      {taxAmount > 0 && (
+        <div className="pos-summary-row"><span>{chargeSettings.taxLabel} {chargeSettings.taxRate}%</span><b>+ {pkr(taxAmount)}</b></div>
+      )}
+      <div className="pos-summary-total">
+        <span style={{ fontSize: 15, fontWeight: 800, color: "#1d1d2f" }}>Total Amount</span>
+        <span style={{ fontSize: 22, fontWeight: 900, color: "#1d1d2f", letterSpacing: "-0.02em" }}>{pkr(total)}</span>
+      </div>
+    </div>
+  );
+
+  // Checkout window — how they're paying, and anything still in the way.
+  const paymentBlock = (
+    <>
+      {/* Payment */}
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          <span style={{ flex: 1, fontSize: 11, fontWeight: 800, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Payment</span>
+          <button type="button" aria-pressed={split} className={`pos-chip-toggle${split ? " is-on" : ""}`}
+            onClick={() => {
+              if (split) { setSplit(false); setSplitRows([]); return; }
+              setSplit(true); setIsCredit(false);
+              setSplitRows([{ method: payMethod ?? "cash", amount: "" }, { method: payMethod === "card" ? "cash" : "card", amount: "" }]);
+            }}>
+            Split
+          </button>
+          {!split && (
+            <button type="button" aria-pressed={isCredit} onClick={() => setIsCredit(c => !c)}
+              className={`pos-chip-toggle${isCredit ? " is-on is-credit" : ""}`} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <Clock size={11} /> Pay later
+            </button>
+          )}
+        </div>
+        {split ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {splitRows.map((row, index) => {
+              const others = splitRows.reduce((sum, r2, i) => i === index ? sum : sum + (Number(r2.amount) || 0), 0);
+              return (
+                <div key={index} style={{ display: "grid", gridTemplateColumns: "1fr 96px 58px 26px", gap: 5, alignItems: "center" }}>
+                  <select value={row.method} aria-label={`Payment ${index + 1} method`}
+                    onChange={e => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, method: e.target.value as PaymentMethod } : x))}
+                    style={{ height: 34, borderRadius: 8, border: "1px solid #e8e8f4", fontSize: 12, padding: "0 6px", background: "#fff", fontWeight: 700, color: "#1d1d2f" }}>
+                    {PAY_METHODS.map(pm => <option key={pm.value} value={pm.value}>{pm.label}</option>)}
+                  </select>
+                  <input type="number" min={0} value={row.amount} placeholder="0" aria-label={`Payment ${index + 1} amount`}
+                    onChange={e => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, amount: e.target.value } : x))}
+                    style={{ height: 34, padding: "0 8px", borderRadius: 8, border: "1px solid #e8e8f4", fontSize: 12, textAlign: "right", fontWeight: 700, boxSizing: "border-box", width: "100%" }} />
+                  <button type="button" onClick={() => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, amount: String(Math.max(0, total - others)) } : x))}
+                    title="Put the rest of the bill on this payment"
+                    style={{ height: 34, borderRadius: 8, border: "1px solid #fed7aa", background: "#fff7ed", color: "#c2410c", fontSize: 10, fontWeight: 800, cursor: "pointer" }}>Rest</button>
+                  <button type="button" onClick={() => setSplitRows(rows => rows.filter((_, i) => i !== index))} disabled={splitRows.length <= 2} aria-label="Remove payment"
+                    style={{ height: 26, width: 26, borderRadius: 7, border: "none", background: splitRows.length <= 2 ? "transparent" : "#fef2f2", cursor: splitRows.length <= 2 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: splitRows.length <= 2 ? 0.3 : 1 }}>
+                    <X size={12} color="#dc2626" />
+                  </button>
+                </div>
+              );
+            })}
+            <div style={{ display: "flex", alignItems: "center", fontSize: 11, fontWeight: 700 }}>
+              <button type="button" onClick={() => setSplitRows(rows => [...rows, { method: "cash", amount: "" }])}
+                style={{ border: "none", background: "none", padding: 0, color: "#6b6b8a", cursor: "pointer", fontSize: 11, fontWeight: 800 }}>+ Add payment</button>
+              <span style={{ marginLeft: "auto", color: Math.round(splitSum) === total ? "#059669" : "#d97706" }}>
+                {Math.round(splitSum) === total ? "Adds up" : `${pkr(Math.abs(total - splitSum))} ${splitSum < total ? "left" : "over"}`}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className={`pos-pay-grid${isCredit ? " is-muted" : ""}`}>
+            {PAY_METHODS.map(pm => {
+              const Icon = pm.icon;
+              const sel = !isCredit && payMethod === pm.value;
+              return (
+                <button key={pm.value} type="button" aria-pressed={sel} onClick={() => { setPayMethod(pm.value); setIsCredit(false); }}
+                  className={`pos-pay-tile${sel ? " is-on" : ""}`} style={{ "--pay": pm.color } as React.CSSProperties}>
+                  <span className="pos-pay-icon"><Icon size={15} /></span>
+                  <span style={{ maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pm.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {!split && payMethod === "cash" && !isCredit && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+            <input type="number" min={0} value={cashGiven} onChange={e => setCashGiven(e.target.value)} placeholder="Cash received" aria-label="Cash received"
+              className="pos-input" style={{ flex: 1 }} />
+            {cashChange !== null && (
+              <span style={{ fontSize: 13, fontWeight: 900, color: cashChange < 0 ? "#dc2626" : "#059669", whiteSpace: "nowrap" }}>
+                {cashChange < 0 ? `${pkr(-cashChange)} short` : `Change ${pkr(cashChange)}`}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {hasUnpricedVariable && (
+        <div className="pos-warning" style={{ color: "#d97706" }}>
+          <AlertCircle size={13} /> Enter a price for the variable-priced item(s) before checkout
+        </div>
+      )}
+      {!hasUnpricedVariable && noPaymentSelected && (
+        <div className="pos-warning" style={{ color: "#d97706" }}>
+          <AlertCircle size={13} /> {splitProblem ?? "Choose how they're paying"}
+        </div>
+      )}
+      {creditNeedsCustomer && (
+        <div className="pos-warning" style={{ color: "#b91c1c" }}>
+          <AlertCircle size={13} /> A credit sale needs a named customer — pick one or add them, so there&apos;s someone to collect from
+        </div>
+      )}
+      {shiftBlocked && (
+        <div className="pos-warning" style={{ color: "#b91c1c" }}>
+          <AlertCircle size={13} /> Open the cash drawer on the <Link href="/dashboard/shifts" style={{ color: "#b91c1c" }}>Shifts</Link> page before taking payment
+        </div>
+      )}
+      {discountNeedsSignOff && (
+        <div className="pos-warning" style={{ color: "#6d28d9" }}>
+          <AlertCircle size={13} /> A {Math.round(discountPct)}% discount needs a manager to approve it
+        </div>
+      )}
+    </>
+  );
+
+  const completeButton = (
+                  <button type="button" onClick={() => completeSale()} disabled={checkoutBlocked}
+      className={`pos-place-btn${isCredit ? " is-credit" : ""}`}>
+      {completing
+        ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Processing…</>
+        : isCredit
+          ? <><Clock size={17} /> Create Credit Invoice</>
+          : <><ReceiptText size={17} /> Complete Sale · {pkr(total)}</>
+      }
+    </button>
+  );
+
   // Who the sale is for — shown in the details drawer and in the checkout step.
   const customerPicker = (
     <>
@@ -1770,7 +1929,7 @@ export default function POSPage() {
           </div>
 
           {/* Dine in / Take away / Delivery */}
-          {restaurant && !checkingOut && (
+          {restaurant && (
             <div style={{ padding: "0 18px 12px", display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
               <div className="pos-segment" role="group" aria-label="Order type">
                 {([
@@ -1805,22 +1964,8 @@ export default function POSPage() {
             </div>
           )}
 
-          {/* Checkout step: the order folds to one line, tap to go back and edit */}
-          {checkingOut && (
-            <div style={{ padding: "0 14px 12px", flexShrink: 0 }}>
-              <button type="button" onClick={() => setCheckingOut(false)} className="pos-checkout-recap">
-                <ArrowLeft size={14} style={{ flexShrink: 0 }} />
-                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
-                  {totalQty} item{totalQty !== 1 ? "s" : ""}
-                  <span style={{ color: "#a3a3b8", fontWeight: 600 }}> · {cart.map(e => e.name).join(", ")}</span>
-                </span>
-                <span style={{ flexShrink: 0 }}>Edit order</span>
-              </button>
-            </div>
-          )}
-
           {/* Order lines */}
-          {!checkingOut && <div className="pos-cart-lines" style={{ flex: cart.length === 0 ? 1 : "1 1 auto", minHeight: cart.length === 0 ? 0 : 96, overflowY: "auto", padding: "2px 14px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div className="pos-cart-lines" style={{ flex: cart.length === 0 ? 1 : "1 1 auto", minHeight: cart.length === 0 ? 0 : 96, overflowY: "auto", padding: "2px 14px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
             {cart.length === 0 ? (
               <div className="pos-cart-empty" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "48px 16px", textAlign: "center" }}>
                 <div className="pos-cart-empty-icon" style={{ width: 64, height: 64, borderRadius: 18, background: "#f4f4fc", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
@@ -1918,21 +2063,14 @@ export default function POSPage() {
                 );
               })
             )}
-          </div>}
+          </div>
 
           {/* ── Order footer ── */}
           {cart.length > 0 && (
             <div style={{ padding: "4px 14px 18px", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
 
-              {checkingOut && (
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Customer</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{customerPicker}</div>
-                </div>
-              )}
-
               {/* Discounts & loyalty */}
-              {checkingOut && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <div className="pos-adjust-row">
                   <Tag size={13} color="#d97706" style={{ flexShrink: 0 }} />
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#7a7a96" }}>Discount</span>
@@ -2016,144 +2154,11 @@ export default function POSPage() {
                     </div>
                   </div>
                 )}
-              </div>}
-
-              {/* Summary */}
-              <div className="pos-summary">
-                <div className="pos-summary-row">
-                  <span>Sub Total <span style={{ color: "#b0b0c8" }}>· {totalQty} item{totalQty !== 1 ? "s" : ""}</span></span>
-                  <b>{pkr(rawSubtotal)}</b>
-                </div>
-                {discountAmount > 0 && (
-                  <div className="pos-summary-row" style={{ color: "#059669" }}><span>Discount</span><b style={{ color: "#059669" }}>− {pkr(discountAmount)}</b></div>
-                )}
-                {discountAmount2 > 0 && (
-                  <div className="pos-summary-row" style={{ color: "#059669" }}><span>Discount 2</span><b style={{ color: "#059669" }}>− {pkr(discountAmount2)}</b></div>
-                )}
-                {loyaltyDiscount > 0 && (
-                  <div className="pos-summary-row" style={{ color: "#d97706" }}><span>Points redeemed</span><b style={{ color: "#d97706" }}>− {pkr(loyaltyDiscount)}</b></div>
-                )}
-                {serviceChargeAmount > 0 && (
-                  <div className="pos-summary-row"><span>Service charge {chargeSettings.serviceChargeRate}%</span><b>+ {pkr(serviceChargeAmount)}</b></div>
-                )}
-                {taxAmount > 0 && (
-                  <div className="pos-summary-row"><span>{chargeSettings.taxLabel} {chargeSettings.taxRate}%</span><b>+ {pkr(taxAmount)}</b></div>
-                )}
-                <div className="pos-summary-total">
-                  <span style={{ fontSize: 15, fontWeight: 800, color: "#1d1d2f" }}>Total Amount</span>
-                  <span style={{ fontSize: 22, fontWeight: 900, color: "#1d1d2f", letterSpacing: "-0.02em" }}>{pkr(total)}</span>
-                </div>
               </div>
 
-              {checkingOut && <>
-              {/* Payment */}
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                  <span style={{ flex: 1, fontSize: 11, fontWeight: 800, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Payment</span>
-                  <button type="button" aria-pressed={split} className={`pos-chip-toggle${split ? " is-on" : ""}`}
-                    onClick={() => {
-                      if (split) { setSplit(false); setSplitRows([]); return; }
-                      setSplit(true); setIsCredit(false);
-                      setSplitRows([{ method: payMethod ?? "cash", amount: "" }, { method: payMethod === "card" ? "cash" : "card", amount: "" }]);
-                    }}>
-                    Split
-                  </button>
-                  {!split && (
-                    <button type="button" aria-pressed={isCredit} onClick={() => setIsCredit(c => !c)}
-                      className={`pos-chip-toggle${isCredit ? " is-on is-credit" : ""}`} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <Clock size={11} /> Pay later
-                    </button>
-                  )}
-                </div>
-                {split ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {splitRows.map((row, index) => {
-                      const others = splitRows.reduce((sum, r2, i) => i === index ? sum : sum + (Number(r2.amount) || 0), 0);
-                      return (
-                        <div key={index} style={{ display: "grid", gridTemplateColumns: "1fr 96px 58px 26px", gap: 5, alignItems: "center" }}>
-                          <select value={row.method} aria-label={`Payment ${index + 1} method`}
-                            onChange={e => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, method: e.target.value as PaymentMethod } : x))}
-                            style={{ height: 34, borderRadius: 8, border: "1px solid #e8e8f4", fontSize: 12, padding: "0 6px", background: "#fff", fontWeight: 700, color: "#1d1d2f" }}>
-                            {PAY_METHODS.map(pm => <option key={pm.value} value={pm.value}>{pm.label}</option>)}
-                          </select>
-                          <input type="number" min={0} value={row.amount} placeholder="0" aria-label={`Payment ${index + 1} amount`}
-                            onChange={e => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, amount: e.target.value } : x))}
-                            style={{ height: 34, padding: "0 8px", borderRadius: 8, border: "1px solid #e8e8f4", fontSize: 12, textAlign: "right", fontWeight: 700, boxSizing: "border-box", width: "100%" }} />
-                          <button type="button" onClick={() => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, amount: String(Math.max(0, total - others)) } : x))}
-                            title="Put the rest of the bill on this payment"
-                            style={{ height: 34, borderRadius: 8, border: "1px solid #fed7aa", background: "#fff7ed", color: "#c2410c", fontSize: 10, fontWeight: 800, cursor: "pointer" }}>Rest</button>
-                          <button type="button" onClick={() => setSplitRows(rows => rows.filter((_, i) => i !== index))} disabled={splitRows.length <= 2} aria-label="Remove payment"
-                            style={{ height: 26, width: 26, borderRadius: 7, border: "none", background: splitRows.length <= 2 ? "transparent" : "#fef2f2", cursor: splitRows.length <= 2 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: splitRows.length <= 2 ? 0.3 : 1 }}>
-                            <X size={12} color="#dc2626" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                    <div style={{ display: "flex", alignItems: "center", fontSize: 11, fontWeight: 700 }}>
-                      <button type="button" onClick={() => setSplitRows(rows => [...rows, { method: "cash", amount: "" }])}
-                        style={{ border: "none", background: "none", padding: 0, color: "#6b6b8a", cursor: "pointer", fontSize: 11, fontWeight: 800 }}>+ Add payment</button>
-                      <span style={{ marginLeft: "auto", color: Math.round(splitSum) === total ? "#059669" : "#d97706" }}>
-                        {Math.round(splitSum) === total ? "Adds up" : `${pkr(Math.abs(total - splitSum))} ${splitSum < total ? "left" : "over"}`}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className={`pos-pay-grid${isCredit ? " is-muted" : ""}`}>
-                    {PAY_METHODS.map(pm => {
-                      const Icon = pm.icon;
-                      const sel = !isCredit && payMethod === pm.value;
-                      return (
-                        <button key={pm.value} type="button" aria-pressed={sel} onClick={() => { setPayMethod(pm.value); setIsCredit(false); }}
-                          className={`pos-pay-tile${sel ? " is-on" : ""}`} style={{ "--pay": pm.color } as React.CSSProperties}>
-                          <span className="pos-pay-icon"><Icon size={15} /></span>
-                          <span style={{ maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pm.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                {!split && payMethod === "cash" && !isCredit && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-                    <input type="number" min={0} value={cashGiven} onChange={e => setCashGiven(e.target.value)} placeholder="Cash received" aria-label="Cash received"
-                      className="pos-input" style={{ flex: 1 }} />
-                    {cashChange !== null && (
-                      <span style={{ fontSize: 13, fontWeight: 900, color: cashChange < 0 ? "#dc2626" : "#059669", whiteSpace: "nowrap" }}>
-                        {cashChange < 0 ? `${pkr(-cashChange)} short` : `Change ${pkr(cashChange)}`}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
+              {summaryBlock}
 
-              {hasUnpricedVariable && (
-                <div className="pos-warning" style={{ color: "#d97706" }}>
-                  <AlertCircle size={13} /> Enter a price for the variable-priced item(s) before checkout
-                </div>
-              )}
-              {!hasUnpricedVariable && noPaymentSelected && (
-                <div className="pos-warning" style={{ color: "#d97706" }}>
-                  <AlertCircle size={13} /> {splitProblem ?? "Choose how they're paying"}
-                </div>
-              )}
-              {creditNeedsCustomer && (
-                <div className="pos-warning" style={{ color: "#b91c1c" }}>
-                  <AlertCircle size={13} /> A credit sale needs a named customer — pick one or add them, so there&apos;s someone to collect from
-                </div>
-              )}
-              {shiftBlocked && (
-                <div className="pos-warning" style={{ color: "#b91c1c" }}>
-                  <AlertCircle size={13} /> Open the cash drawer on the <Link href="/dashboard/shifts" style={{ color: "#b91c1c" }}>Shifts</Link> page before taking payment
-                </div>
-              )}
-              {discountNeedsSignOff && (
-                <div className="pos-warning" style={{ color: "#6d28d9" }}>
-                  <AlertCircle size={13} /> A {Math.round(discountPct)}% discount needs a manager to approve it
-                </div>
-              )}
-
-              </>}
-
-              {restaurant && !checkingOut && (
+              {restaurant && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
                   <button type="button" onClick={() => saveCurrentOrder(false)} disabled={sendingOrder}
                     title="Save the order without sending it to the kitchen"
@@ -2167,31 +2172,58 @@ export default function POSPage() {
                 </div>
               )}
 
-              {!checkingOut && hasUnpricedVariable && (
+              {hasUnpricedVariable && (
                 <div className="pos-warning" style={{ color: "#d97706" }}>
                   <AlertCircle size={13} /> Enter a price for the variable-priced item(s) before checkout
                 </div>
               )}
-              {!checkingOut && (
-                <button type="button" onClick={() => setCheckingOut(true)} disabled={hasUnpricedVariable} className="pos-place-btn">
-                  <Wallet size={17} /> Checkout · {pkr(total)}
-                </button>
-              )}
+              <button type="button" onClick={() => setCheckingOut(true)} disabled={hasUnpricedVariable || completed} className="pos-place-btn">
+                <Wallet size={17} /> Checkout · {pkr(total)}
+              </button>
 
-              {/* Complete */}
-              {checkingOut && <button type="button" onClick={() => completeSale()} disabled={checkoutBlocked}
-                className={`pos-place-btn${isCredit ? " is-credit" : ""}`} style={{ position: "sticky", bottom: 12, zIndex: 2 }}>
-                {completing
-                  ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Processing…</>
-                  : isCredit
-                    ? <><Clock size={17} /> Create Credit Invoice</>
-                    : <><ReceiptText size={17} /> Complete Sale · {pkr(total)}</>
-                }
-              </button>}
             </div>
           )}
         </div>
       </div>
+
+      {/* ══ CHECKOUT ══ */}
+      {checkingOut && !completed && cart.length > 0 && createPortal(
+        <div className="pos-checkout-overlay" onClick={() => setCheckingOut(false)}>
+          <div className="pos-checkout-modal" role="dialog" aria-label="Checkout" onClick={e => e.stopPropagation()}>
+            <div className="pos-checkout-head">
+              <button type="button" onClick={() => setCheckingOut(false)} className="pos-icon-btn" aria-label="Back to the order"><ArrowLeft size={16} /></button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 18, fontWeight: 900, color: "#1d1d2f", letterSpacing: "-0.02em" }}>Checkout</div>
+                <div style={{ fontSize: 12, color: "#9999b0", fontWeight: 600 }}>{orderTitle} · {totalQty} item{totalQty !== 1 ? "s" : ""}</div>
+              </div>
+              <button type="button" onClick={() => setCheckingOut(false)} className="pos-icon-btn" aria-label="Close"><X size={16} /></button>
+            </div>
+            <div className="pos-checkout-body">
+              <div className="pos-checkout-col">
+                <div className="pos-checkout-label">Customer</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{customerPicker}</div>
+                <div className="pos-checkout-label" style={{ marginTop: 8 }}>Order</div>
+                <div className="pos-checkout-items">
+                  {cart.map(e => (
+                    <div key={e.cartId} className="pos-checkout-item">
+                      <span style={{ fontWeight: 800, color: "#EA580C" }}>{e.qty}×</span>
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</span>
+                      <b>{pkr(e.total)}</b>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setCheckingOut(false)} className="pos-checkout-edit">Edit order or discount</button>
+                </div>
+              </div>
+              <div className="pos-checkout-col">
+                {summaryBlock}
+                {paymentBlock}
+              </div>
+            </div>
+            <div className="pos-checkout-foot">{completeButton}</div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* ══ MOBILE TAB BAR ══ */}
       <nav className="pos-tab-bar">

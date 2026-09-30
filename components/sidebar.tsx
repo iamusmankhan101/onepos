@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   UserCog, BarChart3, Banknote, Settings, ReceiptText, ShoppingCart, Package, Users,
-  X, LogOut, ChevronDown, Shield, Gift, LayoutGrid, ChefHat, Boxes, Timer,
+  X, LogOut, ChevronDown, Shield, Gift, LayoutGrid, ChefHat, Boxes, Timer, CreditCard,
 } from "lucide-react";
 import { AuthUser, getCurrentUser, signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
@@ -41,7 +41,8 @@ const NAV_GROUPS: {
 ];
 
 const SETTINGS_NAV = [
-  { href: "/dashboard/settings", icon: Settings, label: "Settings" },
+  { href: "/dashboard/billing",  icon: CreditCard, label: "Billing", ownerOnly: true },
+  { href: "/dashboard/settings", icon: Settings,   label: "Settings" },
 ];
 
 const ADMIN_NAV = [
@@ -336,7 +337,9 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
           {!isStaffUser && (
             <>
               <div className="sb-section" style={{ paddingTop: 12 }}>Business</div>
-              {SETTINGS_NAV.map((item) => <NavItem key={item.href} {...item} />)}
+              {SETTINGS_NAV
+                .filter((item) => !item.ownerOnly || (user?.role === "owner" && !user.businessOwnerId))
+                .map(({ href, icon, label }) => <NavItem key={href} href={href} icon={icon} label={label} />)}
             </>
           )}
 

@@ -14,7 +14,6 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { logAdminAction } from "@/lib/admin-db";
-import { dbInfo } from "@/lib/db";
 import { getBillingOverview, recordPayment, voidPayment } from "@/lib/billing-db";
 import { getUserById, setBillingTerms } from "@/lib/auth-db";
 import {
@@ -32,7 +31,7 @@ export async function GET(req: NextRequest) {
   if (!admin) return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
   try {
-    return Response.json({ ok: true, ...(await getBillingOverview()), server: dbInfo() });
+    return Response.json({ ok: true, ...(await getBillingOverview()) });
   } catch (err) {
     console.error("[admin/billing] GET error:", err);
     return Response.json({ ok: false, error: "Failed to load billing." }, { status: 500 });
@@ -117,7 +116,7 @@ export async function POST(req: NextRequest) {
           + (planChanged ? ` Plan set to ${PLANS[plan].name}.` : ""),
       });
 
-      return Response.json({ ok: true, payment, ...(await getBillingOverview()), server: dbInfo() });
+      return Response.json({ ok: true, payment, ...(await getBillingOverview()) });
     }
 
     if (body.action === "void") {
@@ -135,7 +134,7 @@ export async function POST(req: NextRequest) {
         detail: `Voided PKR ${payment.amountPkr.toLocaleString("en-US")} paid ${payment.paidAt}.${reason ? ` ${reason}` : ""}`,
       });
 
-      return Response.json({ ok: true, ...(await getBillingOverview()), server: dbInfo() });
+      return Response.json({ ok: true, ...(await getBillingOverview()) });
     }
 
     if (body.action === "set-terms") {
@@ -174,7 +173,7 @@ export async function POST(req: NextRequest) {
         detail: `${customPricePkr === null ? "List price" : "Custom price"}: ${cycleLabel(price, billingCycleMonths)}.`,
       });
 
-      return Response.json({ ok: true, ...(await getBillingOverview()), server: dbInfo() });
+      return Response.json({ ok: true, ...(await getBillingOverview()) });
     }
 
     return Response.json({ ok: false, error: "Unknown action." }, { status: 400 });
