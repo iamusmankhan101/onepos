@@ -17,8 +17,8 @@ import { getEffectiveBusinessType, getEffectivePlan, getUserById, isSessionRevok
 import { verifySessionToken, COOKIE_NAME, LEGACY_COOKIE_NAME, tokenId } from "@/lib/session";
 
 /** 401 that also clears the dead cookie, so the browser stops re-sending it. */
-function expired(error: string) {
-  const res = NextResponse.json({ ok: false, error, reason: "session_expired" }, { status: 401 });
+function expired(error: string, reason: "session_expired" | "account_missing" = "session_expired") {
+  const res = NextResponse.json({ ok: false, error, reason }, { status: 401 });
   res.cookies.set(COOKIE_NAME, "", { maxAge: 0, path: "/" });
   res.cookies.set(LEGACY_COOKIE_NAME, "", { maxAge: 0, path: "/" });
   return res;
@@ -43,8 +43,14 @@ export async function GET(req: NextRequest) {
   try {
     const user = await getUserById(userId);
 
+    // A valid, unexpired session whose user row is gone. Session expiry never
+    // deletes accounts, so this means the row was removed (admin delete, or
+    // directly in the database). Say so rather than calling it an expiry, and
+    // log the id: the business data is still keyed by it and this is the only
+    // place it surfaces once the row is gone.
     if (!user) {
-      return expired("Your session is no longer valid. Please sign in again.");
+      console.error(`[auth/user] Session for missing account ${userId} — the users row no longer exists.`);
+      return expired("This account no longer exists. Please contact Pointly support.", "account_missing");
     }
 
     return Response.json({

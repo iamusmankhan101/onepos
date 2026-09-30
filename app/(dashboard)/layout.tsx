@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ShoppingCart, ReceiptText, BarChart3, UserCog, Users, WifiOff, AlertTriangle, X, Building2 } from "lucide-react";
 import Sidebar from "@/components/sidebar";
-import { getCurrentUser, checkServerSession, signOut, ACCOUNT_REFRESHED_EVENT } from "@/lib/auth";
+import { getCurrentUser, checkServerSession, getLastSessionFailure, signOut, ACCOUNT_REFRESHED_EVENT } from "@/lib/auth";
 import { applyAppearanceSettings, SETTINGS_CHANGED_EVENT, reloadSettings, settingsNeedSync } from "@/lib/settings-store";
 import { syncFromDB, syncLocalDataToDB, SESSION_EXPIRED_EVENT, SETTINGS_SYNC_STATE_EVENT } from "@/lib/turso-sync";
 import { getStoredStaff, getStoredServices } from "@/lib/storage";
@@ -249,7 +249,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (cancelled || alive || redirecting) return;
       redirecting = true;
       await signOut();
-      router.replace("/sign-in?expired=1");
+      router.replace(getLastSessionFailure() === "account_missing" ? "/sign-in?missing=1" : "/sign-in?expired=1");
     }
 
     function verifyIfVisible() {

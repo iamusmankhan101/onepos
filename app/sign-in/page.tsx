@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowRight, Clock, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck, Users } from "lucide-react";
-import { checkServerSession, getCurrentUser, signOut } from "@/lib/auth";
+import { checkServerSession, getCurrentUser, getLastSessionFailure, signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
 import styles from "../auth.module.css";
 
@@ -20,11 +20,15 @@ export default function SignInPage() {
   // a signout elsewhere, or a revoked login) rather than by choice. It is a
   // notice, not a failure, so it gets its own banner instead of the red error.
   const [expiredNotice, setExpiredNotice] = useState(false);
+  // The session was fine but its account row is gone. Not an expiry — signing
+  // in again will fail — so it must not be dressed up as one.
+  const [missingNotice, setMissingNotice] = useState(false);
   const [portal, setPortal] = useState<"admin" | "staff">("admin");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const arrivedExpired = params.get("expired") === "1";
+    const arrivedMissing = params.get("missing") === "1";
+    const arrivedExpired = params.get("expired") === "1" || arrivedMissing;
     const signedIn = getCurrentUser();
     let cancelled = false;
 
@@ -33,7 +37,8 @@ export default function SignInPage() {
     queueMicrotask(() => {
       if (cancelled) return;
       if (params.get("verified") === "true") setVerifiedMessage(true);
-      if (!signedIn && arrivedExpired) setExpiredNotice(true);
+      if (!signedIn && arrivedMissing) setMissingNotice(true);
+      else if (!signedIn && arrivedExpired) setExpiredNotice(true);
     });
 
     // localStorage still remembers a user, but access is granted by the
@@ -50,8 +55,11 @@ export default function SignInPage() {
           router.replace(signedIn.role === "admin" ? "/admin" : "/dashboard");
           return;
         }
+        const missing = arrivedMissing || getLastSessionFailure() === "account_missing";
         await signOut();
-        if (!cancelled) setExpiredNotice(true);
+        if (cancelled) return;
+        if (missing) setMissingNotice(true);
+        else setExpiredNotice(true);
       })();
     }
 
@@ -62,6 +70,7 @@ export default function SignInPage() {
     if (rateLocked) return;
     setError("");
     setExpiredNotice(false);
+    setMissingNotice(false);
 
     fetch("/api/auth/signin", {
       method: "POST",
@@ -170,6 +179,14 @@ export default function SignInPage() {
                   <div style={{ fontSize: 13, color: "#92400e", fontWeight: 600, lineHeight: 1.45 }}>
                     Your session has expired. For security, logins last 4 days — please sign in again to keep your sales syncing.
                   </div>
+                </div>
+              </div>
+            )}
+
+            {missingNotice && (
+              <div role="alert" style={{ padding: "12px 16px", borderRadius: 10, background: "#fef2f2", border: "1px solid #fecaca", marginBottom: 16 }}>
+                <div style={{ fontSize: 13, color: "#991b1b", fontWeight: 600, lineHeight: 1.45 }}>
+                  You were signed out because this account no longer exists on Pointly. Your business data is kept — please contact Pointly support to restore access rather than creating a new account.
                 </div>
               </div>
             )}

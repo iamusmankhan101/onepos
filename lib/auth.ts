@@ -272,11 +272,23 @@ export async function updateCurrentPassword(currentPassword: string, nextPasswor
  * expired session surfaces as a re-login prompt instead of days of silently
  * un-synced data.
  */
+let lastSessionFailure: "session_expired" | "account_missing" | null = null;
+
+/** Why the last checkServerSession() returned false, so the caller can say which. */
+export function getLastSessionFailure() {
+  return lastSessionFailure;
+}
+
 export async function checkServerSession(): Promise<boolean> {
   if (!canUseStorage()) return true;
   try {
     const res = await fetch("/api/auth/user", { cache: "no-store", credentials: "same-origin" });
-    if (res.status === 401) return false;
+    if (res.status === 401) {
+      const body = await res.json().catch(() => null) as { reason?: string } | null;
+      lastSessionFailure = body?.reason === "account_missing" ? "account_missing" : "session_expired";
+      return false;
+    }
+    lastSessionFailure = null;
     const data = await res.json() as { ok?: boolean; user?: AuthUser };
     // The server's copy is authoritative for anything that can change under an
     // open session — the subscription plan above all, since a business that
