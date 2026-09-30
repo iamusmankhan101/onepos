@@ -172,6 +172,9 @@ function linkedConsoleAdmin(req: NextRequest): AuthUser | null {
     businessType: "general",
     customPricePkr: null,
     billingCycleMonths: null,
+    billingStartDate: null,
+    invoiceIssueDate: null,
+    invoiceDueDate: null,
     createdAt: new Date(0).toISOString(),
   };
 }

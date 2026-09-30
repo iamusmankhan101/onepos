@@ -83,6 +83,10 @@ async function ensureAuthTablesUncached(): Promise<void> {
   // Billing terms set from the admin console (lib/billing.ts); NULL = plan list price / monthly.
   await db.execute("ALTER TABLE users ADD COLUMN custom_price_pkr INTEGER").catch(() => {});
   await db.execute("ALTER TABLE users ADD COLUMN billing_cycle_months INTEGER").catch(() => {});
+  // Billing dates set from the admin console — see billingDates() in lib/billing.ts. NULL = the default.
+  await db.execute("ALTER TABLE users ADD COLUMN billing_start_date TEXT").catch(() => {});
+  await db.execute("ALTER TABLE users ADD COLUMN invoice_issue_date TEXT").catch(() => {});
+  await db.execute("ALTER TABLE users ADD COLUMN invoice_due_date TEXT").catch(() => {});
 
   // Create index for faster email lookups
   await db.execute(`
@@ -134,6 +138,10 @@ export interface User {
   customPricePkr: number | null;
   /** Default billing cycle in months for new payments; null = 1. Owners only. */
   billingCycleMonths: number | null;
+  /** Admin overrides for the billing dates (YYYY-MM-DD); null = the default. Owners only. */
+  billingStartDate: string | null;
+  invoiceIssueDate: string | null;
+  invoiceDueDate: string | null;
   createdAt: string;
 }
 
@@ -166,6 +174,10 @@ export interface AuthUser {
   customPricePkr: number | null;
   /** Default billing cycle in months for new payments; null = 1. Owners only. */
   billingCycleMonths: number | null;
+  /** Admin overrides for the billing dates (YYYY-MM-DD); null = the default. Owners only. */
+  billingStartDate: string | null;
+  invoiceIssueDate: string | null;
+  invoiceDueDate: string | null;
   createdAt: string;
 }
 
@@ -193,6 +205,9 @@ function rowToUser(r: any): User {
     businessType: normalizeBusinessTypeId(r.business_type),
     customPricePkr: r.custom_price_pkr === null || r.custom_price_pkr === undefined ? null : Number(r.custom_price_pkr),
     billingCycleMonths: r.billing_cycle_months ? Number(r.billing_cycle_months) : null,
+    billingStartDate: (r.billing_start_date as string) || null,
+    invoiceIssueDate: (r.invoice_issue_date as string) || null,
+    invoiceDueDate: (r.invoice_due_date as string) || null,
     createdAt: r.created_at as string,
   };
 }
@@ -395,6 +410,24 @@ export async function setBillingTerms(id: string, terms: { customPricePkr: numbe
     sql: "UPDATE users SET custom_price_pkr = ?, billing_cycle_months = ? WHERE id = ?",
     args: [terms.customPricePkr, terms.billingCycleMonths, id],
   });
+}
+
+/**
+ * An owner's billing dates — when the subscription started, and when the next
+ * invoice is issued and due. null puts a date back to its default.
+ */
+export async function setBillingDates(id: string, dates: { billingStartDate: string | null; invoiceIssueDate: string | null; invoiceDueDate: string | null }): Promise<void> {
+  await ensureAuthTables();
+  await db.execute({
+    sql: "UPDATE users SET billing_start_date = ?, invoice_issue_date = ?, invoice_due_date = ? WHERE id = ?",
+    args: [dates.billingStartDate, dates.invoiceIssueDate, dates.invoiceDueDate, id],
+  });
+}
+
+/** A new cycle begins (a payment recorded or voided): the next invoice's dates go back to their defaults. */
+export async function clearInvoiceDates(id: string): Promise<void> {
+  await ensureAuthTables();
+  await db.execute({ sql: "UPDATE users SET invoice_issue_date = NULL, invoice_due_date = NULL WHERE id = ?", args: [id] });
 }
 
 /** Sets what kind of business an owner runs. Team logins inherit it, like the plan. */

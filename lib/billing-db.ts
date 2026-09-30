@@ -9,13 +9,14 @@
  */
 
 import { db } from "@/lib/db";
-import { ensureAuthTables, getAllUsers, getUserById, setUserPlan } from "@/lib/auth-db";
+import { clearInvoiceDates, ensureAuthTables, getAllUsers, getUserById, setUserPlan } from "@/lib/auth-db";
 import { getBilledFrom, paymentMethodAssignments, payToFor } from "@/lib/invoice-settings-db";
 import type { BilledFrom, PayTo } from "@/lib/invoice-settings";
 import { PLAN_IDS, PLANS, normalizePlanId, type PlanId } from "@/lib/plans";
 import {
+  accountBillingStatus,
   addMonths,
-  billingStatus,
+  billingDates,
   monthlyPrice,
   nextPeriodStart,
   periodEnd,
@@ -136,7 +137,8 @@ export async function recordPayment(input: {
   }
 
   const [latest] = await livePaymentsFor(owner.id);
-  const periodStart = nextPeriodStart(latest?.periodEnd ?? null, input.paidAt);
+  // A first payment covers from the billing start date when an admin set one.
+  const periodStart = latest ? nextPeriodStart(latest.periodEnd, input.paidAt) : (owner.billingStartDate ?? input.paidAt);
   const payment: SubscriptionPayment = {
     id: `pay_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
     ownerId: owner.id,
@@ -173,6 +175,7 @@ export async function recordPayment(input: {
 
   const planChanged = owner.plan !== input.plan;
   if (planChanged) await setUserPlan(owner.id, input.plan);
+  await clearInvoiceDates(owner.id);
   return { payment, planChanged };
 }
 
@@ -199,6 +202,7 @@ export async function voidPayment(id: string, reason: string | null): Promise<Su
     sql: "UPDATE subscription_payments SET voided_at = ?, void_reason = ? WHERE id = ?",
     args: [voidedAt, reason, id],
   });
+  await clearInvoiceDates(payment.ownerId);
   return { ...payment, voidedAt, voidReason: reason };
 }
 
@@ -233,7 +237,8 @@ export async function getBillingOverview(): Promise<{
         (latest, p) => (!latest || p.paidAt > latest.paidAt || (p.paidAt === latest.paidAt && p.createdAt > latest.createdAt) ? p : latest),
         null,
       );
-      const { status, daysLeft } = billingStatus(paidUntil, today);
+      const dates = billingDates({ ...u, paidUntil });
+      const { status, daysLeft } = accountBillingStatus(paidUntil, dates.dueDate, u.invoiceDueDate !== null, today);
       return {
         id: u.id,
         email: u.email,
@@ -253,6 +258,10 @@ export async function getBillingOverview(): Promise<{
         lastPayment: last ? { paidAt: last.paidAt, amountPkr: last.amountPkr, method: last.method } : null,
         totalPaidPkr: own.reduce((sum, p) => sum + p.amountPkr, 0),
         paymentMethodId: assignments.get(u.id) ?? null,
+        ...dates,
+        billingStartDate: u.billingStartDate,
+        invoiceIssueDate: u.invoiceIssueDate,
+        invoiceDueDate: u.invoiceDueDate,
       };
     });
 
@@ -299,6 +308,10 @@ export interface OwnSubscription {
   customPrice: boolean;
   billingCycleMonths: number;
   paidUntil: string | null;
+  /** When the subscription started, and when the next invoice is issued and due — see billingDates(). */
+  startDate: string;
+  nextIssueDate: string;
+  nextDueDate: string;
   status: BillingStatus;
   daysLeft: number | null;
   payments: (Pick<SubscriptionPayment, "id" | "paidAt" | "amountPkr" | "months" | "days" | "method" | "reference" | "periodStart" | "periodEnd" | "plan"> & {
@@ -328,7 +341,8 @@ export async function getOwnSubscription(ownerId: string): Promise<OwnSubscripti
     livePaymentsFor(owner.id), invoiceNumbers(owner.id), getBilledFrom(), payToFor(owner.id),
   ]);
   const paidUntil = live.reduce<string | null>((max, p) => (!max || p.periodEnd > max ? p.periodEnd : max), null);
-  const { status, daysLeft } = billingStatus(paidUntil);
+  const dates = billingDates({ ...owner, paidUntil });
+  const { status, daysLeft } = accountBillingStatus(paidUntil, dates.dueDate, owner.invoiceDueDate !== null);
   return {
     account: { businessName: owner.businessName, ownerName: owner.ownerName, email: owner.email, phone: owner.phone },
     billedFrom,
@@ -339,6 +353,9 @@ export async function getOwnSubscription(ownerId: string): Promise<OwnSubscripti
     customPrice: owner.customPricePkr !== null,
     billingCycleMonths: owner.billingCycleMonths ?? 1,
     paidUntil,
+    startDate: dates.startDate,
+    nextIssueDate: dates.issueDate,
+    nextDueDate: dates.dueDate,
     status,
     daysLeft,
     payments: live

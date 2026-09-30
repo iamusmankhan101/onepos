@@ -189,7 +189,7 @@ export default function SubscriptionBilling() {
     ? "No payment recorded yet."
     : sub.daysLeft !== null && sub.daysLeft <= 0
       ? `Your subscription ended on ${fmtDay(lastDay(sub.paidUntil))}.`
-      : `Paid up to ${fmtDay(lastDay(sub.paidUntil))} — ${sub.daysLeft} day${sub.daysLeft === 1 ? "" : "s"} left.`;
+      : `Paid up to ${fmtDay(lastDay(sub.paidUntil))} — next payment due ${fmtDay(sub.nextDueDate)}, in ${sub.daysLeft} day${sub.daysLeft === 1 ? "" : "s"}.`;
   const nextAmount = sub.monthlyPricePkr * sub.billingCycleMonths;
   const totalPaid = sub.payments.reduce((sum, p) => sum + p.amountPkr, 0);
   const stat = (label: string, value: ReactNode, sub2?: ReactNode) => (
@@ -226,6 +226,7 @@ export default function SubscriptionBilling() {
             <span style={{ fontSize: 11, fontWeight: 800, color: tone.color, background: "#fff", borderRadius: 20, padding: "2px 9px" }}>{tone.label}</span>
           </div>
           <div style={{ fontSize: 13, color: tone.color, marginTop: 3, fontWeight: 600 }}>{statusLine}</div>
+          <div style={{ fontSize: 11.5, color: "#8b8ba3", marginTop: 2 }}>Subscribed since {fmtDay(sub.startDate)}</div>
         </div>
       </div>
 
@@ -249,9 +250,12 @@ export default function SubscriptionBilling() {
         {stat(
           "Next invoice",
           pkrAmount(nextAmount),
-          sub.paidUntil
-            ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><CalendarClock size={12} /> Due {fmtDay(sub.paidUntil)}</span>
-            : "Due when you start",
+          <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span>Issued {fmtDay(sub.nextIssueDate)}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontWeight: 700, color: sub.status === "overdue" ? "#b91c1c" : "#43435f" }}>
+              <CalendarClock size={12} /> Due {fmtDay(sub.nextDueDate)}
+            </span>
+          </span>,
         )}
         {stat("Total paid", pkrAmount(totalPaid), `${sub.payments.length} invoice${sub.payments.length === 1 ? "" : "s"}`)}
       </div>

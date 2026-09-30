@@ -7,6 +7,7 @@
  *       { action: "void", paymentId, reason? }
  *       { action: "set-terms", ownerId, customPricePkr: number | null, billingCycleMonths: number | null }
  *       { action: "set-payment-method", ownerId, paymentMethodId: string | null }  — null = the default account
+ *       { action: "set-dates", ownerId, billingStartDate, invoiceIssueDate, invoiceDueDate }  — each YYYY-MM-DD or null (the default)
  *
  * Gated on requireAdmin(); every write is audit-logged alongside the other
  * admin actions.
@@ -16,10 +17,10 @@ import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { logAdminAction } from "@/lib/admin-db";
 import { getBillingOverview, recordPayment, voidPayment } from "@/lib/billing-db";
-import { getUserById, setBillingTerms } from "@/lib/auth-db";
+import { getUserById, setBillingDates, setBillingTerms } from "@/lib/auth-db";
 import { listPaymentMethods, setPaymentMethodForUser } from "@/lib/invoice-settings-db";
 import {
-  cycleLabel, durationLabel, isIsoDate, MAX_PAYMENT_DAYS, MAX_PAYMENT_MONTHS, monthlyPrice, PAYMENT_METHODS,
+  billingDates, cycleLabel, durationLabel, isIsoDate, MAX_PAYMENT_DAYS, MAX_PAYMENT_MONTHS, monthlyPrice, PAYMENT_METHODS,
   todayIso, type PeriodLength,
 } from "@/lib/billing";
 import { normalizePlanId, PLANS } from "@/lib/plans";
@@ -175,6 +176,40 @@ export async function POST(req: NextRequest) {
         detail: `${customPricePkr === null ? "List price" : "Custom price"}: ${cycleLabel(price, billingCycleMonths)}.`,
       });
 
+      return Response.json({ ok: true, ...(await getBillingOverview()) });
+    }
+
+    if (body.action === "set-dates") {
+      const ownerId = text(body.ownerId, 200);
+      const owner = ownerId ? await getUserById(ownerId) : null;
+      if (!owner) return Response.json({ ok: false, error: "Account not found." }, { status: 404 });
+      if (owner.businessOwnerId || owner.role !== "owner") {
+        return Response.json({ ok: false, error: "Billing dates are set on the business owner's account." }, { status: 400 });
+      }
+      const dates = { billingStartDate: null as string | null, invoiceIssueDate: null as string | null, invoiceDueDate: null as string | null };
+      for (const key of ["billingStartDate", "invoiceIssueDate", "invoiceDueDate"] as const) {
+        const value = body[key];
+        if (value === null || value === undefined || value === "") continue;
+        if (!isIsoDate(value)) return Response.json({ ok: false, error: "Dates must be YYYY-MM-DD." }, { status: 400 });
+        dates[key] = value;
+      }
+      // Checked on the dates as they'll actually apply, defaults included.
+      const overview = await getBillingOverview();
+      const paidUntil = overview.accounts.find((a) => a.id === owner.id)?.paidUntil ?? null;
+      const effective = billingDates({ createdAt: owner.createdAt, paidUntil, ...dates });
+      if (effective.issueDate > effective.dueDate) {
+        return Response.json({ ok: false, error: "The invoice can't be issued after it's due." }, { status: 400 });
+      }
+
+      await setBillingDates(owner.id, dates);
+      await logAdminAction({
+        actorId: admin.id,
+        actorEmail: admin.email,
+        action: "set-billing-dates",
+        targetId: owner.id,
+        targetEmail: owner.email,
+        detail: `Started ${effective.startDate}; next invoice issued ${effective.issueDate}, due ${effective.dueDate}.`,
+      });
       return Response.json({ ok: true, ...(await getBillingOverview()) });
     }
 
