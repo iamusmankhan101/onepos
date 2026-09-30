@@ -6,10 +6,12 @@ import {
   Search, Scissors, Package, Plus, Minus, Trash2, Phone,
   X, ShoppingCart, ReceiptText, Banknote, CreditCard,
   Smartphone, Zap, Tag, UserPlus, CheckCircle2, Printer,
-  MessageSquare, RefreshCw, User, ChevronRight, Sparkles,
+  MessageSquare, RefreshCw, User, ChevronRight,
   Clock, AlertCircle, Gift,
   ScanBarcode, Lock,
   Send, Pause, StickyNote, ListOrdered, Bike, ShoppingBag, UtensilsCrossed, Flame, ChefHat,
+  Pencil, LayoutGrid, Utensils, Coffee, Pizza, Hamburger, Sandwich, Salad, Soup, Croissant, Cake,
+  IceCreamCone, Cookie, Fish, Drumstick, Beef, Egg, Citrus, CupSoda, Wine, Beer, Martini,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useBusinessType } from "@/lib/use-business-type";
@@ -136,6 +138,34 @@ const CATEGORY_COLORS: Record<string, { fg: string; bg: string }> = {
 function catColor(category: string, type: "service" | "product") {
   if (type === "product") return CATEGORY_COLORS.product;
   return CATEGORY_COLORS[category?.toLowerCase()] || CATEGORY_COLORS.other;
+}
+
+// Menu section → icon for the category tiles and photo-less dishes; the first match wins.
+const MENU_ICONS: [RegExp, React.ElementType][] = [
+  [/coffee|espresso|latte|cappuccino|\btea\b|chai/i, Coffee],
+  [/pizza/i, Pizza],
+  [/burger/i, Hamburger],
+  [/sandwich|wrap|shawarma/i, Sandwich],
+  [/salad|healthy|vegan/i, Salad],
+  [/soup/i, Soup],
+  [/bak|bread|pastr|croissant|breakfast/i, Croissant],
+  [/cake|dessert|sweet/i, Cake],
+  [/ice ?cream|gelato|shake/i, IceCreamCone],
+  [/cookie|biscuit/i, Cookie],
+  [/fish|sea ?food|sushi|prawn/i, Fish],
+  [/chicken|wing|bbq|grill|karahi|tikka/i, Drumstick],
+  [/beef|steak|meat|mutton/i, Beef],
+  [/\begg/i, Egg],
+  [/juice|smoothie|lemonade/i, Citrus],
+  [/drink|beverage|soda|cold|mocktail/i, CupSoda],
+  [/wine/i, Wine],
+  [/beer/i, Beer],
+  [/cocktail|\bbar\b/i, Martini],
+  [/main|course|meal|platter|rice|biryani|pasta|noodle/i, UtensilsCrossed],
+];
+
+function menuIcon(label: string): React.ElementType {
+  return MENU_ICONS.find(([re]) => re.test(label))?.[1] ?? Utensils;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -320,6 +350,21 @@ export default function POSPage() {
 
   // ── Mobile tab ───────────────────────────────────────────────────────────
   const [posTab, setPosTab] = useState<"customer" | "catalog" | "cart">("catalog");
+  // Desktop: customer, staff and notes live in a drawer over the order panel.
+  const [customerOpen, setCustomerOpen] = useState(false);
+
+  /** The customer details — the drawer on a wide screen, the Customer tab on a phone. */
+  function openCustomer() {
+    if (window.matchMedia("(max-width: 768px)").matches) setPosTab("customer");
+    else setCustomerOpen(true);
+  }
+
+  useEffect(() => {
+    if (!customerOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCustomerOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [customerOpen]);
 
   // ── Flow ──────────────────────────────────────────────────────────────────
   const [isCredit,         setIsCredit]         = useState(false);
@@ -337,17 +382,17 @@ export default function POSPage() {
   const [retryingSync,     setRetryingSync]     = useState(false);
 
   // ── Derived catalog ───────────────────────────────────────────────────────
-  const catalogItems = useMemo<CatalogItem[]>(() => {
+  const searchedItems = useMemo<CatalogItem[]>(() => {
     const q = catalogSearch.toLowerCase();
     // Services are a salon thing — a restaurant or shop sells only its menu/products.
-    const svc: CatalogItem[] = (businessType.bookings && catalogTab !== "products" ? services : [])
+    const svc: CatalogItem[] = (businessType.bookings ? services : [])
       .filter(s => !q || s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q))
       .filter(s => inSection(s, catalogSectionFilter))
       .map(s => ({
         id: s.id, type: "service", name: s.name, price: s.price, category: s.category, section: s.section,
         variablePrice: s.variablePrice, priceRangeMin: s.priceRangeMin, priceRangeMax: s.priceRangeMax,
       }));
-    const prod: CatalogItem[] = (catalogTab !== "services" ? inventory : [])
+    const prod: CatalogItem[] = inventory
       .filter(i => (i.retailPrice ?? 0) > 0 || i.variablePrice)
       .filter(i => !q || i.name.toLowerCase().includes(q) || i.brand.toLowerCase().includes(q))
       .filter(i => inSection(i, catalogSectionFilter))
@@ -362,7 +407,11 @@ export default function POSPage() {
         unavailable: i.unavailable, menuCategory: i.menuCategory?.trim() || undefined, modifierGroupIds: i.modifierGroupIds,
       }));
     return [...svc, ...prod];
-  }, [services, inventory, catalogTab, catalogSearch, catalogSectionFilter, restaurant, orderType, businessType.bookings]);
+  }, [services, inventory, catalogSearch, catalogSectionFilter, restaurant, orderType, businessType.bookings]);
+  const catalogItems = useMemo(
+    () => catalogTab === "all" ? searchedItems : searchedItems.filter(i => i.type === (catalogTab === "services" ? "service" : "product")),
+    [searchedItems, catalogTab],
+  );
 
   // Restaurant mode: menu tabs (Coffee, Bakery…) from the items' menu sections.
   const menuCategories = useMemo(() => {
@@ -377,6 +426,22 @@ export default function POSPage() {
   const shownItems = restaurant && menuTab !== "all"
     ? catalogItems.filter(i => i.menuCategory === menuTab)
     : catalogItems;
+
+  // The tile row over the grid: menu sections for a restaurant, services/products for a salon.
+  const categoryTiles: { id: string; label: string; icon: React.ElementType; count: number; active: boolean; select: () => void }[] =
+    menuCategories.length > 0
+      ? ["all", ...menuCategories].map(c => ({
+          id: c, label: c === "all" ? "All" : c, icon: c === "all" ? LayoutGrid : menuIcon(c),
+          count: c === "all" ? catalogItems.length : catalogItems.filter(i => i.menuCategory === c).length,
+          active: menuTab === c, select: () => setMenuTab(c),
+        }))
+      : businessType.bookings
+      ? ([
+          { id: "all", label: "All Items", icon: LayoutGrid, count: searchedItems.length },
+          { id: "services", label: "Services", icon: Scissors, count: searchedItems.filter(i => i.type === "service").length },
+          { id: "products", label: businessType.productsLabel, icon: Package, count: searchedItems.filter(i => i.type === "product").length },
+        ] as const).map(t => ({ ...t, active: catalogTab === t.id, select: () => setCatalogTab(t.id) }))
+      : [];
 
   const dropClients = useMemo(() => {
     const q = clientQ.toLowerCase();
@@ -585,6 +650,12 @@ export default function POSPage() {
     });
   }
 
+  /** The catalog card's minus: takes one off the newest line of that item the kitchen doesn't have yet. */
+  function decrementItem(itemId: string) {
+    const entry = [...cart].reverse().find(e => e.itemId === itemId && !e.firedAt);
+    if (entry) updateQty(entry.cartId, -1);
+  }
+
   function updateUnitPrice(cartId: string, price: number) {
     setCart(prev => prev.map(e => e.cartId === cartId ? { ...e, unitPrice: price, total: price * e.qty } : e));
   }
@@ -659,6 +730,14 @@ export default function POSPage() {
     const client = order.clientId ? getStoredClients().find(c => c.id === order.clientId) : undefined;
     setSelectedClient(client ?? (order.clientName ? { id: "", name: order.clientName, phone: order.clientPhone ?? "", tags: [], source: "walk-in", createdAt: "", totalVisits: 0, totalSpend: 0 } : null));
     setShowOpenOrders(false);
+  }
+
+  /** Picks an open order up from the strip under the menu, checking before an unsaved cart is replaced. */
+  function resumeOrder(order: RestaurantOrder) {
+    if (order.id === activeOrder?.id) return;
+    if (cart.length > 0 && !activeOrder && !window.confirm("The current order isn't saved — replace it with this one? Hold it first to keep it.")) return;
+    loadOrder(order);
+    setPosTab("cart");
   }
 
   /**
@@ -780,7 +859,8 @@ export default function POSPage() {
         setOrderType("takeaway");
       }
     }, 0);
-    return () => window.clearTimeout(t);
+    const unsubscribe = subscribeToStoredData(refreshRestaurant);
+    return () => { window.clearTimeout(t); unsubscribe(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once the business type is known
   }, [restaurant]);
 
@@ -1056,7 +1136,14 @@ export default function POSPage() {
   }
 
   const business = settingsStore.business as { name: string; phone: string; email: string; address: string; logo?: string };
-  const selectedPayMethod = PAY_METHODS.find(p => p.value === payMethod);
+  const selectedStaff = staff.find(s => s.id === selectedStaffId);
+  const orderTitle = !restaurant
+    ? "Current Sale"
+    : activeOrder
+    ? orderRef(activeOrder, diningTables)
+    : orderType === "dine-in" && orderTableIds.length > 0
+    ? tableNames(orderTableIds, diningTables).join(" + ")
+    : "New Order";
 
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1195,25 +1282,29 @@ export default function POSPage() {
         </div>
       )}
 
-      {/* ══ 3-PANEL BODY ══ */}
-      <div className="pos-panels" style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "280px 1fr 340px", overflow: "hidden", gap: 12, padding: "12px 16px 12px" }}>
+      {/* ══ BODY: menu | order — customer details slide over from the right ══ */}
+      <div className="pos-panels" style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0, 1fr) 380px", overflow: "hidden", gap: 16, padding: "16px 20px" }}>
 
-        {/* ══════════════════════ PANEL 1: CUSTOMER ══════════════════════ */}
-        <div className={`pos-surface pos-customer-panel ${posTab !== "customer" ? "pos-panel-hide" : ""}`} style={{ background: "#fff", borderRadius: 16, border: "1px solid #eaeaf4", display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", boxShadow: "0 2px 12px rgba(0,0,0,0.04)" }}>
+        <div className={`pos-drawer-backdrop${customerOpen ? " is-open" : ""}`} onClick={() => setCustomerOpen(false)} aria-hidden="true" />
+
+        {/* ══════════════════════ CUSTOMER & DETAILS ══════════════════════ */}
+        <div className={`pos-surface pos-customer-panel${customerOpen ? " is-open" : ""} ${posTab !== "customer" ? "pos-panel-hide" : ""}`}
+          role="dialog" aria-label={restaurant ? "Customer & order details" : "Customer & sale details"}
+          style={{ background: "#fff", borderRadius: 16, border: "1px solid #eaeaf4", display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", boxShadow: "0 2px 12px rgba(0,0,0,0.04)" }}>
 
           {/* Panel header */}
           <div className="pos-panel-heading" style={{ padding: "14px 16px", borderBottom: "1px solid #f4f4fc", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <div style={{ width: 30, height: 30, borderRadius: 9, background: "#fff7ed", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <User size={14} color="#EA580C" />
             </div>
-            <span style={{ fontSize: 13, fontWeight: 800, color: "#1d1d2f" }}>Customer</span>
-            {selectedClient ? (
+            <span style={{ fontSize: 14, fontWeight: 800, color: "#1d1d2f" }}>{restaurant ? "Customer & order" : "Customer & sale"}</span>
+            {selectedClient?.id ? (
               <Link
                 href={`/dashboard/clients/${selectedClient.id}`}
                 title="Open this customer's profile"
                 style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, background: "#fff7ed", color: "#EA580C", borderRadius: 20, padding: "2px 8px", textDecoration: "none" }}
               >
-                Selected · Profile
+                Profile
               </Link>
             ) : (
               <Link
@@ -1224,74 +1315,12 @@ export default function POSPage() {
                 All clients
               </Link>
             )}
+            <button type="button" onClick={() => setCustomerOpen(false)} aria-label="Close" className="pos-icon-btn pos-drawer-close" style={{ width: 32, height: 32 }}>
+              <X size={15} />
+            </button>
           </div>
 
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
-
-            {restaurant && (
-              <div style={{ padding: 12, borderRadius: 12, border: "1.5px solid #fed7aa", background: "#fffaf5", display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: "#9A3412", textTransform: "uppercase", letterSpacing: "0.07em", flex: 1 }}>
-                    {activeOrder ? `Order #${activeOrder.number}` : "New order"}
-                  </span>
-                  {activeOrder && (
-                    <button type="button" onClick={() => { setCart([]); setSelectedClient(null); setSelectedStaffId(""); setSaleNotes(""); clearOrder(); }}
-                      title="Put this order back and start a new one"
-                      style={{ border: "none", background: "none", color: "#9999b0", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
-                      Close
-                    </button>
-                  )}
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4 }}>
-                  {([
-                    { id: "dine-in",  icon: UtensilsCrossed },
-                    { id: "takeaway", icon: ShoppingBag },
-                    { id: "delivery", icon: Bike },
-                  ] as { id: OrderType; icon: React.ElementType }[]).map(({ id, icon: Icon }) => {
-                    const on = orderType === id;
-                    return (
-                      <button key={id} type="button" onClick={() => changeOrderType(id)} aria-pressed={on}
-                        style={{ padding: "7px 2px", borderRadius: 9, border: `1.5px solid ${on ? "#EA580C" : "#ececf4"}`, background: on ? "#fff7ed" : "#fff", color: on ? "#EA580C" : "#8a8aa6", fontSize: 11, fontWeight: 800, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                        <Icon size={14} /> {ORDER_TYPE_LABEL[id]}
-                      </button>
-                    );
-                  })}
-                </div>
-                {orderType === "dine-in" && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 70px", gap: 6 }}>
-                    <select value={orderTableIds[0] ?? ""} onChange={e => setOrderTableIds(e.target.value ? [e.target.value] : [])} aria-label="Table"
-                      style={{ height: 36, padding: "0 8px", borderRadius: 9, border: "1.5px solid #e8e8f4", fontSize: 12, background: "#fff", color: "#1d1d2f" }}>
-                      <option value="">{diningTables.length ? "Choose table…" : "No tables — add them on Tables"}</option>
-                      {diningTables.map(t => {
-                        const busy = openOrders.some(o => o.id !== activeOrder?.id && o.tableIds.includes(t.id));
-                        return <option key={t.id} value={t.id} disabled={busy}>{t.name}{t.area ? ` · ${t.area}` : ""}{busy ? " (occupied)" : ""}</option>;
-                      })}
-                    </select>
-                    <input type="number" min={1} value={guests} onChange={e => setGuests(e.target.value)} placeholder="Guests" aria-label="Guests"
-                      style={{ height: 36, padding: "0 8px", borderRadius: 9, border: "1.5px solid #e8e8f4", fontSize: 12, background: "#fff", boxSizing: "border-box", width: "100%" }} />
-                  </div>
-                )}
-                {orderType === "dine-in" && orderTableIds.length > 1 && (
-                  <div style={{ fontSize: 11, color: "#9999b0" }}>Merged: {tableNames(orderTableIds, diningTables).join(" + ")}</div>
-                )}
-                {orderType === "delivery" && (
-                  <textarea value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} rows={2} placeholder="Delivery address *"
-                    style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #e8e8f4", fontSize: 12, background: "#fff", resize: "vertical", fontFamily: "inherit" }} />
-                )}
-                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: rush ? "#dc2626" : "#8a8aa6", cursor: "pointer" }}>
-                    <input type="checkbox" checked={rush} onChange={e => setRush(e.target.checked)} style={{ accentColor: "#dc2626" }} />
-                    <Flame size={12} /> Rush
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#8a8aa6", cursor: "pointer" }}
-                    title="Opens the kitchen ticket to print every time an order is sent from this till">
-                    <input type="checkbox" checked={autoPrintKot} style={{ accentColor: "#EA580C" }}
-                      onChange={e => { setAutoPrintKot(e.target.checked); try { localStorage.setItem("pointly_pos_autoprint_kot", e.target.checked ? "on" : "off"); } catch { /* storage blocked */ } }} />
-                    Print KOT
-                  </label>
-                </div>
-              </div>
-            )}
 
             {!selectedClient ? (
               <>
@@ -1462,116 +1491,105 @@ export default function POSPage() {
                 placeholder="Special instructions, preferences…"
                 style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: "1.5px solid #e8e8f4", fontSize: 12, color: "#1d1d2f", outline: "none", background: "#fafafe", resize: "vertical", lineHeight: 1.5, fontFamily: "inherit", boxSizing: "border-box" }} />
             </div>
+
+            {restaurant && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <label className={`pos-chip-toggle${rush ? " is-on is-rush" : ""}`} style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px" }}>
+                  <input type="checkbox" checked={rush} onChange={e => setRush(e.target.checked)} style={{ accentColor: "#dc2626", margin: 0 }} />
+                  <Flame size={12} /> Rush order
+                </label>
+                <label className={`pos-chip-toggle${autoPrintKot ? " is-on" : ""}`} style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px" }}
+                  title="Opens the kitchen ticket to print every time an order is sent from this till">
+                  <input type="checkbox" checked={autoPrintKot} style={{ accentColor: "#EA580C", margin: 0 }}
+                    onChange={e => { setAutoPrintKot(e.target.checked); try { localStorage.setItem("pointly_pos_autoprint_kot", e.target.checked ? "on" : "off"); } catch { /* storage blocked */ } }} />
+                  <Printer size={12} /> Print KOT
+                </label>
+              </div>
+            )}
+          </div>
+
+          <div className="pos-drawer-close" style={{ padding: 14, borderTop: "1px solid #f4f4fc", flexShrink: 0 }}>
+            <button type="button" onClick={() => setCustomerOpen(false)} className="pos-place-btn" style={{ height: 46, fontSize: 14 }}>
+              Done
+            </button>
           </div>
         </div>
 
-        {/* ══════════════════════ PANEL 2: CATALOG ══════════════════════ */}
-        <div className={`pos-surface pos-catalog-panel ${posTab !== "catalog" ? "pos-panel-hide" : ""}`} style={{ background: "#fff", borderRadius: 16, border: "1px solid #eaeaf4", display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", boxShadow: "0 2px 12px rgba(0,0,0,0.04)" }}>
+        {/* ══════════════════════ MENU ══════════════════════ */}
+        <div className={`pos-catalog-panel ${posTab !== "catalog" ? "pos-panel-hide" : ""}`} style={{ display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0, gap: 14 }}>
 
-          {/* Catalog header */}
-          <div className="pos-catalog-heading" style={{ padding: "12px 16px", borderBottom: "1px solid #f4f4fc", flexShrink: 0 }}>
-            {/* Search row */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-              <div style={{ position: "relative", flex: 1 }}>
-                <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#b0b0c8", pointerEvents: "none" }} />
-                <input value={catalogSearch} onChange={e => setCatalogSearch(e.target.value)}
-                  placeholder={businessType.bookings ? "Search services & products…" : `Search ${businessType.productsLabel.toLowerCase()}…`}
-                  style={{ width: "100%", height: 38, padding: "0 34px", borderRadius: 10, border: "1.5px solid #e8e8f4", fontSize: 13, color: "#1d1d2f", outline: "none", background: "#fafafe", boxSizing: "border-box" }} />
-                {catalogSearch && (
-                  <button type="button" onClick={() => setCatalogSearch("")}
-                    style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <X size={13} color="#9999b0" />
-                  </button>
-                )}
-              </div>
-              <span style={{ fontSize: 11, fontWeight: 600, color: "#b0b0c8", flexShrink: 0 }}>
-                {shownItems.length} item{shownItems.length !== 1 ? "s" : ""}
-              </span>
+          {/* Search + barcode scanner */}
+          <div className="pos-search-row" style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+            <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+              <Search size={17} style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: "#a3a3b8", pointerEvents: "none" }} />
+              <input value={catalogSearch} onChange={e => setCatalogSearch(e.target.value)} aria-label="Search the catalog"
+                placeholder={businessType.bookings ? "Search services & products…" : `Search ${businessType.productsLabel.toLowerCase()}…`}
+                style={{ width: "100%", height: 48, padding: "0 40px 0 46px", borderRadius: 14, border: "1px solid #ececf3", fontSize: 14, color: "#1d1d2f", outline: "none", background: "#fff", boxSizing: "border-box" }} />
+              {catalogSearch && (
+                <button type="button" onClick={() => setCatalogSearch("")} aria-label="Clear search"
+                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", border: "none", background: "#f4f4f8", borderRadius: 8, width: 26, height: 26, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <X size={13} color="#9999b0" />
+                </button>
+              )}
             </div>
-
-            {/* Barcode scanner */}
-            <form
-              onSubmit={(event) => { event.preventDefault(); addBarcodeToCart(barcodeInput); }}
-              style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}
-            >
-              <div style={{ position: "relative", flex: 1 }}>
-                <ScanBarcode size={15} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#EA580C", pointerEvents: "none" }} />
-                <input
-                  value={barcodeInput}
-                  onChange={(event) => setBarcodeInput(event.target.value)}
-                  placeholder="Scan barcode or enter code…"
-                  autoComplete="off"
-                  autoFocus
-                  inputMode="numeric"
-                  style={{ width: "100%", height: 36, padding: "0 12px 0 35px", borderRadius: 10, border: "1.5px solid #fed7aa", fontSize: 12, color: "#1d1d2f", outline: "none", background: "#faf8ff", boxSizing: "border-box" }}
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={!barcodeInput.trim()}
-                style={{ height: 36, padding: "0 13px", borderRadius: 10, border: "none", background: barcodeInput.trim() ? "linear-gradient(135deg,#9A3412,#F97316)" : "#eceaf2", color: barcodeInput.trim() ? "#fff" : "#b2aca4", fontSize: 11, fontWeight: 800, cursor: barcodeInput.trim() ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}
-              >
-                Add Product
+            <form className="pos-scan-form" onSubmit={(event) => { event.preventDefault(); addBarcodeToCart(barcodeInput); }}
+              style={{ position: "relative", width: 260, flexShrink: 0 }}>
+              <ScanBarcode size={17} style={{ position: "absolute", left: 15, top: "50%", transform: "translateY(-50%)", color: "#EA580C", pointerEvents: "none" }} />
+              <input
+                value={barcodeInput}
+                onChange={(event) => setBarcodeInput(event.target.value)}
+                placeholder="Scan or enter barcode…"
+                aria-label="Barcode"
+                autoComplete="off"
+                autoFocus
+                inputMode="numeric"
+                style={{ width: "100%", height: 48, padding: "0 70px 0 44px", borderRadius: 14, border: "1px solid #ececf3", fontSize: 13, color: "#1d1d2f", outline: "none", background: "#fff", boxSizing: "border-box" }}
+              />
+              <button type="submit" disabled={!barcodeInput.trim()}
+                style={{ position: "absolute", right: 6, top: 6, height: 36, padding: "0 14px", borderRadius: 10, border: "none", background: barcodeInput.trim() ? "#EA580C" : "#f2f2f6", color: barcodeInput.trim() ? "#fff" : "#b0b0c8", fontSize: 12, fontWeight: 800, cursor: barcodeInput.trim() ? "pointer" : "not-allowed" }}>
+                Add
               </button>
             </form>
+          </div>
 
-            {scanFeedback && (
-              <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 7, borderRadius: 9, padding: "7px 10px", background: scanFeedback.ok ? "#ecfdf5" : "#fef2f2", border: `1px solid ${scanFeedback.ok ? "#bbf7d0" : "#fecaca"}`, color: scanFeedback.ok ? "#047857" : "#dc2626", fontSize: 11, fontWeight: 700 }}>
-                {scanFeedback.ok ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
-                {scanFeedback.message}
-              </div>
-            )}
+          {scanFeedback && (
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 7, borderRadius: 11, padding: "8px 12px", background: scanFeedback.ok ? "#ecfdf5" : "#fef2f2", border: `1px solid ${scanFeedback.ok ? "#bbf7d0" : "#fecaca"}`, color: scanFeedback.ok ? "#047857" : "#dc2626", fontSize: 12, fontWeight: 700 }}>
+              {scanFeedback.ok ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+              {scanFeedback.message}
+            </div>
+          )}
 
-            {/* Tab switcher — only a business with services has anything to switch between */}
-            {businessType.bookings && <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 2 }}>
-              {([
-                { id: "all",      label: "All Items", icon: Sparkles },
-                { id: "services", label: "Services",  icon: Scissors },
-                { id: "products", label: businessType.productsLabel, icon: Package  },
-              ] as { id: CatalogTab; label: string; icon: React.ElementType }[]).map(t => {
-                const active = catalogTab === t.id;
+          {/* Category tiles — menu sections (restaurant) or services/products (salon) */}
+          {categoryTiles.length > 1 && (
+            <div className="pos-cat-row" style={{ display: "flex", gap: 10, overflowX: "auto", flexShrink: 0, padding: "2px 2px 4px" }}>
+              {categoryTiles.map(t => {
                 const Icon = t.icon;
                 return (
-                  <button key={t.id} type="button" onClick={() => setCatalogTab(t.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 14px", borderRadius: 9, border: `1.5px solid ${active ? "#EA580C" : "#e8e8f4"}`, background: active ? "#fff7ed" : "#fafafe", color: active ? "#EA580C" : "#9999b0", fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all 0.12s", flexShrink: 0, whiteSpace: "nowrap" }}>
-                    <Icon size={12} /> {t.label}
+                  <button key={t.id} type="button" onClick={t.select} aria-pressed={t.active} className={`pos-cat-tile${t.active ? " is-active" : ""}`}>
+                    <span className="pos-cat-icon"><Icon size={20} strokeWidth={1.8} /></span>
+                    <span className="pos-cat-name">{t.label}</span>
+                    <span className="pos-cat-count">{t.count} item{t.count !== 1 ? "s" : ""}</span>
                   </button>
                 );
               })}
-            </div>}
+            </div>
+          )}
 
-            {/* Section filter — locked to the active dashboard section when one is
-                set (no picker needed, only that section is valid here); shown as
-                an interactive picker otherwise, only once something is tagged. */}
-            {getActiveSection() !== "all" ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                <Lock size={11} color="#EA580C" />
-                <span style={{ fontSize: 11, fontWeight: 700, color: "#EA580C" }}>Showing {getActiveSection()} + unassigned catalog</span>
-              </div>
-            ) : businessType.sections && [...services, ...inventory].some(x => x.section) && (
-              <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", marginTop: 8 }}>
-                {["all", ...getSectionOptions([...services, ...inventory])].map(sec => {
-                  const active = catalogSectionFilter === sec;
-                  return (
-                    <button key={sec} type="button" onClick={() => setCatalogSectionFilter(sec)}
-                      style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${active ? "#EA580C" : "#e8e8f4"}`, background: active ? "#fff7ed" : "#fafafe", color: active ? "#EA580C" : "#9999b0", fontSize: 11, fontWeight: 700, cursor: "pointer", transition: "all 0.12s", flexShrink: 0, whiteSpace: "nowrap" }}>
-                      {sec === "all" ? "All Sections" : sec}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Menu tabs — restaurant mode, once items have menu sections */}
-          {menuCategories.length > 0 && (
-            <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", padding: "10px 16px 0", flexShrink: 0 }}>
-              {["all", ...menuCategories].map(c => {
-                const active = menuTab === c;
+          {/* Section filter — locked to the active dashboard section when one is
+              set (no picker needed, only that section is valid here); shown as
+              an interactive picker otherwise, only once something is tagged. */}
+          {getActiveSection() !== "all" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+              <Lock size={11} color="#EA580C" />
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#EA580C" }}>Showing {getActiveSection()} + unassigned catalog</span>
+            </div>
+          ) : businessType.sections && [...services, ...inventory].some(x => x.section) && (
+            <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", flexShrink: 0 }}>
+              {["all", ...getSectionOptions([...services, ...inventory])].map(sec => {
+                const active = catalogSectionFilter === sec;
                 return (
-                  <button key={c} type="button" onClick={() => setMenuTab(c)} aria-pressed={active}
-                    style={{ padding: "7px 14px", borderRadius: 20, border: `1.5px solid ${active ? "#1d1d2f" : "#e8e8f4"}`, background: active ? "#1d1d2f" : "#fff", color: active ? "#fff" : "#5a5a78", fontSize: 12, fontWeight: 800, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>
-                    {c === "all" ? "All" : c}
+                  <button key={sec} type="button" onClick={() => setCatalogSectionFilter(sec)} className={`pos-chip-toggle${active ? " is-on" : ""}`} style={{ flexShrink: 0, whiteSpace: "nowrap" }}>
+                    {sec === "all" ? "All Sections" : sec}
                   </button>
                 );
               })}
@@ -1579,15 +1597,17 @@ export default function POSPage() {
           )}
 
           {/* Grid */}
-          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 16px" }}>
+          <div className="pos-menu-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "2px 4px 6px 2px" }}>
             {shownItems.length === 0 ? (
-              <div style={{ padding: "80px 24px", textAlign: "center" }}>
+              <div style={{ padding: "80px 24px", textAlign: "center", background: "#fff", borderRadius: 20, border: "1px dashed #e4e4ee" }}>
                 <div style={{ width: 60, height: 60, borderRadius: 18, background: "#f4f4fc", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
                   <Package size={28} color="#d0d0e8" />
                 </div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "#b0b0c8" }}>No items found</div>
-                <div style={{ fontSize: 12, color: "#c8c8d8", marginTop: 6, lineHeight: 1.6 }}>
-                  {!businessType.bookings
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#9999b0" }}>No items found</div>
+                <div style={{ fontSize: 12, color: "#b0b0c8", marginTop: 6, lineHeight: 1.6 }}>
+                  {catalogSearch
+                    ? `Nothing matches “${catalogSearch}”`
+                    : !businessType.bookings
                     ? `Give ${businessType.productsLabel.toLowerCase()} items a selling price to sell them here`
                     : catalogTab === "products"
                     ? "Set retail prices on inventory items to sell them here"
@@ -1595,10 +1615,10 @@ export default function POSPage() {
                 </div>
               </div>
             ) : (
-              <div className="pos-catalog-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 10 }}>
+              <div className="pos-catalog-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(188px, 1fr))", gap: 14 }}>
                 {shownItems.map(item => {
                   const inCartQty = cart.filter(e => e.itemId === item.id).reduce((n, e) => n + e.qty, 0);
-                  const inCart  = inCartQty > 0 ? { qty: inCartQty } : undefined;
+                  const canDecrement = cart.some(e => e.itemId === item.id && !e.firedAt);
                   const hasOptions = optionGroupsFor(item).length > 0;
                   const sizeRange = sizePriceRange(item);
                   const { fg, bg } = catColor(item.category, item.type);
@@ -1607,202 +1627,258 @@ export default function POSPage() {
                   const outOfStock = restaurant
                     ? !!item.unavailable
                     : item.type === "product" && (item.stock ?? 999) === 0;
+                  const lowStock = !restaurant && item.type === "product" && item.stock !== undefined && item.stock > 0 && item.stock <= 3;
+                  const badge = outOfStock
+                    ? { text: restaurant ? "86'd" : "Out of stock", bg: "#dc2626", fg: "#fff" }
+                    : lowStock ? { text: `Only ${item.stock} left`, bg: "#fbbf24", fg: "#422006" }
+                    : hasOptions ? { text: "Options", bg: "#fff", fg: "#1d4ed8" }
+                    : null;
+                  const FallbackIcon = item.type === "service" ? Scissors : restaurant ? menuIcon(item.menuCategory ?? item.name) : Package;
+                  const tag = !restaurant && item.type === "product" && item.stock !== undefined
+                    ? `${item.stock} in stock`
+                    : item.type === "service" ? item.category : item.menuCategory || item.category;
                   return (
-                    <button key={item.id} type="button" className={`pos-catalog-card${inCart ? " is-in-cart" : ""}${outOfStock ? " is-disabled" : ""}`}
-                      onClick={() => !outOfStock && addToCart(item)}
-                      disabled={outOfStock}
-                      style={{
-                        textAlign: "left", border: `2px solid ${inCart ? fg : "#eaeaf4"}`,
-                        borderRadius: 14, padding: "0", background: inCart ? bg : "#fff",
-                        cursor: outOfStock ? "not-allowed" : "pointer", opacity: outOfStock ? 0.45 : 1,
-                        transition: "all 0.13s", position: "relative", overflow: "hidden",
-                        boxShadow: inCart ? `0 0 0 3px ${fg}20` : "none",
-                      }}
-                      onMouseEnter={e => { if (!outOfStock && !inCart) { e.currentTarget.style.borderColor = fg + "80"; e.currentTarget.style.transform = "translateY(-1px)"; e.currentTarget.style.boxShadow = "0 4px 14px rgba(0,0,0,0.08)"; } }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = inCart ? fg : "#eaeaf4"; e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = inCart ? `0 0 0 3px ${fg}20` : "none"; }}
-                    >
-                      {/* Color strip at top */}
-                      <div style={{ height: 4, background: fg, opacity: inCart ? 1 : 0.35, borderRadius: "12px 12px 0 0" }} />
-
-                      <div style={{ padding: "12px 12px 11px" }}>
-                        {/* In-cart qty badge */}
-                        {inCart && (
-                          <div style={{ position: "absolute", top: 12, right: 10, width: 22, height: 22, borderRadius: "50%", background: fg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 900, color: "#fff", boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}>
-                            {inCart.qty}
-                          </div>
-                        )}
-
-                        {/* Photo, falling back to the category icon */}
-                        <div style={{ width: 36, height: 36, borderRadius: 10, background: bg, border: `1px solid ${fg}20`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10, overflow: "hidden" }}>
+                    <div key={item.id} className={`pos-catalog-card${inCartQty > 0 ? " is-in-cart" : ""}${outOfStock ? " is-disabled" : ""}`}>
+                      <button type="button" className="pos-card-hit" onClick={() => !outOfStock && addToCart(item)} disabled={outOfStock} aria-label={`Add ${item.name}`}>
+                        <div className="pos-card-media" style={{ background: bg }}>
                           {item.image
                             // eslint-disable-next-line @next/next/no-img-element
-                            ? <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                            : item.type === "service" ? <Scissors size={16} color={fg} /> : <Package size={16} color={fg} />}
+                            ? <img src={item.image} alt="" />
+                            : <FallbackIcon size={38} color={fg} strokeWidth={1.5} />}
+                          {badge && <span className="pos-card-badge" style={{ background: badge.bg, color: badge.fg }}>{badge.text}</span>}
+                          {inCartQty > 0 && <span className="pos-card-count">{inCartQty}</span>}
                         </div>
-
-                        {/* Name */}
-                        <div style={{ fontSize: 12, fontWeight: 700, color: "#1d1d2f", marginBottom: 4, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                          {item.name}
-                        </div>
-
-                        {/* Price */}
-                        <div style={{ fontSize: 15, fontWeight: 900, color: fg, marginBottom: 5 }}>
-                          {sizeRange
-                            ? (sizeRange[0] === sizeRange[1] ? pkr(sizeRange[0]) : `from ${pkr(sizeRange[0])}`)
-                            : item.variablePrice
-                            ? (item.priceRangeMin && item.priceRangeMax ? `${pkr(item.priceRangeMin)}–${pkr(item.priceRangeMax)}` : "Varies")
-                            : pkr(item.price)}
-                        </div>
-
-                        {/* Badges */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-                          <span style={{ padding: "2px 7px", borderRadius: 20, background: fg + "15", fontSize: 9, fontWeight: 800, color: fg, textTransform: "capitalize", letterSpacing: "0.03em" }}>
-                            {item.type === "service" ? item.category : item.menuCategory || (businessType.bookings ? "product" : item.category)}
+                        <div className="pos-card-name">{item.name}</div>
+                        <div className="pos-card-meta">
+                          <span className="pos-card-price">
+                            {sizeRange
+                              ? (sizeRange[0] === sizeRange[1] ? pkr(sizeRange[0]) : `from ${pkr(sizeRange[0])}`)
+                              : item.variablePrice
+                              ? (item.priceRangeMin && item.priceRangeMax ? `${pkr(item.priceRangeMin)}–${pkr(item.priceRangeMax)}` : "Varies")
+                              : pkr(item.price)}
                           </span>
-                          {hasOptions && (
-                            <span style={{ padding: "2px 7px", borderRadius: 20, background: "#eff6ff", fontSize: 9, fontWeight: 800, color: "#1d4ed8" }}>Options</span>
-                          )}
-                          {restaurant ? (item.unavailable && (
-                            <span style={{ fontSize: 9, fontWeight: 800, color: "#dc2626" }}>86&apos;d</span>
-                          )) : item.type === "product" && item.stock !== undefined && (
-                            <span style={{ fontSize: 9, fontWeight: 600, color: item.stock === 0 ? "#dc2626" : item.stock <= 3 ? "#d97706" : "#9999b0" }}>
-                              {item.stock === 0 ? "Out of stock" : `${item.stock} left`}
-                            </span>
-                          )}
+                          <span className="pos-card-tag">{tag}</span>
                         </div>
-                      </div>
-                    </button>
+                      </button>
+                      {inCartQty > 0 ? (
+                        <div className="pos-card-stepper">
+                          <button type="button" onClick={() => decrementItem(item.id)} disabled={!canDecrement} aria-label={`One less ${item.name}`}>
+                            <Minus size={14} />
+                          </button>
+                          <span>{inCartQty}</span>
+                          <button type="button" onClick={() => addToCart(item)} disabled={outOfStock} aria-label={`One more ${item.name}`}>
+                            <Plus size={14} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button type="button" className="pos-card-add" onClick={() => addToCart(item)} disabled={outOfStock}>
+                          {outOfStock ? "Unavailable" : hasOptions ? "Choose options" : "Add to order"}
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
-
               </div>
             )}
           </div>
+
+          {/* Open orders — restaurant mode: tap one to pick it back up */}
+          {restaurant && openOrders.length > 0 && (
+            <div className="pos-orders-strip">
+              {openOrders.map(o => {
+                const lines = o.lines.filter(l => !l.voided);
+                const qty = lines.reduce((n, l) => n + l.qty, 0);
+                const unsent = lines.some(l => !l.firedAt);
+                const tables = tableNames(o.tableIds, diningTables).join(" + ");
+                return (
+                  <button key={o.id} type="button" onClick={() => resumeOrder(o)} className={`pos-order-chip${o.id === activeOrder?.id ? " is-active" : ""}`}
+                    title={`${orderRef(o, diningTables)} · ${pkr(orderBill(o).total)}`}>
+                    <span className="pos-order-badge">{tables ? tables.replace(/^table\s*/i, "T") : `#${o.number}`}</span>
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span className="pos-order-name">{o.clientName || o.waiterName || ORDER_TYPE_LABEL[o.type]}</span>
+                      <span className="pos-order-sub">{qty} item{qty !== 1 ? "s" : ""} · {pkr(orderBill(o).total)}</span>
+                    </span>
+                    <span className="pos-order-status" style={unsent ? { background: "#fef3c7", color: "#92400e" } : { background: "#ecfdf5", color: "#047857" }}>
+                      {unsent ? "Not sent" : "Kitchen"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        {/* ══════════════════════ PANEL 3: CART ══════════════════════ */}
-        <div className={`pos-surface pos-cart-panel ${posTab !== "cart" ? "pos-panel-hide" : ""}`} style={{ background: "#fff", borderRadius: 16, border: "1px solid #eaeaf4", display: "flex", flexDirection: "column", minHeight: 0, overflowX: "hidden", overflowY: "auto", boxShadow: "0 2px 12px rgba(0,0,0,0.04)" }}>
+        {/* ══════════════════════ ORDER ══════════════════════ */}
+        <div className={`pos-surface pos-cart-panel ${posTab !== "cart" ? "pos-panel-hide" : ""}`} style={{ background: "#fff", borderRadius: 22, border: "1px solid #ececf3", display: "flex", flexDirection: "column", minHeight: 0, overflowX: "hidden", overflowY: "auto" }}>
 
-          {/* Cart header */}
-          <div className="pos-panel-heading" style={{ padding: "14px 16px", borderBottom: "1px solid #f4f4fc", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            <div style={{ width: 30, height: 30, borderRadius: 9, background: totalQty > 0 ? "#fff7ed" : "#f8f8fc", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <ShoppingCart size={14} color={totalQty > 0 ? "#EA580C" : "#c0c0d8"} />
-            </div>
-            <span style={{ fontSize: 13, fontWeight: 800, color: "#1d1d2f", flex: 1 }}>
-              {restaurant && activeOrder ? orderRef(activeOrder, diningTables) : "Cart"}
-              {totalQty > 0 && (
-                <span style={{ marginLeft: 8, background: "#EA580C", color: "#fff", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "2px 7px" }}>
-                  {totalQty}
+          {/* Header — the order, and who it's for */}
+          <div style={{ padding: "18px 18px 14px", display: "flex", alignItems: "flex-start", gap: 8, flexShrink: 0 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 20, fontWeight: 900, color: "#1d1d2f", letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 8, lineHeight: 1.2 }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{orderTitle}</span>
+                {totalQty > 0 && (
+                  <span style={{ background: "#EA580C", color: "#fff", borderRadius: 20, fontSize: 11, fontWeight: 900, padding: "2px 8px", flexShrink: 0 }}>{totalQty}</span>
+                )}
+                {restaurant && rush && (
+                  <span style={{ display: "flex", alignItems: "center", gap: 3, background: "#fef2f2", color: "#dc2626", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "3px 8px", flexShrink: 0 }}>
+                    <Flame size={11} /> RUSH
+                  </span>
+                )}
+              </div>
+              <button type="button" onClick={openCustomer} className="pos-customer-link">
+                <User size={12} style={{ flexShrink: 0 }} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {selectedClient ? selectedClient.name : "Add customer"}
+                  {selectedStaff ? ` · ${selectedStaff.name}` : ""}
                 </span>
-              )}
-            </span>
-            {cart.length > 0 && !cart.some(e => e.firedAt) && (
-              <button type="button" onClick={() => setCart([])}
-                style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid #fee2e2", borderRadius: 8, background: "#fff5f5", cursor: "pointer", padding: "5px 10px", fontSize: 11, fontWeight: 700, color: "#ef4444" }}>
-                <Trash2 size={11} /> Clear
+                <ChevronRight size={12} style={{ flexShrink: 0 }} />
+              </button>
+            </div>
+            {restaurant && activeOrder && (
+              <button type="button" onClick={() => { setCart([]); setSelectedClient(null); setSelectedStaffId(""); setSaleNotes(""); clearOrder(); }}
+                title="Put this order back and start a new one" className="pos-icon-btn" style={{ width: "auto", padding: "0 10px", fontSize: 11, fontWeight: 800 }}>
+                Put back
               </button>
             )}
+            {cart.length > 0 && !cart.some(e => e.firedAt) && (
+              <button type="button" onClick={() => setCart([])} title="Clear the order" aria-label="Clear the order" className="pos-icon-btn pos-icon-btn-danger">
+                <Trash2 size={15} />
+              </button>
+            )}
+            <button type="button" onClick={openCustomer} title={restaurant ? "Customer, waiter & order details" : "Customer, staff & notes"} aria-label="Edit customer and details" className="pos-icon-btn">
+              <Pencil size={15} />
+            </button>
           </div>
 
-          {/* Cart items */}
-          <div className="pos-cart-lines" style={{ flex: cart.length === 0 ? 1 : "1 1 auto", minHeight: cart.length === 0 ? 0 : 96, overflowY: "auto", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* Dine in / Take away / Delivery */}
+          {restaurant && (
+            <div style={{ padding: "0 18px 12px", display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+              <div className="pos-segment" role="group" aria-label="Order type">
+                {([
+                  { id: "dine-in",  icon: UtensilsCrossed },
+                  { id: "takeaway", icon: ShoppingBag },
+                  { id: "delivery", icon: Bike },
+                ] as { id: OrderType; icon: React.ElementType }[]).map(({ id, icon: Icon }) => (
+                  <button key={id} type="button" onClick={() => changeOrderType(id)} aria-pressed={orderType === id} className={orderType === id ? "is-on" : ""}>
+                    <Icon size={14} /> {ORDER_TYPE_LABEL[id]}
+                  </button>
+                ))}
+              </div>
+              {orderType === "dine-in" && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 84px", gap: 6 }}>
+                  <select value={orderTableIds[0] ?? ""} onChange={e => setOrderTableIds(e.target.value ? [e.target.value] : [])} aria-label="Table" className="pos-input">
+                    <option value="">{diningTables.length ? "Choose table…" : "No tables — add them on Tables"}</option>
+                    {diningTables.map(t => {
+                      const busy = openOrders.some(o => o.id !== activeOrder?.id && o.tableIds.includes(t.id));
+                      return <option key={t.id} value={t.id} disabled={busy}>{t.name}{t.area ? ` · ${t.area}` : ""}{busy ? " (occupied)" : ""}</option>;
+                    })}
+                  </select>
+                  <input type="number" min={1} value={guests} onChange={e => setGuests(e.target.value)} placeholder="Guests" aria-label="Guests" className="pos-input" />
+                </div>
+              )}
+              {orderType === "dine-in" && orderTableIds.length > 1 && (
+                <div style={{ fontSize: 11, color: "#9999b0" }}>Merged: {tableNames(orderTableIds, diningTables).join(" + ")}</div>
+              )}
+              {orderType === "delivery" && (
+                <textarea value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} rows={2} placeholder="Delivery address *" aria-label="Delivery address"
+                  className="pos-input" style={{ height: "auto", padding: "8px 12px", resize: "vertical", fontFamily: "inherit" }} />
+              )}
+            </div>
+          )}
+
+          {/* Order lines */}
+          <div className="pos-cart-lines" style={{ flex: cart.length === 0 ? 1 : "1 1 auto", minHeight: cart.length === 0 ? 0 : 96, overflowY: "auto", padding: "2px 14px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
             {cart.length === 0 ? (
               <div className="pos-cart-empty" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "48px 16px", textAlign: "center" }}>
                 <div className="pos-cart-empty-icon" style={{ width: 64, height: 64, borderRadius: 18, background: "#f4f4fc", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
-                  <ShoppingCart size={28} color="#d0d0e8" />
+                  <ShoppingCart size={28} color="#EA580C" />
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#b0b0c8" }}>Your cart is empty</div>
-                <div style={{ fontSize: 12, color: "#c8c8d8", marginTop: 6, lineHeight: 1.6, maxWidth: 180 }}>
-                  {businessType.bookings ? "Click any service or product from the catalog to add it" : `Tap anything on the ${businessType.productsLabel.toLowerCase()} to add it`}
+                <div style={{ fontSize: 14, fontWeight: 800, color: "#5a5a78" }}>No items yet</div>
+                <div style={{ fontSize: 12, color: "#a3a3b8", marginTop: 6, lineHeight: 1.6, maxWidth: 200 }}>
+                  {businessType.bookings ? "Tap any service or product to add it to this sale" : `Tap anything on the ${businessType.productsLabel.toLowerCase()} to add it`}
                 </div>
               </div>
             ) : (
               cart.map(entry => {
-                const c = entry.type === "service" ? "#EA580C" : "#d97706";
+                const stored = inventory.find(i => i.id === entry.itemId);
+                const LineIcon = entry.type === "service" ? Scissors : restaurant ? menuIcon(stored?.menuCategory ?? entry.name) : Package;
                 return (
-                  <div key={entry.cartId}
-                    style={{ borderRadius: 12, border: "1.5px solid #eaeaf4", background: "#fafafe", overflow: "hidden", flexShrink: 0 }}>
-                    {/* Color bar */}
-                    <div style={{ height: 3, background: c }} />
-                    <div style={{ padding: "14px 12px 16px" }}>
+                  <div key={entry.cartId} className={`pos-line${entry.firedAt ? " is-sent" : ""}`}>
+                    <div className="pos-line-thumb">
+                      {stored?.image
+                        // eslint-disable-next-line @next/next/no-img-element
+                        ? <img src={stored.image} alt="" />
+                        : <LineIcon size={22} color="#EA580C" strokeWidth={1.6} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       {/* Name row */}
-                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, marginBottom: 14 }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: "#1d1d2f", lineHeight: 1.3 }}>
-                            {entry.name}
-                            {entry.firedAt && (
-                              <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: "#059669", background: "#ecfdf5", borderRadius: 20, padding: "1px 7px", verticalAlign: "middle" }}>SENT</span>
-                            )}
-                          </div>
-                          {entry.modifiers && entry.modifiers.length > 0 && (
-                            <div style={{ fontSize: 11, fontWeight: 600, color: "#1d4ed8", marginTop: 3, lineHeight: 1.4 }}>{modifierSummary(entry.modifiers)}</div>
-                          )}
-                          {!entry.firedAt && optionGroupsFor(catalogItems.find(i => i.id === entry.itemId) ?? inventoryCatalogItem(entry.itemId)).length > 0 && (
-                            <button type="button" onClick={() => editEntryOptions(entry)}
-                              style={{ marginTop: 3, border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: 11, fontWeight: 700, color: "#1d4ed8", textDecoration: "underline" }}>
-                              Change options
-                            </button>
-                          )}
-                          {restaurant && (entry.firedAt ? (
-                            entry.note ? <div style={{ fontSize: 11, color: "#b45309", marginTop: 3 }}>» {entry.note}</div> : null
-                          ) : noteFor === entry.cartId ? (
-                            <input autoFocus value={entry.note ?? ""} onChange={e => setEntryNote(entry.cartId, e.target.value)}
-                              onBlur={() => setNoteFor(null)} onKeyDown={e => { if (e.key === "Enter") setNoteFor(null); }}
-                              placeholder="Kitchen note — no onions, extra spicy…" aria-label={`Kitchen note for ${entry.name}`}
-                              style={{ marginTop: 5, width: "100%", fontSize: 11, padding: "5px 8px", borderRadius: 7, border: "1px solid #fcd34d", outline: "none", background: "#fffbeb", boxSizing: "border-box" }} />
-                          ) : (
-                            <button type="button" onClick={() => setNoteFor(entry.cartId)}
-                              style={{ marginTop: 4, border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: 11, fontWeight: 700, color: entry.note ? "#b45309" : "#b0b0c8", display: "flex", alignItems: "center", gap: 4, textAlign: "left" }}>
-                              <StickyNote size={11} /> {entry.note || "Add note"}
-                            </button>
-                          ))}
-                          {entry.variablePrice ? (
-                            <div style={{ marginTop: 4 }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                <span style={{ fontSize: 11, color: "#b0b0c8" }}>PKR</span>
-                                <input type="number" value={entry.unitPrice || ""} onChange={(e) => updateUnitPrice(entry.cartId, Number(e.target.value) || 0)}
-                                  placeholder="Enter price" aria-label={`Price for ${entry.name}`}
-                                  style={{ width: 84, fontSize: 12, padding: "3px 6px", borderRadius: 6, border: entry.unitPrice > 0 ? "1px solid #e0dff0" : "1px solid #f59e0b", outline: "none" }} />
-                                <span style={{ fontSize: 11, color: "#b0b0c8" }}>each</span>
-                              </div>
-                              {entry.priceRangeMin && entry.priceRangeMax && (
-                                <div style={{ fontSize: 10, color: "#c8c8d8", marginTop: 3, whiteSpace: "nowrap" }}>
-                                  Range: {pkr(entry.priceRangeMin)} – {pkr(entry.priceRangeMax)}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div style={{ fontSize: 11, color: "#b0b0c8", marginTop: 2 }}>{pkr(entry.unitPrice)} each</div>
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 800, color: "#1d1d2f", lineHeight: 1.3 }}>
+                          {entry.name}
+                          {entry.firedAt && (
+                            <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: "#059669", background: "#ecfdf5", borderRadius: 20, padding: "1px 7px", verticalAlign: "middle" }}>SENT</span>
                           )}
                         </div>
                         <button type="button" onClick={() => removeEntry(entry)}
-                          title={entry.firedAt ? "Void — needs a manager" : "Remove"}
-                          style={{ border: "none", background: entry.firedAt ? "#fef2f2" : "#f8f4ff", borderRadius: 6, cursor: "pointer", width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          title={entry.firedAt ? "Void — needs a manager" : "Remove"} aria-label={entry.firedAt ? `Void ${entry.name}` : `Remove ${entry.name}`}
+                          style={{ border: "none", background: entry.firedAt ? "#fef2f2" : "#f6f6f9", borderRadius: 7, cursor: "pointer", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                           <X size={12} color="#9999b0" />
                         </button>
                       </div>
+                      {entry.modifiers && entry.modifiers.length > 0 && (
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#1d4ed8", marginTop: 3, lineHeight: 1.4 }}>{modifierSummary(entry.modifiers)}</div>
+                      )}
+                      {!entry.firedAt && optionGroupsFor(catalogItems.find(i => i.id === entry.itemId) ?? inventoryCatalogItem(entry.itemId)).length > 0 && (
+                        <button type="button" onClick={() => editEntryOptions(entry)}
+                          style={{ marginTop: 3, border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: 11, fontWeight: 700, color: "#1d4ed8", textDecoration: "underline" }}>
+                          Change options
+                        </button>
+                      )}
+                      {restaurant && (entry.firedAt ? (
+                        entry.note ? <div style={{ fontSize: 11, color: "#b45309", marginTop: 3 }}>» {entry.note}</div> : null
+                      ) : noteFor === entry.cartId ? (
+                        <input autoFocus value={entry.note ?? ""} onChange={e => setEntryNote(entry.cartId, e.target.value)}
+                          onBlur={() => setNoteFor(null)} onKeyDown={e => { if (e.key === "Enter") setNoteFor(null); }}
+                          placeholder="Kitchen note — no onions, extra spicy…" aria-label={`Kitchen note for ${entry.name}`}
+                          style={{ marginTop: 5, width: "100%", fontSize: 11, padding: "5px 8px", borderRadius: 7, border: "1px solid #fcd34d", outline: "none", background: "#fffbeb", boxSizing: "border-box" }} />
+                      ) : (
+                        <button type="button" onClick={() => setNoteFor(entry.cartId)}
+                          style={{ marginTop: 4, border: "none", background: "none", padding: 0, cursor: "pointer", fontSize: 11, fontWeight: 700, color: entry.note ? "#b45309" : "#b0b0c8", display: "flex", alignItems: "center", gap: 4, textAlign: "left" }}>
+                          <StickyNote size={11} /> {entry.note || "Add note"}
+                        </button>
+                      ))}
+                      {entry.variablePrice && (
+                        <div style={{ marginTop: 5 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ fontSize: 11, color: "#b0b0c8" }}>PKR</span>
+                            <input type="number" value={entry.unitPrice || ""} onChange={(e) => updateUnitPrice(entry.cartId, Number(e.target.value) || 0)}
+                              placeholder="Enter price" aria-label={`Price for ${entry.name}`}
+                              style={{ width: 88, fontSize: 12, padding: "4px 7px", borderRadius: 7, border: entry.unitPrice > 0 ? "1px solid #e0dff0" : "1px solid #f59e0b", outline: "none" }} />
+                            <span style={{ fontSize: 11, color: "#b0b0c8" }}>each</span>
+                          </div>
+                          {entry.priceRangeMin && entry.priceRangeMax && (
+                            <div style={{ fontSize: 10, color: "#c8c8d8", marginTop: 3, whiteSpace: "nowrap" }}>
+                              Range: {pkr(entry.priceRangeMin)} – {pkr(entry.priceRangeMax)}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
-                      {/* Qty + total row */}
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        {/* Qty controls */}
-                        <div style={{ display: "flex", alignItems: "center", background: "#fff", border: "1.5px solid #e8e8f4", borderRadius: 10, overflow: "hidden" }}>
-                          <button type="button" onClick={() => updateQty(entry.cartId, -1)} disabled={!!entry.firedAt}
-                            style={{ opacity: entry.firedAt ? 0.35 : 1, width: 34, height: 34, border: "none", background: entry.qty === 1 ? "#fff5f5" : "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.1s" }}
-                            onMouseEnter={e => (e.currentTarget.style.background = entry.qty === 1 ? "#fee2e2" : "#f5f4ff")}
-                            onMouseLeave={e => (e.currentTarget.style.background = entry.qty === 1 ? "#fff5f5" : "#fff")}
-                          >
-                            {entry.qty === 1 ? <Trash2 size={12} color="#ef4444" /> : <Minus size={12} color="#EA580C" />}
+                      {/* Unit price · qty · line total */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                        {!entry.variablePrice && (
+                          <span style={{ fontSize: 12, fontWeight: 800, color: "#EA580C", whiteSpace: "nowrap" }}>{pkr(entry.unitPrice)}</span>
+                        )}
+                        <div className="pos-mini-stepper">
+                          <button type="button" onClick={() => updateQty(entry.cartId, -1)} disabled={!!entry.firedAt} aria-label={entry.qty === 1 ? `Remove ${entry.name}` : `One less ${entry.name}`}>
+                            {entry.qty === 1 ? <Trash2 size={11} color="#ef4444" /> : <Minus size={11} color="#EA580C" />}
                           </button>
-                          <div style={{ width: 36, textAlign: "center", fontSize: 14, fontWeight: 900, color: "#1d1d2f" }}>{entry.qty}</div>
-                          <button type="button" onClick={() => updateQty(entry.cartId, 1)} disabled={!!entry.firedAt}
-                            style={{ opacity: entry.firedAt ? 0.35 : 1, width: 34, height: 34, border: "none", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                            onMouseEnter={e => (e.currentTarget.style.background = "#fff7ed")}
-                            onMouseLeave={e => (e.currentTarget.style.background = "#fff")}
-                          >
-                            <Plus size={12} color="#EA580C" />
+                          <span>{entry.qty}×</span>
+                          <button type="button" onClick={() => updateQty(entry.cartId, 1)} disabled={!!entry.firedAt} aria-label={`One more ${entry.name}`}>
+                            <Plus size={11} color="#EA580C" />
                           </button>
                         </div>
-                        <div style={{ fontSize: 16, fontWeight: 900, color: c }}>{pkr(entry.total)}</div>
+                        <span style={{ marginLeft: "auto", fontSize: 14, fontWeight: 900, color: "#1d1d2f", whiteSpace: "nowrap" }}>{pkr(entry.total)}</span>
                       </div>
                     </div>
                   </div>
@@ -1811,21 +1887,15 @@ export default function POSPage() {
             )}
           </div>
 
-          {/* ── Cart footer ── */}
+          {/* ── Order footer ── */}
           {cart.length > 0 && (
-            <div style={{ borderTop: "1px solid #f4f4fc", padding: "14px 14px 14px", flexShrink: 0 }}>
+            <div style={{ padding: "4px 14px 18px", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
 
-              {/* Summary */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#9999b0", marginBottom: 4 }}>
-                  <span>{cart.length} line item{cart.length !== 1 ? "s" : ""} · {totalQty} unit{totalQty !== 1 ? "s" : ""}</span>
-                  <span style={{ fontWeight: 700, color: "#4a4a6a" }}>{pkr(rawSubtotal)}</span>
-                </div>
-
-                {/* Discount row */}
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 9, background: "#fafafe", border: "1px solid #f0f0f8" }}>
-                  <Tag size={12} color="#d97706" style={{ flexShrink: 0 }} />
-                  <span style={{ fontSize: 11, fontWeight: 600, color: "#9999b0" }}>Discount</span>
+              {/* Discounts & loyalty */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div className="pos-adjust-row">
+                  <Tag size={13} color="#d97706" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#7a7a96" }}>Discount</span>
                   {posRules.staffDiscountRate > 0 && (
                     <button type="button" aria-pressed={staffDiscountOn}
                       onClick={() => {
@@ -1840,57 +1910,43 @@ export default function POSPage() {
                   )}
                   <div style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: "center" }}>
                     <input type="number" min={0} value={discount || ""} onChange={e => { setDiscount(parseDiscountValue(e.target.value)); setStaffDiscountOn(false); }}
-                      placeholder="0"
-                      style={{ width: 72, height: 30, padding: "0 8px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, textAlign: "right", outline: "none", background: "#fff", fontWeight: 700 }} />
-                    <select value={discType} onChange={e => setDiscType(e.target.value as DiscountType)}
-                      style={{ height: 30, borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, padding: "0 6px", outline: "none", background: "#fff", color: "#5a5a78", fontWeight: 700 }}>
+                      placeholder="0" aria-label="Discount"
+                      style={{ width: 72, height: 30, padding: "0 8px", borderRadius: 8, border: "1px solid #e8e8f4", fontSize: 12, textAlign: "right", outline: "none", background: "#fff", fontWeight: 700 }} />
+                    <select value={discType} onChange={e => setDiscType(e.target.value as DiscountType)} aria-label="Discount type"
+                      style={{ height: 30, borderRadius: 8, border: "1px solid #e8e8f4", fontSize: 12, padding: "0 6px", outline: "none", background: "#fff", color: "#5a5a78", fontWeight: 700 }}>
                       <option value="flat">PKR</option>
                       <option value="pct">%</option>
                     </select>
                   </div>
                 </div>
 
-                {discountAmount > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#059669", marginTop: 4, fontWeight: 700, padding: "0 4px" }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Tag size={11} />Discount applied</span>
-                    <span>− {pkr(discountAmount)}</span>
-                  </div>
-                )}
-
                 {/* 2nd discount row — stacks on top of the discount above (e.g. a separate promo/staff discount).
-                    Tucked behind a link until needed: the cart footer has to fit a laptop screen. */}
+                    Tucked behind a link until needed: the order footer has to fit a laptop screen. */}
                 {!showDiscount2 && discount2 === 0 ? (
                   <button type="button" onClick={() => setShowDiscount2(true)}
-                    style={{ marginTop: 4, border: "none", background: "none", padding: "2px 4px", fontSize: 11, fontWeight: 700, color: "#8a8aa6", cursor: "pointer" }}>
+                    style={{ alignSelf: "flex-start", border: "none", background: "none", padding: "0 4px", fontSize: 11, fontWeight: 700, color: "#8a8aa6", cursor: "pointer" }}>
                     + Second discount
                   </button>
                 ) : (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 9, background: "#fafafe", border: "1px solid #f0f0f8", marginTop: 6 }}>
-                  <Tag size={12} color="#d97706" style={{ flexShrink: 0 }} />
-                  <span style={{ fontSize: 11, fontWeight: 600, color: "#9999b0" }}>Discount 2</span>
-                  <div style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: "center" }}>
-                    <input type="number" min={0} value={discount2 || ""} onChange={e => setDiscount2(parseDiscountValue(e.target.value))}
-                      placeholder="0"
-                      style={{ width: 72, height: 30, padding: "0 8px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, textAlign: "right", outline: "none", background: "#fff", fontWeight: 700 }} />
-                    <select value={discType2} onChange={e => setDiscType2(e.target.value as DiscountType)}
-                      style={{ height: 30, borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, padding: "0 6px", outline: "none", background: "#fff", color: "#5a5a78", fontWeight: 700 }}>
-                      <option value="flat">PKR</option>
-                      <option value="pct">%</option>
-                    </select>
-                  </div>
-                </div>
-                )}
-
-                {discountAmount2 > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#059669", marginTop: 4, fontWeight: 700, padding: "0 4px" }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Tag size={11} />Discount 2 applied</span>
-                    <span>− {pkr(discountAmount2)}</span>
+                  <div className="pos-adjust-row">
+                    <Tag size={13} color="#d97706" style={{ flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#7a7a96" }}>Discount 2</span>
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: "center" }}>
+                      <input type="number" min={0} value={discount2 || ""} onChange={e => setDiscount2(parseDiscountValue(e.target.value))}
+                        placeholder="0" aria-label="Second discount"
+                        style={{ width: 72, height: 30, padding: "0 8px", borderRadius: 8, border: "1px solid #e8e8f4", fontSize: 12, textAlign: "right", outline: "none", background: "#fff", fontWeight: 700 }} />
+                      <select value={discType2} onChange={e => setDiscType2(e.target.value as DiscountType)} aria-label="Second discount type"
+                        style={{ height: 30, borderRadius: 8, border: "1px solid #e8e8f4", fontSize: 12, padding: "0 6px", outline: "none", background: "#fff", color: "#5a5a78", fontWeight: 700 }}>
+                        <option value="flat">PKR</option>
+                        <option value="pct">%</option>
+                      </select>
+                    </div>
                   </div>
                 )}
 
                 {/* Loyalty redemption row */}
                 {loyaltyActive(loyaltySettings) && selectedClient?.id && availableLoyaltyPts > 0 && (
-                  <div style={{ marginTop: 8, padding: "10px", borderRadius: 9, background: "#fffbeb", border: "1px solid #fde68a" }}>
+                  <div style={{ padding: "10px", borderRadius: 12, background: "#fffbeb", border: "1px solid #fde68a" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 7 }}>
                       <Gift size={12} color="#d97706" style={{ flexShrink: 0 }} />
                       <span style={{ fontSize: 11, fontWeight: 700, color: "#92400e", flex: 1 }}>Loyalty Points</span>
@@ -1903,7 +1959,7 @@ export default function POSPage() {
                         type="number" min={0} max={availableLoyaltyPts}
                         value={loyaltyRedeem || ""}
                         onChange={e => setLoyaltyRedeem(Math.min(Math.max(0, Number(e.target.value)), availableLoyaltyPts))}
-                        placeholder="0"
+                        placeholder="0" aria-label="Points to redeem"
                         style={{ flex: 1, height: 30, padding: "0 8px", borderRadius: 8, border: "1.5px solid #fde68a", fontSize: 12, textAlign: "right", outline: "none", background: "#fff", fontWeight: 700 }}
                       />
                       <span style={{ fontSize: 11, color: "#92400e", fontWeight: 600 }}>pts</span>
@@ -1912,85 +1968,61 @@ export default function POSPage() {
                         Use All
                       </button>
                       {loyaltyRedeem > 0 && (
-                        <button type="button" onClick={() => setLoyaltyRedeem(0)}
+                        <button type="button" onClick={() => setLoyaltyRedeem(0)} aria-label="Clear points"
                           style={{ width: 24, height: 24, borderRadius: 6, border: "none", background: "#fee2e2", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
                           <X size={11} color="#dc2626" />
                         </button>
                       )}
                     </div>
-                    {loyaltyDiscount > 0 && (
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#d97706", marginTop: 6, fontWeight: 700, padding: "0 2px" }}>
-                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Gift size={11} />Points redeemed</span>
-                        <span>− {pkr(loyaltyDiscount)}</span>
-                      </div>
-                    )}
                   </div>
                 )}
+              </div>
 
+              {/* Summary */}
+              <div className="pos-summary">
+                <div className="pos-summary-row">
+                  <span>Sub Total <span style={{ color: "#b0b0c8" }}>· {totalQty} item{totalQty !== 1 ? "s" : ""}</span></span>
+                  <b>{pkr(rawSubtotal)}</b>
+                </div>
+                {discountAmount > 0 && (
+                  <div className="pos-summary-row" style={{ color: "#059669" }}><span>Discount</span><b style={{ color: "#059669" }}>− {pkr(discountAmount)}</b></div>
+                )}
+                {discountAmount2 > 0 && (
+                  <div className="pos-summary-row" style={{ color: "#059669" }}><span>Discount 2</span><b style={{ color: "#059669" }}>− {pkr(discountAmount2)}</b></div>
+                )}
+                {loyaltyDiscount > 0 && (
+                  <div className="pos-summary-row" style={{ color: "#d97706" }}><span>Points redeemed</span><b style={{ color: "#d97706" }}>− {pkr(loyaltyDiscount)}</b></div>
+                )}
                 {serviceChargeAmount > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#4a4a6a", marginTop: 8, fontWeight: 700, padding: "0 4px" }}>
-                    <span>Service charge ({chargeSettings.serviceChargeRate}%)</span>
-                    <span>+ {pkr(serviceChargeAmount)}</span>
-                  </div>
+                  <div className="pos-summary-row"><span>Service charge {chargeSettings.serviceChargeRate}%</span><b>+ {pkr(serviceChargeAmount)}</b></div>
                 )}
                 {taxAmount > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#4a4a6a", marginTop: 4, fontWeight: 700, padding: "0 4px" }}>
-                    <span>{chargeSettings.taxLabel} ({chargeSettings.taxRate}%)</span>
-                    <span>+ {pkr(taxAmount)}</span>
-                  </div>
+                  <div className="pos-summary-row"><span>{chargeSettings.taxLabel} {chargeSettings.taxRate}%</span><b>+ {pkr(taxAmount)}</b></div>
                 )}
-              </div>
-
-              {restaurant && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8, marginBottom: 12 }}>
-                  <button type="button" onClick={() => saveCurrentOrder(false)} disabled={sendingOrder}
-                    title="Save the order without sending it to the kitchen"
-                    style={{ height: 42, borderRadius: 11, border: "1.5px solid #e8e8f4", background: "#fff", color: "#5a5a78", fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                    <Pause size={14} /> Hold
-                  </button>
-                  <button type="button" onClick={() => saveCurrentOrder(true)} disabled={sendingOrder || !cart.some(e => !e.firedAt)}
-                    style={{ height: 42, borderRadius: 11, border: "none", background: cart.some(e => !e.firedAt) ? "#1d1d2f" : "#e8e8f0", color: cart.some(e => !e.firedAt) ? "#fff" : "#aaaabc", fontSize: 12, fontWeight: 800, cursor: cart.some(e => !e.firedAt) ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                    <Send size={14} /> {sendingOrder ? "Sending…" : "Send to kitchen"}
-                  </button>
-                </div>
-              )}
-
-              {/* Total box */}
-              <div style={{ borderRadius: 13, background: "linear-gradient(135deg,#9A3412,#F97316)", padding: "12px 16px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "0 4px 16px rgba(154,52,18,0.3)" }}>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 2 }}>TOTAL AMOUNT</div>
-                  <div style={{ fontSize: 26, fontWeight: 900, color: "#fff", letterSpacing: "-0.5px", lineHeight: 1 }}>{pkr(total)}</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginBottom: 3 }}>via</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 10px" }}>
-                    {isCredit ? (
-                      <span style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>Pay Later</span>
-                    ) : selectedPayMethod ? (
-                      <>
-                        <selectedPayMethod.icon size={12} color="#fff" />
-                        <span style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>{selectedPayMethod.label}</span>
-                      </>
-                    ) : (
-                      <span style={{ fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.6)" }}>Not selected</span>
-                    )}
-                  </div>
+                <div className="pos-summary-total">
+                  <span style={{ fontSize: 15, fontWeight: 800, color: "#1d1d2f" }}>Total Amount</span>
+                  <span style={{ fontSize: 22, fontWeight: 900, color: "#1d1d2f", letterSpacing: "-0.02em" }}>{pkr(total)}</span>
                 </div>
               </div>
 
-              {/* Payment methods */}
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", marginBottom: 7 }}>
-                  <span style={{ flex: 1, fontSize: 10, fontWeight: 800, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Payment Method</span>
-                  <button type="button" aria-pressed={split}
+              {/* Payment */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <span style={{ flex: 1, fontSize: 11, fontWeight: 800, color: "#9999b0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Payment</span>
+                  <button type="button" aria-pressed={split} className={`pos-chip-toggle${split ? " is-on" : ""}`}
                     onClick={() => {
                       if (split) { setSplit(false); setSplitRows([]); return; }
                       setSplit(true); setIsCredit(false);
                       setSplitRows([{ method: payMethod ?? "cash", amount: "" }, { method: payMethod === "card" ? "cash" : "card", amount: "" }]);
-                    }}
-                    style={{ border: "none", background: "none", padding: 0, fontSize: 11, fontWeight: 800, color: split ? "#EA580C" : "#8a8aa6", cursor: "pointer", textDecoration: "underline" }}>
-                    {split ? "Single payment" : "Split payment"}
+                    }}>
+                    Split
                   </button>
+                  {!split && (
+                    <button type="button" aria-pressed={isCredit} onClick={() => setIsCredit(c => !c)}
+                      className={`pos-chip-toggle${isCredit ? " is-on is-credit" : ""}`} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <Clock size={11} /> Pay later
+                    </button>
+                  )}
                 </div>
                 {split ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -2000,12 +2032,12 @@ export default function POSPage() {
                         <div key={index} style={{ display: "grid", gridTemplateColumns: "1fr 96px 58px 26px", gap: 5, alignItems: "center" }}>
                           <select value={row.method} aria-label={`Payment ${index + 1} method`}
                             onChange={e => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, method: e.target.value as PaymentMethod } : x))}
-                            style={{ height: 34, borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, padding: "0 6px", background: "#fff", fontWeight: 700, color: "#1d1d2f" }}>
+                            style={{ height: 34, borderRadius: 8, border: "1px solid #e8e8f4", fontSize: 12, padding: "0 6px", background: "#fff", fontWeight: 700, color: "#1d1d2f" }}>
                             {PAY_METHODS.map(pm => <option key={pm.value} value={pm.value}>{pm.label}</option>)}
                           </select>
                           <input type="number" min={0} value={row.amount} placeholder="0" aria-label={`Payment ${index + 1} amount`}
                             onChange={e => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, amount: e.target.value } : x))}
-                            style={{ height: 34, padding: "0 8px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, textAlign: "right", fontWeight: 700, boxSizing: "border-box", width: "100%" }} />
+                            style={{ height: 34, padding: "0 8px", borderRadius: 8, border: "1px solid #e8e8f4", fontSize: 12, textAlign: "right", fontWeight: 700, boxSizing: "border-box", width: "100%" }} />
                           <button type="button" onClick={() => setSplitRows(rows => rows.map((x, i) => i === index ? { ...x, amount: String(Math.max(0, total - others)) } : x))}
                             title="Put the rest of the bill on this payment"
                             style={{ height: 34, borderRadius: 8, border: "1px solid #fed7aa", background: "#fff7ed", color: "#c2410c", fontSize: 10, fontWeight: 800, cursor: "pointer" }}>Rest</button>
@@ -2025,24 +2057,24 @@ export default function POSPage() {
                     </div>
                   </div>
                 ) : (
-                <div className="pos-pay-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 4 }}>
-                  {PAY_METHODS.map(pm => {
-                    const Icon = pm.icon;
-                    const sel = payMethod === pm.value;
-                    return (
-                      <button key={pm.value} type="button" onClick={() => setPayMethod(pm.value)}
-                        style={{ height: 34, padding: "0 6px", borderRadius: 9, border: `2px solid ${sel ? pm.color : "#e8e8f4"}`, background: sel ? pm.bg : "#fafafe", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, transition: "all 0.12s", minWidth: 0 }}>
-                        <Icon size={13} color={sel ? pm.color : "#b0b0c8"} style={{ flexShrink: 0 }} />
-                        <span style={{ fontSize: 11, fontWeight: 800, color: sel ? pm.color : "#9999b0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pm.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                  <div className={`pos-pay-grid${isCredit ? " is-muted" : ""}`}>
+                    {PAY_METHODS.map(pm => {
+                      const Icon = pm.icon;
+                      const sel = !isCredit && payMethod === pm.value;
+                      return (
+                        <button key={pm.value} type="button" aria-pressed={sel} onClick={() => { setPayMethod(pm.value); setIsCredit(false); }}
+                          className={`pos-pay-tile${sel ? " is-on" : ""}`} style={{ "--pay": pm.color } as React.CSSProperties}>
+                          <span className="pos-pay-icon"><Icon size={15} /></span>
+                          <span style={{ maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pm.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
                 {!split && payMethod === "cash" && !isCredit && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
                     <input type="number" min={0} value={cashGiven} onChange={e => setCashGiven(e.target.value)} placeholder="Cash received" aria-label="Cash received"
-                      style={{ flex: 1, height: 34, padding: "0 10px", borderRadius: 8, border: "1.5px solid #e8e8f4", fontSize: 12, fontWeight: 700, boxSizing: "border-box" }} />
+                      className="pos-input" style={{ flex: 1 }} />
                     {cashChange !== null && (
                       <span style={{ fontSize: 13, fontWeight: 900, color: cashChange < 0 ? "#dc2626" : "#059669", whiteSpace: "nowrap" }}>
                         {cashChange < 0 ? `${pkr(-cashChange)} short` : `Change ${pkr(cashChange)}`}
@@ -2052,71 +2084,56 @@ export default function POSPage() {
                 )}
               </div>
 
-              {/* Pay Later toggle */}
-              {!split && <button
-                type="button"
-                onClick={() => setIsCredit(c => !c)}
-                style={{
-                  width: "100%", padding: "7px 0", borderRadius: 10, marginBottom: 8,
-                  border: `2px solid ${isCredit ? "#d97706" : "#e8e8f4"}`,
-                  background: isCredit ? "#fffbeb" : "#fafafe",
-                  color: isCredit ? "#d97706" : "#9999b0",
-                  fontSize: 12, fontWeight: 800, cursor: "pointer",
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
-                  transition: "all 0.15s",
-                }}
-              >
-                <Clock size={13} />
-                {isCredit ? "Pay Later — Credit Sale" : "Pay Later / Credit"}
-              </button>}
-
               {hasUnpricedVariable && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#d97706" }}>
+                <div className="pos-warning" style={{ color: "#d97706" }}>
                   <AlertCircle size={13} /> Enter a price for the variable-priced item(s) before checkout
                 </div>
               )}
               {!hasUnpricedVariable && noPaymentSelected && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#d97706" }}>
+                <div className="pos-warning" style={{ color: "#d97706" }}>
                   <AlertCircle size={13} /> {splitProblem ?? "Choose how they're paying"}
                 </div>
               )}
               {creditNeedsCustomer && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#b91c1c" }}>
+                <div className="pos-warning" style={{ color: "#b91c1c" }}>
                   <AlertCircle size={13} /> A credit sale needs a named customer — pick one or add them, so there&apos;s someone to collect from
                 </div>
               )}
               {shiftBlocked && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#b91c1c" }}>
+                <div className="pos-warning" style={{ color: "#b91c1c" }}>
                   <AlertCircle size={13} /> Open the cash drawer on the <Link href="/dashboard/shifts" style={{ color: "#b91c1c" }}>Shifts</Link> page before taking payment
                 </div>
               )}
               {discountNeedsSignOff && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#6d28d9" }}>
+                <div className="pos-warning" style={{ color: "#6d28d9" }}>
                   <AlertCircle size={13} /> A {Math.round(discountPct)}% discount needs a manager to approve it
                 </div>
               )}
-              {/* Complete button */}
+
+              {restaurant && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
+                  <button type="button" onClick={() => saveCurrentOrder(false)} disabled={sendingOrder}
+                    title="Save the order without sending it to the kitchen"
+                    style={{ height: 44, borderRadius: 12, border: "1px solid #e4e4ee", background: "#fff", color: "#5a5a78", fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Pause size={14} /> Hold
+                  </button>
+                  <button type="button" onClick={() => saveCurrentOrder(true)} disabled={sendingOrder || !cart.some(e => !e.firedAt)}
+                    style={{ height: 44, borderRadius: 12, border: "none", background: cart.some(e => !e.firedAt) ? "#1d1d2f" : "#ececf2", color: cart.some(e => !e.firedAt) ? "#fff" : "#aaaabc", fontSize: 12, fontWeight: 800, cursor: cart.some(e => !e.firedAt) ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Send size={14} /> {sendingOrder ? "Sending…" : "Send to kitchen"}
+                  </button>
+                </div>
+              )}
+
+              {/* Complete */}
               <button type="button" onClick={() => completeSale()} disabled={checkoutBlocked}
-                style={{
-                  width: "100%", padding: "14px 0", borderRadius: 13, border: "none",
-                  background: checkoutBlocked ? "#e8e8f0" : isCredit ? "linear-gradient(135deg,#d97706,#f59e0b)" : "linear-gradient(135deg,#9A3412,#F97316)",
-                  color: checkoutBlocked ? "#aaaabc" : "#fff",
-                  fontSize: 15, fontWeight: 900, cursor: checkoutBlocked ? "not-allowed" : "pointer",
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 9,
-                  boxShadow: checkoutBlocked ? "none" : isCredit ? "0 5px 20px rgba(217,119,6,0.40)" : "0 5px 20px rgba(154,52,18,0.42)",
-                  letterSpacing: "-0.01em", transition: "all 0.15s",
-                }}
-                onMouseEnter={e => { if (!completing) e.currentTarget.style.transform = "translateY(-1px)"; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; }}
-              >
+                className={`pos-place-btn${isCredit ? " is-credit" : ""}`}>
                 {completing
                   ? <><RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> Processing…</>
                   : isCredit
                     ? <><Clock size={17} /> Create Credit Invoice</>
-                    : <><ReceiptText size={17} /> Complete Sale &amp; Print</>
+                    : <><ReceiptText size={17} /> Complete Sale · {pkr(total)}</>
                 }
               </button>
-
             </div>
           )}
         </div>
