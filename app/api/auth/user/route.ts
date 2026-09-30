@@ -4,7 +4,7 @@
  * Returns the signed-in user, resolved from the session cookie only. This is
  * also the liveness probe the dashboard polls (see checkServerSession in
  * lib/auth.ts): a 401 with reason "session_expired" is what tells an open tab
- * that its 4-day session has run out, so it can say so and send the user back
+ * that its 7-day session has run out, so it can say so and send the user back
  * to sign in instead of quietly 401-ing every background save.
  *
  * It used to accept ?userId=... and answer for that user without checking any

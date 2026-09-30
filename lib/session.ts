@@ -23,7 +23,7 @@ function getSecret(): string {
  * never drift apart. middleware.ts carries its own copy (it cannot import this
  * module — Edge has no Node crypto) — change both together.
  */
-export const SESSION_DURATION_MS = 4 * 24 * 60 * 60 * 1000; // 4 days
+export const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days, same as Salon Central
 
 // ─── Token ────────────────────────────────────────────────────────────────────
 

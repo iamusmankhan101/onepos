@@ -16,7 +16,7 @@ export default function SignInPage() {
   const [error, setError] = useState("");
   const [rateLocked, setRateLocked] = useState(false);
   const [verifiedMessage, setVerifiedMessage] = useState(false);
-  // Shown when the tab arrived here because its session ran out (4-day expiry,
+  // Shown when the tab arrived here because its session ran out (7-day expiry,
   // a signout elsewhere, or a revoked login) rather than by choice. It is a
   // notice, not a failure, so it gets its own banner instead of the red error.
   const [expiredNotice, setExpiredNotice] = useState(false);
@@ -177,7 +177,7 @@ export default function SignInPage() {
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
                   <Clock size={16} color="#b45309" style={{ flexShrink: 0, marginTop: 1 }} />
                   <div style={{ fontSize: 13, color: "#92400e", fontWeight: 600, lineHeight: 1.45 }}>
-                    Your session has expired. For security, logins last 4 days — please sign in again to keep your sales syncing.
+                    Your session has expired. For security, logins last 7 days — please sign in again to keep your sales syncing.
                   </div>
                 </div>
               </div>

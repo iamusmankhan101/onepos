@@ -22,7 +22,7 @@ const SECRET_MISCONFIGURED_IN_PROD = process.env.NODE_ENV === "production" && !S
 
 // Must match SESSION_DURATION_MS in lib/session.ts — this file cannot import
 // it (that module uses Node crypto, unavailable on the Edge runtime).
-const SESSION_MAX_AGE_SECONDS = 4 * 24 * 60 * 60; // 4 days
+const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
 const DASHBOARD = /^\/dashboard(\/|$)/;
 // The platform-admin console. Only the session is checked here — proving the
@@ -145,7 +145,7 @@ export async function middleware(req: NextRequest) {
   const upgradeCookie = Boolean(!currentToken && legacyToken && userId);
 
   // ── Protect dashboard and admin routes ────────────────────────────────────
-  // A cookie that was sent but did not verify means the 4-day session ran out
+  // A cookie that was sent but did not verify means the 7-day session ran out
   // (or was tampered with) rather than "never signed in" — flag it so the
   // sign-in page can say so instead of silently showing an empty form, and
   // drop the dead cookie so the browser stops re-sending it on every request.

@@ -7,7 +7,7 @@ import { ShoppingCart, ReceiptText, BarChart3, UserCog, Users, WifiOff, AlertTri
 import Sidebar from "@/components/sidebar";
 import { getCurrentUser, checkServerSession, getLastSessionFailure, signOut, ACCOUNT_REFRESHED_EVENT } from "@/lib/auth";
 import { applyAppearanceSettings, SETTINGS_CHANGED_EVENT, reloadSettings, settingsNeedSync } from "@/lib/settings-store";
-import { syncFromDB, syncLocalDataToDB, SESSION_EXPIRED_EVENT, SETTINGS_SYNC_STATE_EVENT } from "@/lib/turso-sync";
+import { syncFromDB, syncLocalDataToDB, SETTINGS_SYNC_STATE_EVENT } from "@/lib/turso-sync";
 import { getStoredStaff, getStoredServices } from "@/lib/storage";
 import { getActiveSection, setActiveSection, getSectionOptions, sectionsEnabled } from "@/lib/sections";
 import { canManageBranches, getActiveLocationFilter, getBusinessLocations, setActiveLocationFilter, type BusinessLocation } from "@/lib/locations";
@@ -231,54 +231,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => window.clearTimeout(timer);
   }, [router, pathname]);
 
-  // Session liveness — getCurrentUser() only reads a local cache and can't tell
-  // the session cookie has died server-side, so a tab left open past the 4-day
-  // expiry would keep rendering while every background save silently 401s.
-  // Checked on mount, every 30 minutes, and whenever the tab is brought back to
-  // the front: a till left open over a long weekend is exactly the case that
-  // expires, and it should say so the moment someone touches it rather than up
-  // to half an hour into the next shift.
+  // Same approach as Salon Central: no polling and no forced sign-out from an
+  // open tab. Middleware already sends any navigation without a valid cookie to
+  // sign-in, which is the only gate needed. This single check on load just
+  // refreshes the cached account (e.g. a plan upgrade), and only acts when the
+  // account itself is gone — then nothing can sync and the user must be told.
   useEffect(() => {
     if (!isReady) return;
     let cancelled = false;
-    let redirecting = false;
-
-    async function verify() {
-      if (cancelled || redirecting) return;
-      const alive = await checkServerSession();
-      if (cancelled || alive || redirecting) return;
-      redirecting = true;
+    checkServerSession().then(async (alive) => {
+      if (cancelled || alive || getLastSessionFailure() !== "account_missing") return;
       await signOut();
-      router.replace(getLastSessionFailure() === "account_missing" ? "/sign-in?missing=1" : "/sign-in?expired=1");
-    }
-
-    function verifyIfVisible() {
-      if (document.visibilityState === "visible") verify();
-    }
-
-    verify();
-    const interval = window.setInterval(verify, 30 * 60 * 1000);
-    window.addEventListener("focus", verifyIfVisible);
-    document.addEventListener("visibilitychange", verifyIfVisible);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-      window.removeEventListener("focus", verifyIfVisible);
-      document.removeEventListener("visibilitychange", verifyIfVisible);
-    };
+      router.replace("/sign-in?missing=1");
+    });
+    return () => { cancelled = true; };
   }, [isReady, router]);
-
-  // A save rejected as unauthenticated means the session died under an open
-  // tab. Rather than let every subsequent write 401 into the console, clear
-  // the local session and send them to sign in.
-  useEffect(() => {
-    async function onExpired() {
-      await signOut();
-      router.replace("/sign-in?expired=1");
-    }
-    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
-    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
-  }, [router]);
 
   // Appearance (brand accent CSS variables)
   useEffect(() => {

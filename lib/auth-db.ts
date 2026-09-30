@@ -585,7 +585,7 @@ export async function isSessionValid(id: string): Promise<boolean> {
  * this table was tracked have no row, and pruneExpiredSessions() deletes rows
  * once they expire, so treating "no row" as revoked would sign people out for
  * bookkeeping reasons rather than real ones. The signed token carries its own
- * 4-day expiry and is checked first everywhere; this adds the one thing the
+ * 7-day expiry and is checked first everywhere; this adds the one thing the
  * token can't express — an explicit revocation (signout, or an admin killing
  * a session) landing on a tab that is still open.
  */
