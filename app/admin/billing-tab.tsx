@@ -179,8 +179,11 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
   const [voidFor, setVoidFor] = useState<SubscriptionPayment | null>(null);
   const [voidReason, setVoidReason] = useState("");
 
-  type Overview = { accounts: BillingAccount[]; summary: BillingSummary; payments: SubscriptionPayment[] };
+  type ServerInfo = { db: string; instance: string; bootedAt: string; region: string | null };
+  type Overview = { accounts: BillingAccount[]; summary: BillingSummary; payments: SubscriptionPayment[]; server?: ServerInfo };
+  const [server, setServer] = useState<ServerInfo | null>(null);
   const apply = useCallback((data: Overview) => {
+    setServer(data.server ?? null);
     setAccounts(data.accounts);
     setSummary(data.summary);
     setPayments(data.payments);
@@ -835,6 +838,11 @@ export default function BillingTab({ refreshKey, recordRequest, onToast }: {
           <input id="bt-void-reason" className="ac-input" autoFocus maxLength={300} placeholder="e.g. Recorded against the wrong account"
             value={voidReason} onChange={(e) => setVoidReason(e.target.value)} />
         </Modal>
+      )}
+      {server && (
+        <div style={{ marginTop: 14, fontSize: 11, color: "#9898b0", fontFamily: "ui-monospace, monospace" }}>
+          db {server.db} · instance {server.instance}{server.region ? ` · ${server.region}` : ""} · up since {server.bootedAt}
+        </div>
       )}
     </>
   );
