@@ -3,6 +3,7 @@
 /**
  * The Inventory page's forms (lib/stock.ts): adding an ingredient, receiving
  * a delivery / purchase order, logging wastage, counting stock, suppliers.
+ * What a delivery leaves unpaid goes on the supplier's account (lib/ledger.ts).
  */
 
 import { useMemo, useState } from "react";
@@ -15,6 +16,9 @@ import {
 } from "@/lib/stock";
 import { getModifierGroups } from "@/lib/menu";
 import { addExpense } from "@/lib/expenses";
+import { addSupplierEntry } from "@/lib/ledger";
+import { addCashMove, getOpenShift } from "@/lib/shifts";
+import type { PaymentMethod } from "@/lib/types";
 import { getStoredInventory, saveInventory } from "@/lib/storage";
 import type { InventoryCategory, InventoryItem, InventoryUnit } from "@/lib/types";
 
@@ -63,7 +67,12 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
-function Buttons({ onCancel, onSave, label, disabled, busy }: { onCancel: () => void; onSave: () => void; label: string; disabled?: boolean; busy?: boolean }) {
+export const PAY_METHOD_OPTIONS: { value: PaymentMethod; label: string }[] = [
+  { value: "cash", label: "Cash" }, { value: "bank", label: "Bank transfer" }, { value: "card", label: "Card" },
+  { value: "jazzcash", label: "JazzCash" }, { value: "easypaisa", label: "EasyPaisa" }, { value: "raast", label: "Raast" },
+];
+
+export function Buttons({ onCancel, onSave, label, disabled, busy }: { onCancel: () => void; onSave: () => void; label: string; disabled?: boolean; busy?: boolean }) {
   const off = disabled || busy;
   return (
     <div style={{ display: "flex", gap: 10, paddingTop: 14, borderTop: "1px solid #f0f0f8" }}>
@@ -75,10 +84,14 @@ function Buttons({ onCancel, onSave, label, disabled, busy }: { onCancel: () => 
 
 // ─── Ingredient ───────────────────────────────────────────────────────────────
 
-export function IngredientModal({ item, suppliers, money, onClose }: {
+export function IngredientModal({ item, suppliers, money, onClose, noun = "ingredient", categories }: {
   item?: InventoryItem;
   suppliers: Supplier[];
   money: (n: number) => string;
+  /** What the item is called — a shop edits a "product". */
+  noun?: string;
+  /** The type picker's choices; unset offers a kitchen's food / drinks / supplies / other. */
+  categories?: InventoryCategory[];
   /** Called with a confirmation message after a save, with nothing on cancel. */
   onClose: (message?: string) => void;
 }) {
@@ -130,7 +143,7 @@ export function IngredientModal({ item, suppliers, money, onClose }: {
   const unitLocked = !!item && (item.currentStock > 0 || usedIn.length > 0);
 
   return (
-    <Modal title={item ? `Edit — ${item.name}` : "Add ingredient"} subtitle={item ? undefined : "Something you stock and use: beans, milk, cups, lids…"} onClose={() => onClose()}>
+    <Modal title={item ? `Edit — ${item.name}` : `Add ${noun}`} subtitle={item ? undefined : "Something you stock and use: beans, milk, cups, lids…"} onClose={() => onClose()}>
       <Field label="Name *"><input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Coffee beans" style={INP} /></Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Stock unit *" hint={unitLocked ? "Locked — stock and recipes are counted in it." : "Recipes can still use g for kg, ml for l."}>
@@ -140,10 +153,12 @@ export function IngredientModal({ item, suppliers, money, onClose }: {
         </Field>
         <Field label="Type">
           <select value={category} onChange={(e) => setCategory(e.target.value as InventoryCategory)} style={INP}>
-            <option value="food">Food</option>
-            <option value="drinks">Drinks</option>
-            <option value="supplies">Packaging & supplies</option>
-            <option value="other">Other</option>
+            {categories ? categories.map((c) => <option key={c} value={c}>{c[0].toUpperCase() + c.slice(1)}</option>) : <>
+              <option value="food">Food</option>
+              <option value="drinks">Drinks</option>
+              <option value="supplies">Packaging & supplies</option>
+              <option value="other">Other</option>
+            </>}
           </select>
         </Field>
       </div>
@@ -170,17 +185,17 @@ export function IngredientModal({ item, suppliers, money, onClose }: {
       {item && (
         confirmDelete ? (
           <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#dc2626" }}>Delete {item.name}? {usedIn.length ? "This ingredient is used in recipes." : ""}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#dc2626" }}>Delete {item.name}? {usedIn.length ? `This ${noun} is used in recipes.` : ""}</div>
             <div style={{ display: "flex", gap: 8 }}>
               <button type="button" onClick={() => setConfirmDelete(false)} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #e8e8f0", background: "#fff", fontSize: 12, fontWeight: 600 }}>Cancel</button>
               <button type="button" onClick={remove} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: "#dc2626", color: "#fff", fontSize: 12, fontWeight: 700 }}>Confirm Delete</button>
             </div>
           </div>
         ) : (
-          <button type="button" onClick={() => setConfirmDelete(true)} style={{ alignSelf: "flex-start", border: "none", background: "none", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>Delete ingredient</button>
+          <button type="button" onClick={() => setConfirmDelete(true)} style={{ alignSelf: "flex-start", border: "none", background: "none", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>Delete {noun}</button>
         )
       )}
-      <Buttons onCancel={() => onClose()} onSave={save} label={item ? "Save" : "Add ingredient"} disabled={!name.trim()} busy={busy} />
+      <Buttons onCancel={() => onClose()} onSave={save} label={item ? "Save" : `Add ${noun}`} disabled={!name.trim()} busy={busy} />
     </Modal>
   );
 }
@@ -219,8 +234,15 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
       : prefill?.length ? prefill.map((p) => draftLine(p.item, String(p.qty)))
       : [draftLine()],
   );
+  const [billNumber, setBillNumber] = useState(po?.billNumber ?? "");
   const [asExpense, setAsExpense] = useState(true);
-  const [paid, setPaid] = useState(true);
+  // How the delivery is paid for: all now, all on the supplier's account, or part of each.
+  const [payMode, setPayMode] = useState<"full" | "credit" | "part">("full");
+  const [partPaid, setPartPaid] = useState("");
+  const [method, setMethod] = useState<PaymentMethod>("cash");
+  const openShift = typeof window === "undefined" ? undefined : getOpenShift();
+  const [fromTill, setFromTill] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const valid = lines.filter((l) => byId.get(l.itemId) && Number(l.qty) > 0);
@@ -251,8 +273,15 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
     return created;
   }
 
+  const paidNow = Math.round(payMode === "full" ? total : payMode === "credit" ? 0 : Math.min(total, Math.max(0, Number(partPaid) || 0)));
+
   async function submit(receive: boolean) {
     if (valid.length === 0) return;
+    if (receive && paidNow < Math.round(total) && !supplierName.trim()) {
+      setProblem("Name the supplier — what isn't paid now goes on their account.");
+      return;
+    }
+    setProblem(null);
     setBusy(true);
     try {
       const supplier = await ensureSupplier(supplierName);
@@ -268,6 +297,7 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
         createdAt: po?.createdAt ?? now,
         expectedOn: expectedOn || undefined,
         receivedAt: receive ? now : undefined,
+        billNumber: billNumber.trim() || undefined,
       };
       if (receive) {
         await recordMovement(
@@ -275,22 +305,36 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
           order.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitCost: l.unitCost, expiresOn: l.expiresOn })),
           { ref: order.number, refId: order.id, note: order.supplierName || undefined, by },
         );
-        const amount = Math.round(purchaseTotal(order));
-        if (asExpense && amount > 0) {
-          await addExpense({
+        // Cash Flow counts money when it leaves: only what is paid now is an
+        // expense today. The rest is owed on the supplier's account and becomes
+        // an expense when it's paid (lib/ledger.ts).
+        let expenseId: string | undefined;
+        if (asExpense && paidNow > 0) {
+          const { expense } = await addExpense({
             date: localDate(),
             category: "supplies",
             description: `Stock purchase ${order.number}${order.supplierName ? ` — ${order.supplierName}` : ""}`,
-            amount,
-            paymentMethod: paid ? "cash" : "",
-            paymentStatus: paid ? "paid" : "pending",
+            amount: paidNow,
+            paymentMethod: method,
+            paymentStatus: "paid",
             notes: order.lines.map((l) => `${l.name} ${fmtQty(l.qty, l.unit)}`).join(", "),
+          });
+          expenseId = expense.id;
+        }
+        const shift = fromTill && method === "cash" && paidNow > 0 ? getOpenShift() : undefined;
+        if (shift) await addCashMove(shift, { type: "out", amount: paidNow, reason: `${order.supplierName || "Supplier"} · ${order.number}`, by });
+        if (supplier && paidNow > 0) {
+          await addSupplierEntry({
+            supplierId: supplier.id, supplierName: supplier.name, kind: "payment", amount: paidNow, method,
+            poId: order.id, poNumber: order.number, note: "Paid on delivery", by,
+            ...(expenseId ? { expenseId } : {}), ...(shift ? { shiftId: shift.id } : {}),
           });
         }
       }
       await savePurchaseOrder(order);
+      const owed = Math.round(purchaseTotal(order)) - paidNow;
       onClose(receive
-        ? `${order.number} received — ${order.lines.length} item${order.lines.length === 1 ? "" : "s"} added to stock`
+        ? `${order.number} received — ${order.lines.length} item${order.lines.length === 1 ? "" : "s"} added to stock${owed > 0 && supplier ? ` · ${money(owed)} on ${supplier.name}'s account` : ""}`
         : `${order.number} saved as ordered`);
     } finally {
       setBusy(false);
@@ -306,7 +350,13 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
           <datalist id="po-suppliers">{suppliers.map((s) => <option key={s.id} value={s.name} />)}</datalist>
         </Field>
         {!receiving && <Field label="Expected on"><input type="date" value={expectedOn} onChange={(e) => setExpectedOn(e.target.value)} style={INP} /></Field>}
+        {receiving && <Field label="Supplier's bill no."><input value={billNumber} onChange={(e) => setBillNumber(e.target.value)} placeholder="Optional" style={INP} /></Field>}
       </div>
+      {!receiving && (
+        <Field label="Supplier's bill no." hint="Their invoice number, if the delivery is here now.">
+          <input value={billNumber} onChange={(e) => setBillNumber(e.target.value)} placeholder="Optional" style={{ ...INP, maxWidth: 240 }} />
+        </Field>
+      )}
 
       <div>
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 90px 100px 130px 30px", gap: 6, fontSize: 10, fontWeight: 800, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
@@ -335,23 +385,46 @@ export function PurchaseModal({ po, prefill, items, suppliers, money, by, onClos
           </button>
           <span style={{ marginLeft: "auto", fontSize: 14, fontWeight: 800, color: "#1a1a2e" }}>Total {money(total)}</span>
         </div>
-        {stocked.length === 0 && <div style={{ fontSize: 12, color: "#9898b0", marginTop: 6 }}>Add ingredients first — they&apos;re what you order.</div>}
+        {stocked.length === 0 && <div style={{ fontSize: 12, color: "#9898b0", marginTop: 6 }}>Add the items you stock first — they&apos;re what you order.</div>}
       </div>
 
       <Field label="Notes"><input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" style={INP} /></Field>
 
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13, color: "#1a1a2e" }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
-          <input type="checkbox" checked={asExpense} onChange={(e) => setAsExpense(e.target.checked)} style={{ accentColor: "#EA580C" }} />
-          On receipt, add to Cash Flow expenses
-        </label>
-        {asExpense && (
-          <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
-            <input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} style={{ accentColor: "#EA580C" }} />
-            Already paid
-          </label>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, borderRadius: 12, background: "#faf9fb", border: "1px solid #f0f0f6" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase", letterSpacing: "0.06em" }}>On receipt, payment</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {([["full", "Paid in full"], ["credit", "On credit"], ["part", "Part paid"]] as const).map(([mode, label]) => (
+            <button key={mode} type="button" onClick={() => setPayMode(mode)} aria-pressed={payMode === mode}
+              style={{ padding: "7px 12px", borderRadius: 8, border: `1.5px solid ${payMode === mode ? "#EA580C" : "#e6e6f0"}`, background: payMode === mode ? "#fff7ed" : "#fff", color: payMode === mode ? "#c2410c" : "#5a5a78", fontSize: 12, fontWeight: 750, cursor: "pointer" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {payMode !== "credit" && (
+          <div style={{ display: "grid", gridTemplateColumns: payMode === "part" ? "1fr 1fr" : "1fr", gap: 8 }}>
+            {payMode === "part" && <input type="number" min={0} value={partPaid} onChange={(e) => setPartPaid(e.target.value)} placeholder="Amount paid now" aria-label="Amount paid now" style={INP} />}
+            <select value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)} aria-label="Paid by" style={INP}>
+              {PAY_METHOD_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </div>
         )}
+        <div style={{ fontSize: 12, color: "#6b6b8a" }}>
+          {paidNow >= Math.round(total) ? `Pays the whole ${money(total)}.` : `${money(paidNow)} now · ${money(Math.round(total) - paidNow)} on ${supplierName.trim() || "the supplier"}'s account.`}
+        </div>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13, color: "#1a1a2e" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
+            <input type="checkbox" checked={asExpense} onChange={(e) => setAsExpense(e.target.checked)} style={{ accentColor: "#EA580C" }} />
+            Enter what&apos;s paid in Cash Flow expenses
+          </label>
+          {openShift && method === "cash" && paidNow > 0 && (
+            <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
+              <input type="checkbox" checked={fromTill} onChange={(e) => setFromTill(e.target.checked)} style={{ accentColor: "#EA580C" }} />
+              Taken from the till
+            </label>
+          )}
+        </div>
       </div>
+      {problem && <div style={{ fontSize: 12, fontWeight: 700, color: "#b91c1c" }}>{problem}</div>}
 
       <div style={{ display: "flex", gap: 10, paddingTop: 14, borderTop: "1px solid #f0f0f8", flexWrap: "wrap" }}>
         <button type="button" onClick={() => onClose()} style={SECONDARY}>Cancel</button>

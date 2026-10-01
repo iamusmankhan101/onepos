@@ -7,8 +7,9 @@
  *     opening float to counting out at close. The branch has at most one open
  *     at a time (it's the drawer, not the person). Sales rung up while it's
  *     open carry its id (Invoice.shiftId), so the close can say how much cash
- *     *should* be in the drawer — float + cash sales − cash refunds + cash paid
- *     in − cash paid out — against what was counted.
+ *     *should* be in the drawer — float + cash sales − cash refunds + udhaar
+ *     collected in cash + cash paid in − cash paid out — against what was
+ *     counted. Udhaar collections (lib/ledger.ts) carry the shift's id too.
  *   • A TimeEntry is one clock-in to clock-out for a staff member, which is
  *     what the hours report adds up.
  */
@@ -60,6 +61,10 @@ export interface ShiftSummary {
   paidOut: number;
   discounts: number;
   byCashier: Record<string, { count: number; total: number }>;
+  /** Udhaar collected from customers during the shift. Missing on summaries frozen before the khata existed. */
+  collected?: number;
+  collectedCount?: number;
+  collectedCash?: number;
 }
 
 export interface TimeEntry {
@@ -172,13 +177,19 @@ export function shiftSummary(shift: CashShift, invoices: Invoice[] = getInvoices
     if (m.type === "in") summary.paidIn += m.amount;
     else summary.paidOut += m.amount;
   }
+  // Read straight from storage: lib/ledger.ts imports this file.
+  const collections = readList<{ kind: string; amount: number; method?: string; shiftId?: string }>("customer_ledger")
+    .filter((e) => e.kind === "payment" && e.shiftId === shift.id);
+  summary.collected = collections.reduce((s, e) => s + e.amount, 0);
+  summary.collectedCount = collections.length;
+  summary.collectedCash = collections.filter((e) => (e.method || "cash") === "cash").reduce((s, e) => s + e.amount, 0);
   return summary;
 }
 
 /** What the drawer should hold now. */
 export function expectedCash(shift: CashShift, invoices?: Invoice[]): number {
   const s = shiftSummary(shift, invoices);
-  return shift.openingFloat + s.cashSales - s.cashRefunds + s.paidIn - s.paidOut;
+  return shift.openingFloat + s.cashSales - s.cashRefunds + (s.collectedCash ?? 0) + s.paidIn - s.paidOut;
 }
 
 export async function closeShift(shift: CashShift, countedCash: number, by: string, notes?: string): Promise<CashShift> {

@@ -31,7 +31,8 @@ import type { ChosenModifier, ModifierGroup } from "./menu";
 
 export type { RecipeLine };
 
-export type MovementType = "sale" | "purchase" | "waste" | "count";
+/** "return": goods sent back to a supplier (lib/ledger.ts). */
+export type MovementType = "sale" | "purchase" | "waste" | "count" | "return";
 
 export interface MovementLine {
   itemId: string;
@@ -97,6 +98,8 @@ export interface PurchaseOrder {
   createdAt: string;
   expectedOn?: string;
   receivedAt?: string;
+  /** The supplier's own bill / invoice number for the delivery. */
+  billNumber?: string;
 }
 
 // ─── Units ────────────────────────────────────────────────────────────────────

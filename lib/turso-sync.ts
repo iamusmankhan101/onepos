@@ -23,6 +23,8 @@ const ENTITIES = [
   "cash_shifts", "time_entries",
   // Edits and deletes of invoices after the sale (lib/invoice-audit.ts).
   "invoice_audit",
+  // Customer udhaar and supplier accounts (lib/ledger.ts).
+  "customer_ledger", "supplier_ledger",
   DELETED_RECORDS_ENTITY,
 ] as const;
 export type Entity = typeof ENTITIES[number];

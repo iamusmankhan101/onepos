@@ -253,10 +253,19 @@ export default function InvoicePrint({
                 <span style={{ fontWeight: 700 }}>{fmt(part.amount)}</span>
               </div>
             )) : (
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
-                <span>{isPaid ? (METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "Paid") : "Balance due"}</span>
-                <span style={{ fontWeight: 700 }}>{fmt(invoice.total)}</span>
-              </div>
+              <>
+                {/* Udhaar: what was paid toward it so far, then what's still owed. */}
+                {!isPaid && (invoice.amountPaid ?? 0) > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
+                    <span>Paid</span>
+                    <span style={{ fontWeight: 700 }}>{fmt(invoice.amountPaid!)}</span>
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
+                  <span>{isPaid ? (METHOD_LABELS[invoice.paymentMethod ?? ""] ?? "Paid") : "Balance due"}</span>
+                  <span style={{ fontWeight: 700 }}>{fmt(isPaid ? invoice.total : Math.max(0, invoice.total - (invoice.amountPaid ?? 0)))}</span>
+                </div>
+              </>
             )}
             {(invoice.refundedAmount ?? 0) > 0 && (
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>

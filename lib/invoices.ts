@@ -89,6 +89,10 @@ export interface Invoice {
   refundedAmount?: number;
   /** Changes made after the sale, oldest first. */
   edits?: InvoiceEdit[];
+  /** Sold on credit (udhaar) — it stays on the customer's khata after it's paid off (lib/ledger.ts). */
+  onCredit?: boolean;
+  /** An unpaid invoice: how much of it has been paid so far, at the till or collected later. */
+  amountPaid?: number;
 }
 
 /** The invoice's payment split into methods — one part unless it was a split payment. */

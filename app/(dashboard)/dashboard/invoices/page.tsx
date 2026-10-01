@@ -20,6 +20,8 @@ import InvoicePrint from "@/components/invoice-print";
 import InvoiceEdit from "@/components/invoice-edit";
 import RefundModal from "@/components/refund-modal";
 import { movementsFor, undoMovement } from "@/lib/stock";
+import { invoiceDue, receiveCustomerPayment } from "@/lib/ledger";
+import { getCurrentUser } from "@/lib/auth";
 import MobilePageHeader from "@/components/mobile-page-header";
 import PageTitle from "@/components/page-title";
 import { fmtCurrency as fmt } from "@/lib/format";
@@ -138,7 +140,7 @@ export default function InvoicesPage() {
       paidCount:    paid.length,
       unpaidCount:  unpaid.length,
       revenue:      paid.reduce((s, i) => s + i.total, 0),
-      outstanding:  unpaid.reduce((s, i) => s + i.total, 0),
+      outstanding:  unpaid.reduce((s, i) => s + invoiceDue(i), 0),
       uniqueClients,
     };
   }, [invoices]);
@@ -160,13 +162,25 @@ export default function InvoicesPage() {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [invoices, search, filterStatus]);
 
-  function confirmMarkPaid(method: PaymentMethod) {
+  async function confirmMarkPaid(method: PaymentMethod) {
     if (!markPaidPromptId) return;
     const id = markPaidPromptId;
-    markInvoicePaid(id, method, markPaidDate);
+    const inv = invoices.find((i) => i.id === id);
+    if (inv?.clientId && invoiceDue(inv) > 0) {
+      // A customer's invoice is settled through their khata, so the payment
+      // shows on their statement and its cash lands in the open drawer.
+      await receiveCustomerPayment({
+        client: { id: inv.clientId, name: inv.clientName }, amount: invoiceDue(inv), method,
+        date: markPaidDate, invoiceIds: [id], note: "Marked paid on Invoices",
+        by: getCurrentUser()?.ownerName || undefined,
+      });
+    } else {
+      markInvoicePaid(id, method, markPaidDate);
+    }
     reload();
     if (viewingInvoice?.id === id) {
-      setViewingInvoice((prev) => prev ? { ...prev, status: "paid", paymentMethod: method, paidDate: markPaidDate } : prev);
+      const fresh = getInvoices().find((i) => i.id === id);
+      setViewingInvoice((prev) => fresh ?? (prev ? { ...prev, status: "paid", paymentMethod: method, paidDate: markPaidDate } : prev));
     }
     setMarkPaidPromptId(null);
   }
@@ -584,6 +598,7 @@ export default function InvoicesPage() {
                     {/* Amount */}
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 800, color: "#1a1a2e" }}>{fmt(inv.total)}</div>
+                      {inv.status === "unpaid" && (inv.amountPaid ?? 0) > 0 && <div style={{ fontSize: 10, fontWeight: 700, color: "#b45309", marginTop: 2 }}>{fmt(invoiceDue(inv))} still due</div>}
                       <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 4, padding: "3px 8px", borderRadius: 20, background: sm.bg, fontSize: 10, fontWeight: 750, color: sm.color, textTransform: "uppercase", letterSpacing: "0.03em" }}>
                         <StatusIcon size={10} /> {sm.label}
                       </div>

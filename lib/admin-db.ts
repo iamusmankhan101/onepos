@@ -150,7 +150,7 @@ const DATA_ENTITIES = [
   "expenses", "attendance", "payouts", "cash_flow_income", "deleted_records",
   "dining_tables", "restaurant_orders", "kitchen_tickets", "modifier_groups",
   "stock_movements", "suppliers", "purchase_orders", "cash_shifts", "time_entries",
-  "invoice_audit", "loyalty_history", "settings",
+  "invoice_audit", "customer_ledger", "supplier_ledger", "loyalty_history", "settings",
 ] as const;
 
 export interface BusinessFootprint {

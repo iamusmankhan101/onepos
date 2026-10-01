@@ -92,6 +92,7 @@ export default function ZReport({ shift, autoPrint, onClose }: {
             {s.discounts > 0 && <Row label="  of which discounts" value={`-${fmt(s.discounts)}`} />}
             <Row label={`Refunds (${s.refundCount})`} value={`-${fmt(s.refunds)}`} />
             <Row label="Net takings" value={fmt(s.sales - s.refunds)} bold />
+            {(s.collected ?? 0) > 0 && <Row label={`Udhaar collected (${s.collectedCount ?? 0})`} value={fmt(s.collected ?? 0)} />}
             <div style={DASH} />
             <div style={{ fontWeight: 800 }}>By payment method</div>
             {Object.entries(s.byMethod).sort((a, b) => b[1] - a[1]).map(([m, v]) => <Row key={m} label={METHOD_LABELS[m] ?? m} value={fmt(v)} />)}
@@ -108,6 +109,7 @@ export default function ZReport({ shift, autoPrint, onClose }: {
             <Row label="Opening float" value={fmt(shift.openingFloat)} />
             <Row label="+ Cash sales" value={fmt(s.cashSales)} />
             {s.cashRefunds > 0 && <Row label="- Cash refunds" value={fmt(s.cashRefunds)} />}
+            {(s.collectedCash ?? 0) > 0 && <Row label="+ Udhaar collected" value={fmt(s.collectedCash ?? 0)} />}
             {s.paidIn > 0 && <Row label="+ Paid in" value={fmt(s.paidIn)} />}
             {s.paidOut > 0 && <Row label="- Paid out" value={fmt(s.paidOut)} />}
             <Row label="Expected in drawer" value={fmt(expected)} bold />

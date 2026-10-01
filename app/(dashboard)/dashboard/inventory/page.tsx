@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * Inventory (restaurant mode): ingredient stock, deliveries and purchase
- * orders, wastage, stock counts, suppliers, and what was used — see
- * lib/stock.ts. Menu items made from a recipe don't appear here; their
- * ingredients do.
+ * Inventory: stock, deliveries and purchase orders, wastage, stock counts,
+ * suppliers, and what was used — see lib/stock.ts. In a restaurant, menu
+ * items made from a recipe don't appear here; their ingredients do. In a
+ * shop every product is stocked, so every product is here.
  */
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Boxes, Plus, Truck, Trash2, ClipboardCheck, Search, AlertTriangle, CalendarClock,
@@ -28,6 +29,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { fmtCurrency as fmt } from "@/lib/format";
 import { openWhatsAppChat } from "@/lib/whatsapp-link";
 import { settingsStore } from "@/lib/settings-store";
+import { useBusinessType } from "@/lib/use-business-type";
 import type { InventoryItem } from "@/lib/types";
 
 type Tab = "stock" | "orders" | "suppliers" | "history";
@@ -47,6 +49,7 @@ const MOVE_LABEL: Record<MovementType, { label: string; color: string; bg: strin
   purchase: { label: "Received",      color: "#047857", bg: "#ecfdf5" },
   waste:    { label: "Wasted",        color: "#b91c1c", bg: "#fef2f2" },
   count:    { label: "Count / adjust", color: "#6b21a8", bg: "#faf5ff" },
+  return:   { label: "Returned to supplier", color: "#b45309", bg: "#fffbeb" },
 };
 
 function rangeStart(range: Range): string {
@@ -79,6 +82,9 @@ function useInventoryData() {
 
 export default function InventoryPage() {
   const { items, movements, suppliers, orders, refresh } = useInventoryData();
+  const businessType = useBusinessType();
+  // A shop adds products (with a selling price and barcode) on the Products page.
+  const shop = !businessType.restaurantMode;
   const [tab, setTab] = useState<Tab>("stock");
   const [filter, setFilter] = useState<StockFilter>("all");
   const [search, setSearch] = useState("");
@@ -222,7 +228,8 @@ export default function InventoryPage() {
         const row = map.get(l.itemId) ?? { name: l.name, unit: l.unit, used: 0, wasted: 0, received: 0, adjusted: 0, usedCost: 0, wastedCost: 0 };
         if (m.type === "sale") { row.used += -l.qty; row.usedCost += l.cost; }
         if (m.type === "waste") { row.wasted += -l.qty; row.wastedCost += l.cost; }
-        if (m.type === "purchase") row.received += l.qty;
+        // Goods sent back to a supplier come off what was received.
+        if (m.type === "purchase" || m.type === "return") row.received += l.qty;
         // Opening stock isn't a correction of anything — leave it out of adjustments.
         if (m.type === "count" && m.note !== "Opening stock") row.adjusted += l.qty;
         map.set(l.itemId, row);
@@ -245,18 +252,20 @@ export default function InventoryPage() {
       <button type="button" style={btn} onClick={() => setWaste({})} disabled={items.length === 0}><Trash2 size={14} /> Wastage</button>
       <button type="button" style={btn} onClick={() => setCounting(true)} disabled={stocked.length === 0}><ClipboardCheck size={14} /> Stock count</button>
       <button type="button" style={btn} onClick={() => setPurchase({})}><Truck size={14} /> Receive / order</button>
-      <button type="button" style={primary} onClick={() => setEditIngredient("new")}><Plus size={14} /> Ingredient</button>
+      {shop
+        ? <Link href="/dashboard/products" style={{ ...primary, textDecoration: "none" }}><Plus size={14} /> {businessType.productLabel}</Link>
+        : <button type="button" style={primary} onClick={() => setEditIngredient("new")}><Plus size={14} /> Ingredient</button>}
     </div>
   );
 
   return (
     <div className="dashboard-polish" style={{ minHeight: "100vh" }}>
-      <MobilePageHeader title="Inventory" subtitle={`${stocked.length} items · ${money(stockValue)}`} action={{ label: "+ Add", onClick: () => setEditIngredient("new") }} />
+      <MobilePageHeader title="Inventory" subtitle={`${stocked.length} items · ${money(stockValue)}`} action={shop ? { label: "+ Add", href: "/dashboard/products" } : { label: "+ Add", onClick: () => setEditIngredient("new") }} />
 
       <div className="dash-page" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div className="desktop-only">
           <PageTitle icon={<Boxes size={24} />} title="Inventory"
-            subtitle="Ingredients and supplies — sales take them out through each item's recipe." right={actions} />
+            subtitle={shop ? "Stock on the shelf — sales take it out, deliveries put it back." : "Ingredients and supplies — sales take them out through each item's recipe."} right={actions} />
         </div>
         <div className="mobile-only" style={{ padding: "0 2px" }}>{actions}</div>
 
@@ -295,7 +304,7 @@ export default function InventoryPage() {
             <div style={{ padding: "12px 14px", borderBottom: "1px solid #f2f2f8", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ position: "relative", flex: "1 1 200px" }}>
                 <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#b0b0c8" }} />
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search ingredients or supplier…"
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={shop ? "Search products or supplier…" : "Search ingredients or supplier…"}
                   style={{ width: "100%", height: 36, padding: "0 10px 0 32px", borderRadius: 10, border: "1.5px solid #e8e8f4", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
               </div>
               {(["all", "low", "expiring"] as StockFilter[]).map((f) => (
@@ -313,11 +322,15 @@ export default function InventoryPage() {
             {stocked.length === 0 ? (
               <div style={{ padding: "48px 20px", textAlign: "center" }}>
                 <Boxes size={30} color="#d0d0e8" />
-                <div style={{ fontSize: 15, fontWeight: 800, color: "#9999b0", marginTop: 10 }}>No ingredients yet</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#9999b0", marginTop: 10 }}>{shop ? "Nothing in stock yet" : "No ingredients yet"}</div>
                 <div style={{ fontSize: 12, color: "#b0b0c8", marginTop: 4, maxWidth: 420, marginInline: "auto", lineHeight: 1.6 }}>
-                  Add what you stock — coffee beans, milk, syrups, cups, lids. Then give each menu item a recipe on the Menu page, and every sale takes its ingredients out.
+                  {shop
+                    ? `Add your ${businessType.productsLabel.toLowerCase()} with their stock on the ${businessType.productsLabel} page — or import a spreadsheet there. They show up here to order, receive and count.`
+                    : "Add what you stock — coffee beans, milk, syrups, cups, lids. Then give each menu item a recipe on the Menu page, and every sale takes its ingredients out."}
                 </div>
-                <button type="button" style={{ ...primary, marginTop: 14 }} onClick={() => setEditIngredient("new")}><Plus size={14} /> Add ingredient</button>
+                {shop
+                  ? <Link href="/dashboard/products" style={{ ...primary, marginTop: 14, textDecoration: "none" }}><Plus size={14} /> Add {businessType.productsLabel.toLowerCase()}</Link>
+                  : <button type="button" style={{ ...primary, marginTop: 14 }} onClick={() => setEditIngredient("new")}><Plus size={14} /> Add ingredient</button>}
               </div>
             ) : shown.length === 0 ? (
               <div style={{ padding: 24, fontSize: 13, color: "#9898b0", textAlign: "center" }}>Nothing matches.</div>
@@ -450,7 +463,7 @@ export default function InventoryPage() {
             </div>
             <div style={card}>
               <div style={{ padding: "12px 14px", borderBottom: "1px solid #f2f2f8", display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
-                <span style={{ fontWeight: 800, color: "#1d1d2f" }}>Ingredient consumption</span>
+                <span style={{ fontWeight: 800, color: "#1d1d2f" }}>{shop ? "Stock movement" : "Ingredient consumption"}</span>
                 <span style={{ color: "#1d4ed8", fontWeight: 700 }}>Used in sales {money(usedTotal)}</span>
                 <span style={{ color: "#b91c1c", fontWeight: 700 }}>Wasted {money(wastedTotal)}</span>
                 {usedTotal + wastedTotal > 0 && <span style={{ color: "#6b6b8a" }}>Waste is {Math.round((wastedTotal / (usedTotal + wastedTotal)) * 1000) / 10}% of what went out</span>}
@@ -485,7 +498,7 @@ export default function InventoryPage() {
             <div style={card}>
               <div style={{ padding: "12px 14px", borderBottom: "1px solid #f2f2f8", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: "#1d1d2f", marginRight: 6 }}>Stock log</span>
-                {(["all", "sale", "purchase", "waste", "count"] as (MovementType | "all")[]).map((t) => (
+                {(["all", "sale", "purchase", "return", "waste", "count"] as (MovementType | "all")[]).map((t) => (
                   <button key={t} type="button" onClick={() => setTypeFilter(t)}
                     style={{ ...btn, height: 30, borderColor: typeFilter === t ? "#EA580C" : "#e6e6f0", background: typeFilter === t ? "#fff7ed" : "#fff", color: typeFilter === t ? "#EA580C" : "#5a5a78" }}>
                     {t === "all" ? "All" : MOVE_LABEL[t].label}
@@ -522,7 +535,8 @@ export default function InventoryPage() {
         )}
       </div>
 
-      {editIngredient && <IngredientModal item={editIngredient === "new" ? undefined : editIngredient} suppliers={suppliers} money={money} onClose={closeAll} />}
+      {editIngredient && <IngredientModal item={editIngredient === "new" ? undefined : editIngredient} suppliers={suppliers} money={money} onClose={closeAll}
+        noun={shop ? businessType.productLabel.toLowerCase() : undefined} categories={shop ? businessType.categories : undefined} />}
       {purchase && <PurchaseModal po={purchase.po} prefill={purchase.prefill} items={items} suppliers={suppliers} money={money} by={by} onClose={closeAll} />}
       {waste && <WasteModal items={items} initialItemId={waste.itemId} money={money} by={by} onClose={closeAll} />}
       {counting && <CountModal items={items} money={money} by={by} onClose={closeAll} />}

@@ -103,6 +103,8 @@ export interface Client {
   notes?: string;
   loyaltyPoints?: number;
   loyaltyPointsEarned?: number;
+  /** Udhaar: the most this customer may owe. The POS warns past it. Unset = no limit. */
+  creditLimit?: number;
   /** Client has opted out of marketing WhatsApp messages (birthday offers, cancellation win-back). Transactional messages (confirmations, reminders) are unaffected. */
   whatsappOptedOut?: boolean;
 }

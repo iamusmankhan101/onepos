@@ -29,9 +29,10 @@ import { billCharges, discountAmounts, getChargeSettings, type DiscountType } fr
 import { recordMovement, saleChanges, tracksStock } from "@/lib/stock";
 import { SHIFTS_CHANGED_EVENT, getOpenShift, type CashShift } from "@/lib/shifts";
 import { discountNeedsApproval, getPosRules } from "@/lib/pos-rules";
+import { customerBalance, receiveCustomerPayment } from "@/lib/ledger";
 import { getCurrentUser } from "@/lib/auth";
 import {
-  ORDER_TYPE_LABEL, fireOrder, getOpenOrders, getOrder, getTables, markOrderPaid, newId,
+  ORDER_TYPE_LABEL, cancelOrder, fireOrder, getOpenOrders, getOrder, getTables, markOrderPaid, newId,
   nextOrderNumber, orderBill, orderRef, saveOrder, stationFor, tableNames, voidLine,
   type Approval, type DiningTable, type KitchenTicket, type OrderLine, type OrderType, type RestaurantOrder,
 } from "@/lib/restaurant";
@@ -320,6 +321,11 @@ export default function POSPage() {
   const router = useRouter();
   const businessType = useBusinessType();
   const restaurant = businessType.restaurantMode;
+  // A shop gets the cash drawer and held bills too. A held bill is an order
+  // that never goes to a kitchen — same record, so it syncs between tills.
+  const operations = businessType.operations;
+  /** How a held order is named here: "Takeaway #12" in a café, "Bill #12" in a shop. */
+  const refOf = (order: RestaurantOrder) => restaurant ? orderRef(order, diningTables) : `Bill #${order.number}`;
   const [activeOrder,   setActiveOrder]   = useState<RestaurantOrder | null>(null);
   const [orderType,     setOrderType]     = useState<OrderType>("takeaway");
   const [orderTableIds, setOrderTableIds] = useState<string[]>([]);
@@ -388,6 +394,9 @@ export default function POSPage() {
 
   // ── Flow ──────────────────────────────────────────────────────────────────
   const [isCredit,         setIsCredit]         = useState(false);
+  // Udhaar: part of a credit sale paid at the till; the rest goes on the khata.
+  const [paidNow,          setPaidNow]          = useState("");
+  const [paidNowMethod,    setPaidNowMethod]    = useState<PaymentMethod>("cash");
   const [completing,       setCompleting]       = useState(false);
   const [printInvoice,     setPrintInvoice]     = useState<Invoice | null>(null);
   const [editingInvoice,   setEditingInvoice]   = useState<Invoice | null>(null);
@@ -505,15 +514,22 @@ export default function POSPage() {
     : Math.round(splitSum) !== total ? `Parts add up to ${pkr(splitSum)} — the bill is ${pkr(total)}`
     : null;
   const noPaymentSelected = split ? !!splitProblem : (!isCredit && !payMethod);
-  const shiftBlocked = restaurant && posRules.requireOpenShift && !openShift;
+  const shiftBlocked = operations && posRules.requireOpenShift && !openShift;
   // An unpaid sale has to be on someone's account, or there's nobody to collect it from.
   const creditNeedsCustomer = isCredit && !selectedClient?.id;
+  const paidNowAmount = isCredit ? Math.max(0, Math.round(Number(paidNow) || 0)) : 0;
+  const paidNowTooMuch = isCredit && paidNowAmount >= total && total > 0;
+  // What the customer owes before this sale, and their limit (Settings live on the khata).
+  const khataBefore = isCredit && selectedClient?.id ? customerBalance(selectedClient.id) : 0;
+  const khataAfter = khataBefore + (isCredit ? total - paidNowAmount : 0);
+  const creditLimit = selectedClient?.creditLimit ?? 0;
+  const overCreditLimit = isCredit && creditLimit > 0 && khataAfter > creditLimit;
   // The staff discount is the owner's own rule, so it never needs sign-off itself.
   const approvableDiscount = (staffDiscountOn && discType === "pct" && discount === posRules.staffDiscountRate ? 0 : discountAmount) + discountAmount2;
   const discountPct = rawSubtotal > 0 ? (approvableDiscount / rawSubtotal) * 100 : 0;
   const signedInRole = typeof window === "undefined" ? undefined : getCurrentUser()?.role;
   const discountNeedsSignOff = signedInRole === "staff" && discountNeedsApproval(discountPct, posRules);
-  const checkoutBlocked = completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked || creditNeedsCustomer;
+  const checkoutBlocked = completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked || creditNeedsCustomer || paidNowTooMuch;
   const cashChange = !split && payMethod === "cash" && Number(cashGiven) > 0 ? Number(cashGiven) - total : null;
 
   // ── Cart ops ──────────────────────────────────────────────────────────────
@@ -707,7 +723,7 @@ export default function POSPage() {
   function startNewSale() {
     setCart([]); setDiscount(0); setDiscount2(0); setLoyaltyRedeem(0); setSaleNotes(""); setPayMethod(null);
     setSelectedClient(null); setClientQ(""); setSelectedStaffId("");
-    setCompleted(false); setLastInvoice(null); setWaStatus("idle"); setIsCredit(false);
+    setCompleted(false); setLastInvoice(null); setWaStatus("idle"); setIsCredit(false); setPaidNow("");
     setSplit(false); setSplitRows([]); setCashGiven(""); setStaffDiscountOn(false); setShowDiscount2(false);
     setSyncFailed(false);
     clearOrder();
@@ -830,10 +846,10 @@ export default function POSPage() {
         if (tickets.length && autoPrintKot) setKotTickets(tickets);
       } else {
         await saveOrder(order);
-        setOrderNotice(`${orderRef(order)} on hold`);
+        setOrderNotice(`${refOf(order)} on hold`);
       }
       setCart([]); setDiscount(0); setDiscount2(0); setLoyaltyRedeem(0); setSaleNotes(""); setPayMethod(null);
-      setSelectedClient(null); setClientQ(""); setSelectedStaffId(""); setIsCredit(false);
+      setSelectedClient(null); setClientQ(""); setSelectedStaffId(""); setIsCredit(false); setPaidNow("");
       setSplit(false); setSplitRows([]); setCashGiven(""); setStaffDiscountOn(false); setShowDiscount2(false);
       clearOrder();
       refreshRestaurant();
@@ -865,7 +881,7 @@ export default function POSPage() {
   // Restaurant setup: tables and open orders, ?order= from the floor plan, and
   // the per-terminal "print kitchen tickets" preference.
   useEffect(() => {
-    if (!restaurant) return;
+    if (!operations) return;
     const t = window.setTimeout(() => {
       refreshRestaurant();
       try { setAutoPrintKot(localStorage.getItem("pointly_pos_autoprint_kot") === "on"); } catch { /* storage blocked */ }
@@ -882,17 +898,17 @@ export default function POSPage() {
     const unsubscribe = subscribeToStoredData(refreshRestaurant);
     return () => { window.clearTimeout(t); unsubscribe(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once the business type is known
-  }, [restaurant]);
+  }, [operations]);
 
   // The cash drawer's shift — opened and closed on the Shifts page, possibly on another till.
   useEffect(() => {
-    if (!restaurant) return;
+    if (!operations) return;
     const load = () => setOpenShift(getOpenShift());
     const t = window.setTimeout(load, 0);
     const unsubscribe = subscribeToStoredData(load);
     window.addEventListener(SHIFTS_CHANGED_EVENT, load);
     return () => { window.clearTimeout(t); unsubscribe(); window.removeEventListener(SHIFTS_CHANGED_EVENT, load); };
-  }, [restaurant]);
+  }, [operations]);
 
   // Option groups — re-read when edited on the Menu page or synced from another device.
   useEffect(() => {
@@ -916,7 +932,7 @@ export default function POSPage() {
     // Mirrors the Complete Sale button's disabled condition — a payment method (or
     // explicit Pay Later/Credit, or a split that adds up) must be chosen, never
     // silently defaulted.
-    if (noPaymentSelected || shiftBlocked || creditNeedsCustomer) return;
+    if (noPaymentSelected || shiftBlocked || creditNeedsCustomer || paidNowTooMuch) return;
     if (discountNeedsSignOff && !discountApproval) { setAskDiscountApproval(true); return; }
     if (restaurant) {
       const problem = orderProblem();
@@ -931,6 +947,10 @@ export default function POSPage() {
         const { order, tickets } = await fireOrder(buildOrder());
         settledOrder = order;
         if (tickets.length && autoPrintKot) setKotTickets(tickets);
+      } else if (activeOrder) {
+        // A shop's held bill, resumed: save it as rung up, then close it below.
+        settledOrder = buildOrder();
+        await saveOrder(settledOrder);
       }
       const today = localDateKey();
       const staffMember = staff.find(s => s.id === selectedStaffId);
@@ -967,8 +987,9 @@ export default function POSPage() {
         ...(openShift && !isCredit ? { shiftId: getOpenShift()?.id ?? openShift.id } : {}),
         ...(discountApproval ? { approvedBy: discountApproval.approvedBy } : {}),
         date: today, status: isCredit ? "unpaid" : "paid",
+        ...(isCredit ? { onCredit: true } : {}),
         notes: [
-          settledOrder ? orderRef(settledOrder) : "",
+          settledOrder && restaurant ? orderRef(settledOrder) : "",
           saleNotes.trim(),
           discountApproval ? `Discount approved by ${discountApproval.approvedBy} — ${discountApproval.reason}` : "",
         ].filter(Boolean).join(" · "),
@@ -986,6 +1007,17 @@ export default function POSPage() {
       if (settledOrder) {
         await markOrderPaid(settledOrder.id, invoice);
         refreshRestaurant();
+      }
+      // Udhaar with part paid now: the payment goes on the khata against this
+      // invoice (and into the open drawer), the rest stays owed.
+      let savedInvoice = invoice;
+      if (isCredit && paidNowAmount > 0 && selectedClient?.id) {
+        await receiveCustomerPayment({
+          client: selectedClient, amount: paidNowAmount, method: paidNowMethod,
+          invoiceIds: [invoice.id], note: "Paid at the till",
+          by: getCurrentUser()?.ownerName || undefined,
+        });
+        savedInvoice = getInvoices().find(i => i.id === invoice.id) ?? invoice;
       }
       // The sale is already final (payment collected, receipt about to send) so a
       // failed sync doesn't block checkout — but it must not go unnoticed the way
@@ -1040,8 +1072,8 @@ export default function POSPage() {
         saveClients(updatedClients);
       }
 
-      setLastInvoice(invoice);
-      setPrintInvoice(invoice);
+      setLastInvoice(savedInvoice);
+      setPrintInvoice(savedInvoice);
       // The WhatsApp receipt is sent from the success banner's button, not
       // opened automatically: a wa.me tab opened after the checkout's awaits
       // lands on a blank page on any till without WhatsApp, after every sale.
@@ -1158,7 +1190,7 @@ export default function POSPage() {
   const business = settingsStore.business as { name: string; phone: string; email: string; address: string; logo?: string };
   const selectedStaff = staff.find(s => s.id === selectedStaffId);
   const orderTitle = !restaurant
-    ? "Current Sale"
+    ? activeOrder ? `Held bill #${activeOrder.number}` : "Current Sale"
     : activeOrder
     ? orderRef(activeOrder, diningTables)
     : orderType === "dine-in" && orderTableIds.length > 0
@@ -1291,6 +1323,28 @@ export default function POSPage() {
       {creditNeedsCustomer && (
         <div className="pos-warning" style={{ color: "#b91c1c" }}>
           <AlertCircle size={13} /> A credit sale needs a named customer — pick one or add them, so there&apos;s someone to collect from
+        </div>
+      )}
+      {isCredit && selectedClient?.id && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 10, borderRadius: 12, background: "#fffbeb", border: "1px solid #fde68a" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 6, alignItems: "center" }}>
+            <input type="number" min={0} value={paidNow} onChange={e => setPaidNow(e.target.value)} placeholder="Paid now (optional)" aria-label="Paid now"
+              className="pos-input" />
+            <select value={paidNowMethod} onChange={e => setPaidNowMethod(e.target.value as PaymentMethod)} aria-label="Paid now by" className="pos-input" disabled={paidNowAmount === 0}>
+              {PAY_METHODS.map(pm => <option key={pm.value} value={pm.value}>{pm.label}</option>)}
+            </select>
+          </div>
+          <div style={{ fontSize: 12, color: "#92400e", lineHeight: 1.6 }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}><span>Owes now</span><b>{pkr(khataBefore)}</b></div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}><span>On the khata from this sale</span><b>+ {pkr(Math.max(0, total - paidNowAmount))}</b></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900 }}><span>Will owe</span><span>{pkr(khataAfter)}</span></div>
+          </div>
+          {paidNowTooMuch && (
+            <div className="pos-warning" style={{ color: "#b91c1c" }}><AlertCircle size={13} /> That covers the whole bill — turn off Pay later and take it as a normal sale</div>
+          )}
+          {overCreditLimit && (
+            <div className="pos-warning" style={{ color: "#b91c1c" }}><AlertCircle size={13} /> Over {selectedClient.name}&apos;s credit limit of {pkr(creditLimit)}</div>
+          )}
         </div>
       )}
       {shiftBlocked && (
@@ -1495,7 +1549,7 @@ export default function POSPage() {
 
         <div style={{ flex: 1 }} />
 
-        {restaurant && (
+        {operations && (
           <Link href="/dashboard/shifts" title={openShift ? "Cash drawer open — manage the shift" : "No shift open — open the cash drawer"}
             className="pos-top-chip" aria-label={openShift ? "Cash drawer open" : "Cash drawer closed"}
             style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 20, padding: "5px 12px", fontSize: 12, fontWeight: 800, textDecoration: "none",
@@ -1510,11 +1564,11 @@ export default function POSPage() {
         )}
 
 
-        {restaurant && (
+        {operations && (
           <button type="button" onClick={() => { refreshRestaurant(); setShowOpenOrders(true); }}
-            className="pos-top-chip" aria-label="Open orders"
+            className="pos-top-chip" aria-label={restaurant ? "Open orders" : "Held bills"}
             style={{ display: "flex", alignItems: "center", gap: 6, border: "1.5px solid #fed7aa", borderRadius: 10, padding: "8px 14px", background: "#fff", color: "#c2410c", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
-            <ListOrdered size={14} /> <span className="pos-chip-text">Open orders</span>
+            <ListOrdered size={14} /> <span className="pos-chip-text">{restaurant ? "Open orders" : "Held bills"}</span>
             {openOrders.length > 0 && <span style={{ background: "#EA580C", color: "#fff", borderRadius: 20, padding: "0 7px", fontSize: 11 }}>{openOrders.length}</span>}
           </button>
         )}
@@ -1860,8 +1914,8 @@ export default function POSPage() {
             )}
           </div>
 
-          {/* Open orders — restaurant mode: tap one to pick it back up */}
-          {restaurant && openOrders.length > 0 && (
+          {/* Open orders (a shop's held bills): tap one to pick it back up */}
+          {operations && openOrders.length > 0 && (
             <div className="pos-orders-strip">
               {openOrders.map(o => {
                 const lines = o.lines.filter(l => !l.voided);
@@ -1870,15 +1924,19 @@ export default function POSPage() {
                 const tables = tableNames(o.tableIds, diningTables).join(" + ");
                 return (
                   <button key={o.id} type="button" onClick={() => resumeOrder(o)} className={`pos-order-chip${o.id === activeOrder?.id ? " is-active" : ""}`}
-                    title={`${orderRef(o, diningTables)} · ${pkr(orderBill(o).total)}`}>
+                    title={`${refOf(o)} · ${pkr(orderBill(o).total)}`}>
                     <span className="pos-order-badge">{tables ? tables.replace(/^table\s*/i, "T") : `#${o.number}`}</span>
                     <span style={{ minWidth: 0, flex: 1 }}>
-                      <span className="pos-order-name">{o.clientName || o.waiterName || ORDER_TYPE_LABEL[o.type]}</span>
+                      <span className="pos-order-name">{o.clientName || o.waiterName || (restaurant ? ORDER_TYPE_LABEL[o.type] : "Walk-in")}</span>
                       <span className="pos-order-sub">{qty} item{qty !== 1 ? "s" : ""} · {pkr(orderBill(o).total)}</span>
                     </span>
-                    <span className="pos-order-status" style={unsent ? { background: "#fef3c7", color: "#92400e" } : { background: "#ecfdf5", color: "#047857" }}>
-                      {unsent ? "Not sent" : "Kitchen"}
-                    </span>
+                    {restaurant ? (
+                      <span className="pos-order-status" style={unsent ? { background: "#fef3c7", color: "#92400e" } : { background: "#ecfdf5", color: "#047857" }}>
+                        {unsent ? "Not sent" : "Kitchen"}
+                      </span>
+                    ) : (
+                      <span className="pos-order-status" style={{ background: "#fef3c7", color: "#92400e" }}>Held</span>
+                    )}
                   </button>
                 );
               })}
@@ -1912,7 +1970,7 @@ export default function POSPage() {
                 <ChevronRight size={12} style={{ flexShrink: 0 }} />
               </button>
             </div>
-            {restaurant && activeOrder && (
+            {operations && activeOrder && (
               <button type="button" onClick={() => { setCart([]); setSelectedClient(null); setSelectedStaffId(""); setSaleNotes(""); clearOrder(); }}
                 title="Put this order back and start a new one" className="pos-icon-btn" style={{ width: "auto", padding: "0 10px", fontSize: 11, fontWeight: 800 }}>
                 Put back
@@ -2158,6 +2216,13 @@ export default function POSPage() {
 
               {summaryBlock}
 
+              {operations && !restaurant && (
+                <button type="button" onClick={() => saveCurrentOrder(false)} disabled={sendingOrder}
+                  title="Park this bill and serve the next customer — pick it back up from Held bills"
+                  style={{ height: 44, borderRadius: 12, border: "1px solid #e4e4ee", background: "#fff", color: "#5a5a78", fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  <Pause size={14} /> {activeOrder ? "Hold again" : "Hold bill"}
+                </button>
+              )}
               {restaurant && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
                   <button type="button" onClick={() => saveCurrentOrder(false)} disabled={sendingOrder}
@@ -2254,10 +2319,10 @@ export default function POSPage() {
         />
       )}
       {/* Order confirmations ("#12 sent to bar", "on hold", "pick a table") as a toast every screen size can see. */}
-      {restaurant && orderNotice && (
+      {operations && orderNotice && (
         <div role="status" aria-live="polite" className="pos-toast"
           style={{ position: "fixed", left: "50%", bottom: 84, transform: "translateX(-50%)", zIndex: 450, display: "flex", alignItems: "center", gap: 8, background: "#1d1d2f", color: "#fff", borderRadius: 14, padding: "12px 18px", fontSize: 13, fontWeight: 700, boxShadow: "0 12px 32px rgba(0,0,0,0.25)", maxWidth: "calc(100vw - 32px)" }}>
-          <ChefHat size={15} color="#fdba74" /> {orderNotice}
+          {restaurant ? <ChefHat size={15} color="#fdba74" /> : <Pause size={15} color="#fdba74" />} {orderNotice}
           <button type="button" onClick={() => setOrderNotice(null)} aria-label="Dismiss" style={{ border: "none", background: "none", color: "#9999b0", cursor: "pointer", display: "flex", padding: 0, marginLeft: 4 }}><X size={14} /></button>
         </div>
       )}
@@ -2299,27 +2364,44 @@ export default function POSPage() {
         <div onClick={() => setShowOpenOrders(false)} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(15,15,30,.45)", display: "flex", justifyContent: "flex-end" }}>
           <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 400, height: "100%", background: "#fff", padding: 20, overflowY: "auto", boxShadow: "-10px 0 40px rgba(0,0,0,.15)" }}>
             <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
-              <div style={{ flex: 1, fontSize: 16, fontWeight: 900, color: "#1d1d2f" }}>Open orders</div>
+              <div style={{ flex: 1, fontSize: 16, fontWeight: 900, color: "#1d1d2f" }}>{restaurant ? "Open orders" : "Held bills"}</div>
               <button type="button" onClick={() => setShowOpenOrders(false)} aria-label="Close" style={{ border: "none", background: "none", cursor: "pointer", color: "#9999b0" }}><X size={18} /></button>
             </div>
             {cart.length > 0 && !activeOrder && (
               <div style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", borderRadius: 9, padding: "8px 10px", marginBottom: 10 }}>
-                The current cart isn&apos;t saved — Hold it first, or opening another order will replace it.
+                The current cart isn&apos;t saved — Hold it first, or opening another {restaurant ? "order" : "bill"} will replace it.
               </div>
             )}
-            {openOrders.length === 0 && <div style={{ fontSize: 13, color: "#9999b0" }}>No open orders.</div>}
+            {openOrders.length === 0 && <div style={{ fontSize: 13, color: "#9999b0" }}>{restaurant ? "No open orders." : "No held bills."}</div>}
             {openOrders.map(o => (
-              <button key={o.id} type="button" onClick={() => loadOrder(o)}
-                style={{ width: "100%", textAlign: "left", padding: "11px 12px", borderRadius: 12, border: `1.5px solid ${o.id === activeOrder?.id ? "#EA580C" : "#ececf4"}`, background: "#fff", marginBottom: 8, cursor: "pointer", fontFamily: "inherit" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: "#1d1d2f", flex: 1 }}>{orderRef(o, diningTables)}</span>
-                </div>
-                <div style={{ fontSize: 11, color: "#9999b0", marginTop: 3 }}>
-                  {ORDER_TYPE_LABEL[o.type]} · {o.lines.filter(l => !l.voided).length} items · {pkr(orderBill(o).total)}
-                  {o.lines.some(l => !l.voided && !l.firedAt) ? " · not all sent" : ""}
-                  {o.waiterName ? ` · ${o.waiterName}` : ""}
-                </div>
-              </button>
+              <div key={o.id} style={{ display: "flex", gap: 6, alignItems: "stretch", marginBottom: 8 }}>
+                <button type="button" onClick={() => loadOrder(o)}
+                  style={{ flex: 1, minWidth: 0, textAlign: "left", padding: "11px 12px", borderRadius: 12, border: `1.5px solid ${o.id === activeOrder?.id ? "#EA580C" : "#ececf4"}`, background: "#fff", cursor: "pointer", fontFamily: "inherit" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 14, fontWeight: 900, color: "#1d1d2f", flex: 1 }}>{refOf(o)}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#9999b0", marginTop: 3 }}>
+                    {restaurant ? `${ORDER_TYPE_LABEL[o.type]} · ` : ""}{o.lines.filter(l => !l.voided).length} items · {pkr(orderBill(o).total)}
+                    {restaurant && o.lines.some(l => !l.voided && !l.firedAt) ? " · not all sent" : ""}
+                    {!restaurant && o.clientName ? ` · ${o.clientName}` : ""}
+                    {o.waiterName ? ` · ${o.waiterName}` : ""}
+                    {!restaurant ? ` · held ${new Date(o.createdAt).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })}` : ""}
+                  </div>
+                </button>
+                {/* A shop's held bill never reached a kitchen, so it can simply be thrown away. */}
+                {!restaurant && (
+                  <button type="button" aria-label={`Discard ${refOf(o)}`} title="Discard this held bill"
+                    onClick={async () => {
+                      if (!window.confirm(`Discard ${refOf(o)}? Its items go back on the shelf — nothing was sold.`)) return;
+                      await cancelOrder(o);
+                      if (o.id === activeOrder?.id) { setCart([]); clearOrder(); }
+                      refreshRestaurant();
+                    }}
+                    style={{ width: 40, borderRadius: 12, border: "1.5px solid #fecaca", background: "#fef2f2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Trash2 size={14} color="#dc2626" />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </div>

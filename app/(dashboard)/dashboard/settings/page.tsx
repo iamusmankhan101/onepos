@@ -35,14 +35,15 @@ const SECTIONS: { id: string; label: string; icon: typeof Store; ownerOnly?: boo
 
 // Only the modules this build ships. "dashboard" is added server-side to every
 // staff login (it is what /dashboard itself resolves to), so it isn't listed.
-const PERMISSION_OPTIONS: { key: string; label: string; restaurantOnly?: boolean }[] = [
+const PERMISSION_OPTIONS: { key: string; label: string; needs?: "restaurantMode" | "operations" }[] = [
   { key: "pos",       label: "POS"       },
-  { key: "tables",    label: "Tables",  restaurantOnly: true },
-  { key: "kitchen",   label: "Kitchen", restaurantOnly: true },
+  { key: "tables",    label: "Tables",  needs: "restaurantMode" },
+  { key: "kitchen",   label: "Kitchen", needs: "restaurantMode" },
   { key: "products",  label: "Products"  },
-  { key: "inventory", label: "Inventory", restaurantOnly: true },
-  { key: "shifts",    label: "Shifts",    restaurantOnly: true },
+  { key: "inventory", label: "Inventory", needs: "operations" },
+  { key: "shifts",    label: "Shifts",    needs: "operations" },
   { key: "clients",   label: "Clients"   },
+  { key: "ledger",    label: "Khata",     needs: "operations" },
   { key: "loyalty",   label: "Loyalty"   },
   { key: "invoices",  label: "Invoices"  },
   { key: "revenue",   label: "Revenue"   },
@@ -673,7 +674,7 @@ function PosRulesSection() {
         <input type="number" min={0} max={100} step="1" value={form.discountApprovalOver} placeholder="e.g. 10"
           onChange={e => setForm(f => ({ ...f, discountApprovalOver: e.target.value }))} style={{ ...inp, maxWidth: 160 }} />
       </Field>
-      {businessType.restaurantMode && (
+      {businessType.operations && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: "#f9f9fb", borderRadius: 10 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>Require an open shift to sell</div>
@@ -717,10 +718,11 @@ function buildAccessDrafts(staff: Staff[], users: AuthUser[], branchList: Busine
 
 function StaffAccess() {
   const businessType = useBusinessType();
-  // Restaurant screens only exist for a restaurant or café; the rest keep the
+  // Tables and Kitchen only exist for a restaurant or café, Inventory and
+  // Shifts for anything selling from stock; the rest keep the
   // business type's own names (a café's "Products" is its "Menu").
   const permissionOptions = PERMISSION_OPTIONS
-    .filter((option) => !option.restaurantOnly || businessType.restaurantMode)
+    .filter((option) => !option.needs || businessType[option.needs])
     .map((option) => ({
       ...option,
       label: option.key === "products" ? businessType.productsLabel

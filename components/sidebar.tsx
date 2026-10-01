@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   UserCog, BarChart3, Banknote, Settings, ReceiptText, ShoppingCart, Package, Users,
-  X, LogOut, ChevronDown, Shield, Gift, LayoutGrid, ChefHat, Boxes, Timer, CreditCard,
+  X, LogOut, ChevronDown, Shield, Gift, LayoutGrid, ChefHat, Boxes, Timer, CreditCard, BookOpen,
 } from "lucide-react";
 import { AuthUser, getCurrentUser, signOut } from "@/lib/auth";
 import Wordmark from "@/components/wordmark";
@@ -14,17 +14,18 @@ import { useBusinessType } from "@/lib/use-business-type";
 
 const NAV_GROUPS: {
   label: string;
-  items: { href: string; icon: React.ElementType; label: string; restaurantOnly?: boolean }[];
+  items: { href: string; icon: React.ElementType; label: string; needs?: "restaurantMode" | "operations" }[];
 }[] = [
   {
     label: "Sales",
     items: [
       { href: "/dashboard/pos",      icon: ShoppingCart, label: "POS"      },
-      { href: "/dashboard/tables",   icon: LayoutGrid,   label: "Tables",  restaurantOnly: true },
-      { href: "/dashboard/kitchen",  icon: ChefHat,      label: "Kitchen", restaurantOnly: true },
+      { href: "/dashboard/tables",   icon: LayoutGrid,   label: "Tables",  needs: "restaurantMode" },
+      { href: "/dashboard/kitchen",  icon: ChefHat,      label: "Kitchen", needs: "restaurantMode" },
       { href: "/dashboard/products", icon: Package,      label: "Products" },
-      { href: "/dashboard/inventory", icon: Boxes,       label: "Inventory", restaurantOnly: true },
+      { href: "/dashboard/inventory", icon: Boxes,       label: "Inventory", needs: "operations" },
       { href: "/dashboard/clients",  icon: Users,        label: "Clients"  },
+      { href: "/dashboard/ledger",   icon: BookOpen,     label: "Khata", needs: "operations" },
       { href: "/dashboard/loyalty",  icon: Gift,         label: "Loyalty"  },
       { href: "/dashboard/invoices", icon: ReceiptText,  label: "Invoices" },
     ],
@@ -35,7 +36,7 @@ const NAV_GROUPS: {
       { href: "/dashboard/revenue",   icon: BarChart3, label: "Revenue"   },
       { href: "/dashboard/cash-flow", icon: Banknote,  label: "Cash Flow" },
       { href: "/dashboard/staff",     icon: UserCog,   label: "Staff"     },
-      { href: "/dashboard/shifts",    icon: Timer,     label: "Shifts", restaurantOnly: true },
+      { href: "/dashboard/shifts",    icon: Timer,     label: "Shifts", needs: "operations" },
     ],
   },
 ];
@@ -322,7 +323,7 @@ export default function Sidebar({ isOpen, onClose }: { isOpen?: boolean; onClose
         <nav className="sb-nav" style={{ flex: 1, padding: "6px 8px 8px", overflowY: "auto" }}>
           {NAV_GROUPS.map((group) => {
             const visibleItems = group.items.filter((item) =>
-              canAccess(item.href) && (!item.restaurantOnly || businessType.restaurantMode));
+              canAccess(item.href) && (!item.needs || businessType[item.needs]));
             if (visibleItems.length === 0) return null;
             return (
               <div key={group.label}>

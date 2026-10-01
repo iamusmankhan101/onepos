@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Shifts (restaurant mode): the cash drawer — open with a float, pay in / out,
+ * Shifts (restaurants, cafés and shops): the cash drawer — open with a float, pay in / out,
  * close with a count and a Z report — the staff time clock, and who sold what.
  * See lib/shifts.ts.
  */
@@ -22,6 +22,7 @@ import { getInvoices, localDateKey, type Invoice } from "@/lib/invoices";
 import { getStoredStaff, subscribeToStoredData } from "@/lib/storage";
 import { getCurrentUser } from "@/lib/auth";
 import { fmtCurrency as fmt } from "@/lib/format";
+import { useBusinessType } from "@/lib/use-business-type";
 import { roleLabel } from "@/lib/staff-roles";
 import type { Staff } from "@/lib/types";
 
@@ -69,6 +70,7 @@ export default function ShiftsPage() {
   const [closing, setClosing] = useState<{ counted: string; notes: string } | null>(null);
   const [report, setReport] = useState<{ shift: CashShift; print?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
+  const businessType = useBusinessType();
   const [tab, setTab] = useState<Tab>("history");
   const [range, setRange] = useState<Range>("7d");
 
@@ -187,7 +189,7 @@ export default function ShiftsPage() {
                   {[
                     ["Sales", fmt(live.sales), `${live.salesCount} sale${live.salesCount === 1 ? "" : "s"}`],
                     ["Refunds", fmt(live.refunds), `${live.refundCount}`],
-                    ["Cash sales", fmt(live.cashSales), `float ${fmt(current.openingFloat)}`],
+                    ["Cash sales", fmt(live.cashSales), `float ${fmt(current.openingFloat)}${live.collectedCash ? ` · udhaar in ${fmt(live.collectedCash)}` : ""}`],
                     ["Expected cash", fmt(liveExpected), live.paidIn || live.paidOut ? `in ${fmt(live.paidIn)} · out ${fmt(live.paidOut)}` : "in the drawer now"],
                   ].map(([label, value, sub]) => (
                     <div key={label} style={{ padding: "10px 12px", borderRadius: 11, background: "#f7f7fb" }}>
@@ -324,7 +326,7 @@ export default function ShiftsPage() {
 
         {tab === "sales" && (
           <div className="shift-grid">
-            {([["Credited to (waiter / server)", salesByStaff.credited], ["Rung up by (cashier)", salesByStaff.cashiers]] as const).map(([title, rows]) => (
+            {([[businessType.restaurantMode ? "Credited to (waiter / server)" : "Credited to (salesperson)", salesByStaff.credited], ["Rung up by (cashier)", salesByStaff.cashiers]] as const).map(([title, rows]) => (
               <div key={title} style={card}>
                 <div style={{ padding: "12px 14px", fontSize: 13, fontWeight: 800, color: "#1d1d2f", borderBottom: "1px solid #f2f2f8" }}>{title}</div>
                 {rows.length === 0 && <div style={{ padding: 20, fontSize: 13, color: "#9898b0", textAlign: "center" }}>No sales in this period.</div>}

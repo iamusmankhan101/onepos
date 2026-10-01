@@ -52,6 +52,12 @@ export interface BusinessTypeDefinition {
    */
   restaurantMode: boolean;
   /**
+   * Back-office for a business that sells from stock: the Inventory screen
+   * (stock, suppliers, purchase orders, wastage, counts), the Shifts screen
+   * (cash drawer, day closing) and held bills on the POS.
+   */
+  operations: boolean;
+  /**
    * Appointments and a service menu — a salon's bread and butter. Off, the
    * screens stop talking about appointments, services and specialties.
    */
@@ -91,6 +97,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     roleSeed: SALON_ROLES,
     beautyProfile: true,
     restaurantMode: false,
+    operations: false,
     bookings: true,
     sections: true,
     salesCountLabel: "Appointments",
@@ -111,6 +118,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     roleSeed: ["owner", "manager", "chef", "cook", "waiter", "cashier", "kitchen-helper"],
     beautyProfile: false,
     restaurantMode: true,
+    operations: true,
     bookings: false,
     sections: false,
     salesCountLabel: "Orders",
@@ -131,6 +139,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     roleSeed: ["owner", "manager", "barista", "baker", "cashier", "server"],
     beautyProfile: false,
     restaurantMode: true,
+    operations: true,
     bookings: false,
     sections: false,
     salesCountLabel: "Orders",
@@ -139,9 +148,9 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
   },
   retail: {
     id: "retail",
-    name: "Retail / Mart",
+    name: "Retail / Grocery",
     shortName: "Retail",
-    blurb: "Shops, marts and groceries — with barcode scanning and stock alerts.",
+    blurb: "General stores, marts and groceries — barcode till, stock, suppliers and day closing.",
     exampleName: "Raza Mart",
     productsLabel: "Products",
     productLabel: "Product",
@@ -151,6 +160,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     roleSeed: ["owner", "manager", "cashier", "sales-associate", "stock-keeper"],
     beautyProfile: false,
     restaurantMode: false,
+    operations: true,
     bookings: false,
     sections: false,
     salesCountLabel: "Sales",
@@ -171,6 +181,7 @@ export const BUSINESS_TYPES: Record<BusinessTypeId, BusinessTypeDefinition> = {
     roleSeed: SALON_ROLES,
     beautyProfile: true,
     restaurantMode: false,
+    operations: false,
     bookings: true,
     sections: true,
     salesCountLabel: "Appointments",
