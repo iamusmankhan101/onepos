@@ -3,7 +3,9 @@
  *
  * Till controls from Settings → POS Rules (settingsStore.posRules): the staff
  * discount, how big a discount a cashier may give before a manager has to
- * approve it, and whether a sale needs the cash drawer's shift to be open.
+ * approve it, whether a sale needs the cash drawer's shift to be open, and
+ * (restaurant mode) whether a dish sells out by itself when an ingredient runs
+ * out (lib/stock.ts shortIngredient).
  */
 
 import { settingsStore } from "./settings-store";
@@ -12,6 +14,8 @@ export interface PosRules {
   staffDiscountRate: number;
   discountApprovalOver: number;
   requireOpenShift: boolean;
+  /** Off by default: a menu whose ingredient stock was never entered would all read as sold out. */
+  autoSoldOut: boolean;
 }
 
 export function getPosRules(): PosRules {
@@ -24,6 +28,7 @@ export function getPosRules(): PosRules {
     staffDiscountRate: pct(r.staffDiscountRate),
     discountApprovalOver: pct(r.discountApprovalOver),
     requireOpenShift: r.requireOpenShift === true,
+    autoSoldOut: r.autoSoldOut === true,
   };
 }
 

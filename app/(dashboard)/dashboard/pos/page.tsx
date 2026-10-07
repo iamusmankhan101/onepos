@@ -21,12 +21,12 @@ import KotPrint from "@/components/kot-print";
 import ManagerApproval from "@/components/manager-approval";
 import CustomizeSheet from "@/components/customize-sheet";
 import {
-  MENU_CHANGED_EVENT, defaultSelection, getModifierGroups, groupsForItem, lineDescription, sizeGroup, sizePriceRange,
+  MENU_CHANGED_EVENT, SIZE_GROUP_ID, defaultSelection, getModifierGroups, groupsForItem, lineDescription, sizeGroup, sizePriceRange,
   modifierSummary, modifiersTotal, priceForOrderType, sameModifiers, selectionFromModifiers,
   type ChosenModifier, type ModifierGroup,
 } from "@/lib/menu";
 import { billCharges, discountAmounts, getChargeSettings, type DiscountType } from "@/lib/charges";
-import { recordMovement, saleChanges, tracksStock } from "@/lib/stock";
+import { recordMovement, saleChanges, shortIngredient, tracksStock } from "@/lib/stock";
 import { SHIFTS_CHANGED_EVENT, getOpenShift, type CashShift } from "@/lib/shifts";
 import { discountNeedsApproval, getPosRules } from "@/lib/pos-rules";
 import { customerBalance, receiveCustomerPayment } from "@/lib/ledger";
@@ -532,9 +532,45 @@ export default function POSPage() {
   const checkoutBlocked = completing || hasUnpricedVariable || noPaymentSelected || shiftBlocked || creditNeedsCustomer || paidNowTooMuch;
   const cashChange = !split && payMethod === "cash" && Number(cashGiven) > 0 ? Number(cashGiven) - total : null;
 
+  // ── Automatic sold-out (Settings → POS rules) ─────────────────────────────
+  // Stock only comes off when an order is paid, so what's already promised —
+  // this cart and every other open order's live lines — is set aside first.
+  const autoSoldOut = restaurant && posRules.autoSoldOut;
+  const committedLines = useMemo(() => !autoSoldOut ? [] : [
+    ...openOrders.filter(o => o.id !== activeOrder?.id).flatMap(o => o.lines.filter(l => !l.voided)),
+    ...cart.filter(e => e.type === "product"),
+  ], [autoSoldOut, openOrders, activeOrder, cart]);
+  /** The ingredient that runs short if `extra` joins the order (in place of cart line `without`), or null. */
+  const shortBy = useCallback((extra: { itemId: string; qty: number; modifiers?: ChosenModifier[] }[], without?: string) => {
+    if (!autoSoldOut) return null;
+    const committed = without ? committedLines.filter(l => !("cartId" in l && l.cartId === without)) : committedLines;
+    return shortIngredient(extra, inventory, modifierGroups, committed);
+  }, [autoSoldOut, committedLines, inventory, modifierGroups]);
+  /** Menu items that can't be made even once more → the ingredient that ran out. A sized item is out when every size is. */
+  const soldOut = useMemo(() => {
+    const out = new Map<string, string>();
+    if (!autoSoldOut) return out;
+    for (const i of inventory) {
+      if (!((i.retailPrice ?? 0) > 0 || i.sizes?.length)) continue;
+      const tries: ChosenModifier[][] = i.sizes?.length
+        ? i.sizes.map(sz => [{ groupId: SIZE_GROUP_ID, group: "Size", optionId: sz.id, name: sz.name, price: sz.price }])
+        : [[]];
+      let short: InventoryItem | null = null;
+      for (const modifiers of tries) {
+        short = shortIngredient([{ itemId: i.id, qty: 1, modifiers }], inventory, modifierGroups, committedLines);
+        if (!short) break;
+      }
+      if (short) out.set(i.id, short.name);
+    }
+    return out;
+  }, [autoSoldOut, inventory, modifierGroups, committedLines]);
+  const shortNotice = (dish: string, short: InventoryItem) => setOrderNotice(`Not enough ${short.name} left for ${dish}`);
+
   // ── Cart ops ──────────────────────────────────────────────────────────────
   /** Puts `qty` of an item on the cart with these options, joining an identical unsent line. */
   const addLine = useCallback((item: CatalogItem, modifiers: ChosenModifier[] = [], qty = 1, note = "") => {
+    const short = shortBy([{ itemId: item.id, qty, modifiers }]);
+    if (short) { setOrderNotice(`Not enough ${short.name} left for ${item.name}`); return; }
     const unitPrice = item.price + modifiersTotal(modifiers);
     setCart(prev => {
       // A line the kitchen already has, or one with its own note, is its own
@@ -549,7 +585,7 @@ export default function POSPage() {
         note: note || undefined, modifiers: modifiers.length ? modifiers : undefined,
       }];
     });
-  }, []);
+  }, [shortBy]);
 
   /** What the customize pop-up asks: the item's sizes first, then (restaurant mode) its option groups. */
   const optionGroupsFor = useCallback((item: CatalogItem | undefined): ModifierGroup[] => {
@@ -606,6 +642,8 @@ export default function POSPage() {
     if (!customizing) return;
     const { item, cartId } = customizing;
     if (cartId) {
+      const short = shortBy([{ itemId: item.id, qty, modifiers }], cartId);
+      if (short) { shortNotice(item.name, short); return; }
       const unitPrice = item.price + modifiersTotal(modifiers);
       setCart(prev => prev.map(e => e.cartId === cartId
         ? { ...e, modifiers: modifiers.length ? modifiers : undefined, qty, note: note || undefined, unitPrice, total: unitPrice * qty }
@@ -677,6 +715,9 @@ export default function POSPage() {
   }, [scanFeedback]);
 
   function updateQty(cartId: string, delta: number) {
+    const line = cart.find(e => e.cartId === cartId);
+    const short = line && delta > 0 ? shortBy([{ itemId: line.itemId, qty: delta, modifiers: line.modifiers }]) : null;
+    if (short && line) { shortNotice(line.name, short); return; }
     setCart(prev => {
       const entry = prev.find(e => e.cartId === cartId);
       if (!entry || entry.firedAt) return prev;
@@ -1856,17 +1897,20 @@ export default function POSPage() {
                   const { fg, bg } = catColor(item.category, item.type);
                   // A restaurant sells made-to-order dishes, so stock doesn't gate
                   // them — the 86 list (kitchen display) does.
+                  const ranOut = soldOut.get(item.id);
                   const outOfStock = restaurant
-                    ? !!item.unavailable
+                    ? !!item.unavailable || !!ranOut
                     : item.type === "product" && (item.stock ?? 999) === 0;
                   const lowStock = !restaurant && item.type === "product" && item.stock !== undefined && item.stock > 0 && item.stock <= 3;
                   const badge = outOfStock
-                    ? { text: restaurant ? "86'd" : "Out of stock", bg: "#dc2626", fg: "#fff" }
+                    ? { text: restaurant ? (item.unavailable ? "86'd" : "Sold out") : "Out of stock", bg: "#dc2626", fg: "#fff" }
                     : lowStock ? { text: `Only ${item.stock} left`, bg: "#fbbf24", fg: "#422006" }
                     : hasOptions ? { text: "Options", bg: "#fff", fg: "#1d4ed8" }
                     : null;
                   const FallbackIcon = item.type === "service" ? Scissors : restaurant ? menuIcon(item.menuCategory ?? item.name) : Package;
-                  const tag = !restaurant && item.type === "product" && item.stock !== undefined
+                  const tag = ranOut && !item.unavailable
+                    ? `Out of ${ranOut}`
+                    : !restaurant && item.type === "product" && item.stock !== undefined
                     ? `${item.stock} in stock`
                     : item.type === "service" ? item.category : item.menuCategory || item.category;
                   return (

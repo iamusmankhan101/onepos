@@ -651,6 +651,7 @@ function PosRulesSection() {
       staffDiscountRate: r.staffDiscountRate ? String(r.staffDiscountRate) : "",
       discountApprovalOver: r.discountApprovalOver ? String(r.discountApprovalOver) : "",
       requireOpenShift: r.requireOpenShift,
+      autoSoldOut: r.autoSoldOut,
     };
   });
   const { commit, saved, error, saving } = useSettingsSave(markSaved);
@@ -660,6 +661,7 @@ function PosRulesSection() {
       staffDiscountRate: pct(form.staffDiscountRate),
       discountApprovalOver: pct(form.discountApprovalOver),
       requireOpenShift: form.requireOpenShift,
+      autoSoldOut: form.autoSoldOut,
     });
   });
 
@@ -681,6 +683,15 @@ function PosRulesSection() {
             <div style={{ fontSize: 11, color: "#9898b0", marginTop: 2 }}>The POS won&apos;t take payment until someone opens the cash drawer on the Shifts page</div>
           </div>
           <Toggle value={form.requireOpenShift} onChange={() => setForm(f => ({ ...f, requireOpenShift: !f.requireOpenShift }))} />
+        </div>
+      )}
+      {businessType.restaurantMode && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: "#f9f9fb", borderRadius: 10 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e" }}>Sold out automatically when an ingredient runs out</div>
+            <div style={{ fontSize: 11, color: "#9898b0", marginTop: 2 }}>The POS greys out a dish once its recipe can&apos;t be made from the stock left. Turn on after entering your ingredient stock on the Inventory page</div>
+          </div>
+          <Toggle value={form.autoSoldOut} onChange={() => setForm(f => ({ ...f, autoSoldOut: !f.autoSoldOut }))} />
         </div>
       )}
       <div><SaveBar onSave={save} busy={saving} /></div>

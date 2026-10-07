@@ -178,6 +178,7 @@ const defaults = {
     staffDiscountRate: 0,       // percent; 0 hides the Staff discount button
     discountApprovalOver: 0,    // percent of the bill; 0 = any discount without approval
     requireOpenShift: false,    // restaurant mode: no sale until the cash drawer is opened
+    autoSoldOut: false,         // restaurant mode: grey out a dish its ingredients can't cover
   },
 };
 

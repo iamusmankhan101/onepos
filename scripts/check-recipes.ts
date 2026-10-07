@@ -5,7 +5,7 @@
  *     && mkdir -p /tmp/rc/node_modules && ln -sfn /tmp/rc /tmp/rc/node_modules/@ && node /tmp/rc/scripts/check-recipes.js
  */
 import assert from "node:assert/strict";
-import { lineCost, saleChanges } from "../lib/stock";
+import { lineCost, saleChanges, shortIngredient } from "../lib/stock";
 import { SIZE_GROUP_ID } from "../lib/menu";
 import type { InventoryItem } from "../lib/types";
 
@@ -41,5 +41,13 @@ assert.deepEqual(by(saleChanges([{ itemId: "pizza", qty: 1, modifiers: size("l")
 // A small one uses the small recipe.
 assert.deepEqual(by(saleChanges([{ itemId: "pizza", qty: 2, modifiers: size("s") }], items, [])),
   { dough: -0.36, paste: -0.05, garlic: -0.003 });
+
+// Automatic sold-out: 100 patties in stock. 99 already on open orders leaves
+// one burger; a second runs short of patties.
+const onOrders = [{ itemId: "burger", qty: 99 }];
+assert.equal(shortIngredient([{ itemId: "burger", qty: 1 }], items, [], onOrders), null);
+assert.equal(shortIngredient([{ itemId: "burger", qty: 2 }], items, [], onOrders)?.id, "patty");
+// Patties overdrawn by other orders don't sell out a pizza, which doesn't use them.
+assert.equal(shortIngredient([{ itemId: "pizza", qty: 1, modifiers: size("s") }], items, [], [{ itemId: "burger", qty: 150 }]), null);
 
 console.log("recipe checks passed");

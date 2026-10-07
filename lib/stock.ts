@@ -442,6 +442,25 @@ export function saleChanges(
   return [...total].map(([itemId, qty]) => ({ itemId, qty: -roundQty(qty) }));
 }
 
+type SaleLine = { itemId: string; qty: number; modifiers?: ChosenModifier[] };
+
+/**
+ * The first stocked item `lines` need more of than is left on the shelf once
+ * `committed` (unpaid orders, which haven't come off stock yet) is set aside,
+ * or null when they can be made — what the POS's automatic sold-out checks.
+ * Only what `lines` use is checked, so an ingredient already overdrawn by
+ * other orders doesn't sell out dishes that don't need it.
+ */
+export function shortIngredient(lines: SaleLine[], items: InventoryItem[], groups: ModifierGroup[], committed: SaleLine[] = []): InventoryItem | null {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const promised = new Map(saleChanges(committed, items, groups).map((c) => [c.itemId, -c.qty]));
+  for (const c of saleChanges(lines, items, groups)) {
+    const item = byId.get(c.itemId);
+    if (item && -c.qty + (promised.get(c.itemId) ?? 0) > (item.currentStock || 0) + 1e-9) return item;
+  }
+  return null;
+}
+
 // ─── Deleting ─────────────────────────────────────────────────────────────────
 
 /**
