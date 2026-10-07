@@ -1521,6 +1521,7 @@ input, textarea, select { font-family: inherit; }
   .mg-row { grid-template-columns: minmax(0, 1fr) 44px 40px auto !important; }
   .mg-row > .mg-name { grid-column: 1 / -1; }
   .rc-row { grid-template-columns: minmax(0, 1fr) 58px 64px 30px !important; }
+  .rc-row.rc-waste { grid-template-columns: minmax(0, 1fr) 58px 52px 64px 30px !important; }
   .rc-row > .rc-item { grid-column: 1 / -1; }
 }
 

@@ -186,6 +186,11 @@ export interface RecipeLine {
   /** In `unit`. May be negative on a menu option — "uses 250 ml less full-cream milk". */
   qty: number;
   unit: InventoryUnit;
+  /**
+   * Prep loss, in percent: 10 means 10% more is taken out of stock than ends
+   * up on the plate (trimming, peeling, bones). Costed in too.
+   */
+  waste?: number;
 }
 
 /** One size an item is sold in, at its own full price (lib/menu.ts sizeGroup). */
@@ -194,6 +199,8 @@ export interface ItemSize {
   /** "Small", "Medium", "Large" or anything custom — "Family", "500 ml". */
   name: string;
   price: number;
+  /** Restaurant mode: what this size is made from, instead of the item's own recipe. */
+  recipe?: RecipeLine[];
 }
 
 export interface InventoryItem {
@@ -253,6 +260,11 @@ export interface InventoryItem {
    * it takes these ingredients out of stock instead.
    */
   recipe?: RecipeLine[];
+  /**
+   * How much one batch of `recipe` makes, in the item's own unit: a sauce
+   * recipe that makes 2 kg. Unset = 1 (one serving, one piece).
+   */
+  recipeYield?: number;
   /** Earliest expiry date of the stock on hand (YYYY-MM-DD), set when a delivery is received. */
   expiresOn?: string;
 }

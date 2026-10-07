@@ -177,11 +177,14 @@ type ItemForm = {
   takeawayPrice: string; deliveryPrice: string;
   /** Restaurant mode: made to order from a recipe — no stock of its own. */
   useRecipe: boolean; recipe: RecipeLine[];
+  /** How much one batch of the recipe makes, in the item's unit — "2" kg of sauce. */
+  recipeYield: string;
   /** Sold in sizes, each at its own price (replaces the single selling price). */
   useSizes: boolean; sizes: SizeDraft[];
 };
 
-type SizeDraft = { id: string; name: string; price: string };
+/** `recipe`: restaurant mode, what this size is made from (lib/stock.ts). */
+type SizeDraft = { id: string; name: string; price: string; recipe: RecipeLine[] };
 
 const PRESET_SIZES = ["Small", "Medium", "Large"];
 
@@ -198,7 +201,7 @@ const EMPTY_FORM: ItemForm = {
   variablePrice: false, priceRangeMin: "", priceRangeMax: "",
   menuCategory: "", modifierGroupIds: [],
   takeawayPrice: "", deliveryPrice: "",
-  useRecipe: false, recipe: [],
+  useRecipe: false, recipe: [], recipeYield: "",
   useSizes: false, sizes: [],
 };
 
@@ -219,18 +222,27 @@ function itemToForm(item: InventoryItem): ItemForm {
     deliveryPrice: item.deliveryPrice ? String(item.deliveryPrice) : "",
     useRecipe: !!item.recipe?.length,
     recipe: item.recipe ?? [],
+    recipeYield: item.recipeYield ? String(item.recipeYield) : "",
     useSizes: !!item.sizes?.length,
-    sizes: (item.sizes ?? []).map((sz) => ({ id: sz.id, name: sz.name, price: String(sz.price) })),
+    // A size without its own recipe used the item's — start it from that.
+    sizes: (item.sizes ?? []).map((sz) => ({ id: sz.id, name: sz.name, price: String(sz.price), recipe: sz.recipe ?? item.recipe ?? [] })),
   };
 }
 
 function formToItem(form: ItemForm, existing: InventoryItem | undefined, items: InventoryItem[]): InventoryItem {
-  const recipe = form.useRecipe ? form.recipe.filter((l) => l.itemId && l.qty > 0) : [];
+  const usable = (lines: RecipeLine[]) => lines.filter((l) => l.itemId && l.qty > 0);
   const sizes = form.useSizes
-    ? form.sizes.filter((sz) => sz.name.trim() && Number(sz.price) > 0).map((sz) => ({ id: sz.id, name: sz.name.trim(), price: Number(sz.price) }))
+    ? form.sizes.filter((sz) => sz.name.trim() && Number(sz.price) > 0).map((sz) => {
+        const own = form.useRecipe ? usable(sz.recipe) : [];
+        return { id: sz.id, name: sz.name.trim(), price: Number(sz.price), ...(own.length ? { recipe: own } : {}) };
+      })
     : [];
   const sized = sizes.length > 0;
+  // A sized item's own recipe is its first size's, so anything that reads
+  // item.recipe (stock, costing, use as a sub-recipe) still finds one.
+  const recipe = !form.useRecipe ? [] : sized ? (sizes.find((sz) => sz.recipe)?.recipe ?? []) : usable(form.recipe);
   const madeToOrder = recipe.length > 0;
+  const recipeYield = madeToOrder && !sized && Number(form.recipeYield) > 0 && Number(form.recipeYield) !== 1 ? Number(form.recipeYield) : undefined;
   return {
     // Keeps what this form doesn't edit — the 86 flag, the kitchen station.
     ...existing,
@@ -242,8 +254,9 @@ function formToItem(form: ItemForm, existing: InventoryItem | undefined, items: 
     // A made-to-order item keeps no stock; its cost is its recipe's.
     currentStock: madeToOrder ? 0 : Number(form.currentStock),
     minStock: madeToOrder ? 0 : Number(form.minStock),
-    costPrice: madeToOrder ? Math.round(recipeCost(recipe, items) * 100) / 100 : Number(form.costPrice),
+    costPrice: madeToOrder ? Math.round((recipeCost(recipe, items) / (recipeYield ?? 1)) * 100) / 100 : Number(form.costPrice),
     recipe: madeToOrder ? recipe : undefined,
+    recipeYield,
     // A sized item's "price" is its cheapest size — what the POS tile shows as "from".
     retailPrice: sized
       ? Math.min(...sizes.map((sz) => sz.price))
@@ -432,12 +445,21 @@ function ItemFormFields({ form, set, items, selfId }: { form: ItemForm; set: (k:
   );
 }
 
-/** "Made from a recipe" switch, the recipe itself, and what the item costs to make. */
+/** "Made from a recipe" switch, the recipe itself — one per size when sold in sizes — and what it costs to make. */
 function RecipeSection({ form, set, items, selfId }: { form: ItemForm; set: (k: keyof ItemForm, v: FormValue) => void; items: InventoryItem[]; selfId?: string }) {
   const candidates = recipeCandidates(items, selfId);
-  const cost = recipeCost(form.recipe.filter((l) => l.qty > 0), items);
-  const price = Number(form.retailPrice) || 0;
+  const sizes = form.useSizes ? form.sizes : [];
+  const [sizeId, setSizeId] = useState<string | null>(null);
+  const size = sizes.find((sz) => sz.id === sizeId) ?? sizes[0];
+  const lines = size ? size.recipe : form.recipe;
+  const setLines = (next: RecipeLine[]) => size
+    ? set("sizes", form.sizes.map((sz) => (sz.id === size.id ? { ...sz, recipe: next } : sz)))
+    : set("recipe", next);
+  const batch = !size && Number(form.recipeYield) > 0 ? Number(form.recipeYield) : 1;
+  const cost = recipeCost(lines.filter((l) => l.qty > 0), items) / batch;
+  const price = Number(size ? size.price : form.retailPrice) || 0;
   const pct = costPercent(cost, price);
+  const copyFrom = size && size.recipe.length === 0 ? sizes.find((sz) => sz.recipe.length > 0) : undefined;
   return (
     <div style={{ border: "1px solid #ecebf3", borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 10, background: form.useRecipe ? "#fcfcfe" : "#fff" }}>
       <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
@@ -451,12 +473,37 @@ function RecipeSection({ form, set, items, selfId }: { form: ItemForm; set: (k: 
       </label>
       {form.useRecipe && (
         <>
-          <RecipeEditor lines={form.recipe} onChange={(next) => set("recipe", next)} items={candidates} money={fmt}
-            emptyHint="Add what one serving uses — e.g. 18 g coffee beans, 250 ml milk, 1 cup, 1 lid." />
+          {sizes.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#9898b0", textTransform: "uppercase" }}>Recipe for</span>
+              {sizes.map((sz) => {
+                const on = sz.id === size?.id;
+                return (
+                  <button key={sz.id} type="button" onClick={() => setSizeId(sz.id)} aria-pressed={on}
+                    style={{ padding: "5px 11px", borderRadius: 20, border: `1.5px solid ${on ? "#EA580C" : "#e8e8f0"}`, background: on ? "#fff7ed" : "#fff", color: on ? "#c2410c" : "#6b6b8a", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    {sz.name || "Unnamed"}{sz.recipe.length === 0 ? " ·  empty" : ""}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <RecipeEditor key={size?.id ?? "base"} lines={lines} onChange={setLines} items={candidates} money={fmt}
+            emptyHint={size ? `Add what one ${size.name || "serving"} uses — e.g. 250 g dough, 120 g chicken, 150 g cheese.` : "Add what one serving uses — e.g. 18 g coffee beans, 250 ml milk, 1 cup, 1 lid."} />
+          {copyFrom && (
+            <button type="button" onClick={() => setLines(copyFrom.recipe.map((l) => ({ ...l })))}
+              style={{ alignSelf: "flex-start", border: "none", background: "none", padding: 0, fontSize: 12, fontWeight: 700, color: "#EA580C", cursor: "pointer" }}>
+              Copy the {copyFrom.name} recipe, then adjust amounts
+            </button>
+          )}
+          {!size && (
+            <Field label={`This recipe makes (${form.unit})`} hint={`For a batch — a sauce recipe that makes 2 kg. Leave at 1 for one serving.`}>
+              <input type="number" min="0" step="any" value={form.recipeYield} onChange={(e) => set("recipeYield", e.target.value)} placeholder="1" style={INP} />
+            </Field>
+          )}
           {cost > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
               {[
-                ["Cost / serving", fmt(Math.round(cost))],
+                [batch !== 1 ? `Cost / ${form.unit}` : size ? `Cost / ${size.name || "serving"}` : "Cost / serving", fmt(Math.round(cost))],
                 ["Gross profit", price > 0 ? fmt(Math.round(price - cost)) : "—"],
                 ["Food cost", pct !== null ? `${pct}%` : "—"],
               ].map(([label, value]) => (
@@ -487,7 +534,7 @@ function SizesSection({ form, set }: { form: ItemForm; set: (k: keyof ItemForm, 
     if (checked && sizes.length === 0) {
       // Start from the three usual sizes, priced around the current selling price.
       const base = Number(form.retailPrice) || 0;
-      update(PRESET_SIZES.map((name, i) => ({ id: newSizeId(), name, price: base ? String(base + (i - 1) * Math.round(base * 0.2)) : "" })));
+      update(PRESET_SIZES.map((name, i) => ({ id: newSizeId(), name, price: base ? String(base + (i - 1) * Math.round(base * 0.2)) : "", recipe: form.recipe })));
     }
   }
 
@@ -495,7 +542,7 @@ function SizesSection({ form, set }: { form: ItemForm; set: (k: keyof ItemForm, 
     const hit = byName(name);
     if (hit) { update(sizes.filter((sz) => sz.id !== hit.id)); return; }
     // Keep presets in Small → Medium → Large order ahead of custom sizes.
-    const next = [...sizes, { id: newSizeId(), name, price: "" }];
+    const next = [...sizes, { id: newSizeId(), name, price: "", recipe: sizes.at(-1)?.recipe ?? form.recipe }];
     next.sort((a, b) => {
       const ia = PRESET_SIZES.indexOf(a.name), ib = PRESET_SIZES.indexOf(b.name);
       return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
@@ -524,7 +571,7 @@ function SizesSection({ form, set }: { form: ItemForm; set: (k: keyof ItemForm, 
                 </button>
               );
             })}
-            <button type="button" onClick={() => update([...sizes, { id: newSizeId(), name: "", price: "" }])}
+            <button type="button" onClick={() => update([...sizes, { id: newSizeId(), name: "", price: "", recipe: sizes.at(-1)?.recipe ?? form.recipe }])}
               style={{ padding: "6px 12px", borderRadius: 20, border: "1.5px dashed #d1d5db", background: "#fafafd", color: "#6b6b8a", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
               + Custom size
             </button>
@@ -554,7 +601,8 @@ function SizesSection({ form, set }: { form: ItemForm; set: (k: keyof ItemForm, 
 }
 
 function stockFieldsValid(form: ItemForm): boolean {
-  if (form.useRecipe) return form.recipe.some((l) => l.itemId && l.qty > 0);
+  const usable = (lines: RecipeLine[]) => lines.some((l) => l.itemId && l.qty > 0);
+  if (form.useRecipe) return form.useSizes ? form.sizes.some((sz) => usable(sz.recipe)) : usable(form.recipe);
   return Boolean(form.currentStock && form.minStock && form.costPrice);
 }
 
@@ -592,10 +640,10 @@ function textToSizes(text: string): { sizes: NonNullable<InventoryItem["sizes"]>
   return { sizes, problems };
 }
 
-/** "Coffee beans 18 g; Full cream milk 250 ml" — a recipe as one spreadsheet cell. */
+/** "Coffee beans 18 g; Lettuce 20 g +10%" — a recipe as one spreadsheet cell. */
 function recipeToText(recipe: RecipeLine[] | undefined, items: InventoryItem[]): string {
   const byId = new Map(items.map((i) => [i.id, i.name]));
-  return (recipe ?? []).map((l) => `${byId.get(l.itemId) ?? "?"} ${l.qty} ${l.unit}`).join("; ");
+  return (recipe ?? []).map((l) => `${byId.get(l.itemId) ?? "?"} ${l.qty} ${l.unit}${l.waste ? ` +${l.waste}%` : ""}`).join("; ");
 }
 
 /** Reads recipeToText() back, by ingredient name. Unknown names are reported, not guessed. */
@@ -604,13 +652,13 @@ function textToRecipe(text: string, items: InventoryItem[]): { recipe: RecipeLin
   const recipe: RecipeLine[] = [];
   const problems: string[] = [];
   for (const part of text.split(";").map((x) => x.trim()).filter(Boolean)) {
-    const m = part.match(/^(.*?)\s+(-?\d+(?:\.\d+)?)\s*([a-z]+)$/i);
+    const m = part.match(/^(.*?)\s+(-?\d+(?:\.\d+)?)\s*([a-z]+)(?:\s*\+\s*(\d+(?:\.\d+)?)\s*%)?$/i);
     const item = m ? byName.get(m[1].trim().toLowerCase()) : undefined;
     const unit = m?.[3].toLowerCase() as InventoryUnit | undefined;
     if (!m) { problems.push(`recipe part "${part}" isn't "name amount unit"`); continue; }
     if (!item) { problems.push(`recipe ingredient "${m[1].trim()}" not found`); continue; }
     if (!unit || !(UNITS as string[]).includes(unit)) { problems.push(`recipe unit "${m[3]}" unknown`); continue; }
-    recipe.push({ itemId: item.id, qty: Number(m[2]), unit });
+    recipe.push({ itemId: item.id, qty: Number(m[2]), unit, ...(Number(m[4]) > 0 ? { waste: Number(m[4]) } : {}) });
   }
   return { recipe, problems };
 }
@@ -778,7 +826,11 @@ function ProductImportModal({ existing, onClose, onImport }: {
         const sizesCell = String(row["Sizes"] ?? "").trim();
         const parsedSizes = sizesCell ? textToSizes(sizesCell) : null;
         parsedSizes?.problems.forEach((msg) => problems.push(`Row ${rowNo} (${name}): ${msg}.`));
-        const sizes = parsedSizes?.sizes.length ? parsedSizes.sizes : undefined;
+        // Same-named sizes keep their id (sales reports key on it) and their recipe.
+        const sizes = parsedSizes?.sizes.length ? parsedSizes.sizes.map((sz) => {
+          const was = existingItem?.sizes?.find((x) => x.name.toLowerCase() === sz.name.toLowerCase());
+          return was ? { ...sz, id: was.id, recipe: was.recipe } : sz;
+        }) : undefined;
         const recipeCell = String(row["Recipe"] ?? "").trim();
         if (recipeCell) recipeText.set(id, { text: recipeCell, row: rowNo });
 

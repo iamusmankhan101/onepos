@@ -4,7 +4,9 @@
  * Inventory: stock, deliveries and purchase orders, wastage, stock counts,
  * suppliers, and what was used — see lib/stock.ts. In a restaurant, menu
  * items made from a recipe don't appear here; their ingredients do. In a
- * shop every product is stocked, so every product is here.
+ * shop every product is stocked, so every product is here. A restaurant also
+ * gets Menu costing: what each menu item (and size) costs to make against its
+ * price, and what the period's sales of it earned.
  */
 
 import Link from "next/link";
@@ -19,8 +21,8 @@ import {
   CountModal, IngredientModal, PurchaseModal, SupplierModal, WasteModal,
 } from "@/components/inventory-modals";
 import {
-  STOCK_CHANGED_EVENT, deletePurchaseOrder, expiryState, fmtQty, getMovements, getPurchaseOrders, getSuppliers,
-  localDate, purchaseTotal, savePurchaseOrder, saveSuppliers, stockLevel, tracksStock, undoMovement,
+  STOCK_CHANGED_EVENT, costPercent, deletePurchaseOrder, expiryState, fmtQty, getMovements, getPurchaseOrders, getSuppliers,
+  lineCost, localDate, purchaseTotal, savePurchaseOrder, saveSuppliers, stockLevel, tracksStock, undoMovement,
   type MovementType, type PurchaseOrder, type StockMovement, type Supplier,
 } from "@/lib/stock";
 import { getStoredInventory, subscribeToStoredData } from "@/lib/storage";
@@ -30,9 +32,11 @@ import { fmtCurrency as fmt } from "@/lib/format";
 import { openWhatsAppChat } from "@/lib/whatsapp-link";
 import { settingsStore } from "@/lib/settings-store";
 import { useBusinessType } from "@/lib/use-business-type";
+import { getInvoices, type Invoice } from "@/lib/invoices";
+import { SIZE_GROUP_ID, getModifierGroups, type ChosenModifier, type ModifierGroup } from "@/lib/menu";
 import type { InventoryItem } from "@/lib/types";
 
-type Tab = "stock" | "orders" | "suppliers" | "history";
+type Tab = "stock" | "orders" | "suppliers" | "history" | "costing";
 type StockFilter = "all" | "low" | "expiring";
 type Range = "today" | "7d" | "30d" | "month";
 
@@ -65,8 +69,12 @@ function useInventoryData() {
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [groups, setGroups] = useState<ModifierGroup[]>([]);
   const refresh = useCallback(() => {
     setItems(getStoredInventory());
+    setInvoices(getInvoices());
+    setGroups(getModifierGroups());
     setMovements(getMovements());
     setSuppliers(getSuppliers());
     setOrders(getPurchaseOrders());
@@ -77,11 +85,11 @@ function useInventoryData() {
     window.addEventListener(STOCK_CHANGED_EVENT, refresh);
     return () => { window.clearTimeout(t); unsubscribe(); window.removeEventListener(STOCK_CHANGED_EVENT, refresh); };
   }, [refresh]);
-  return { items, movements, suppliers, orders, refresh };
+  return { items, movements, suppliers, orders, invoices, groups, refresh };
 }
 
 export default function InventoryPage() {
-  const { items, movements, suppliers, orders, refresh } = useInventoryData();
+  const { items, movements, suppliers, orders, invoices, groups, refresh } = useInventoryData();
   const businessType = useBusinessType();
   // A shop adds products (with a selling price and barcode) on the Products page.
   const shop = !businessType.restaurantMode;
@@ -222,29 +230,81 @@ export default function InventoryPage() {
   const start = rangeStart(range);
   const inRange = movements.filter((m) => m.date >= start && (typeFilter === "all" || m.type === typeFilter));
   const usage = useMemo(() => {
-    const map = new Map<string, { name: string; unit: InventoryItem["unit"]; used: number; wasted: number; received: number; adjusted: number; usedCost: number; wastedCost: number }>();
+    const map = new Map<string, { name: string; unit: InventoryItem["unit"]; used: number; wasted: number; received: number; adjusted: number; usedCost: number; wastedCost: number; adjustedCost: number }>();
     for (const m of movements.filter((mv) => mv.date >= start)) {
       for (const l of m.lines) {
-        const row = map.get(l.itemId) ?? { name: l.name, unit: l.unit, used: 0, wasted: 0, received: 0, adjusted: 0, usedCost: 0, wastedCost: 0 };
+        const row = map.get(l.itemId) ?? { name: l.name, unit: l.unit, used: 0, wasted: 0, received: 0, adjusted: 0, usedCost: 0, wastedCost: 0, adjustedCost: 0 };
         if (m.type === "sale") { row.used += -l.qty; row.usedCost += l.cost; }
         if (m.type === "waste") { row.wasted += -l.qty; row.wastedCost += l.cost; }
         // Goods sent back to a supplier come off what was received.
         if (m.type === "purchase" || m.type === "return") row.received += l.qty;
         // Opening stock isn't a correction of anything — leave it out of adjustments.
-        if (m.type === "count" && m.note !== "Opening stock") row.adjusted += l.qty;
+        if (m.type === "count" && m.note !== "Opening stock") { row.adjusted += l.qty; row.adjustedCost += Math.sign(l.qty) * l.cost; }
         map.set(l.itemId, row);
       }
     }
-    return [...map.entries()].map(([id, r]) => ({ id, ...r })).sort((a, b) => b.usedCost + b.wastedCost - (a.usedCost + a.wastedCost));
+    // Theoretical = what recipes say sales used; actual = what really left
+    // the shelf — that plus wastage plus any shortfall a count found.
+    return [...map.entries()].map(([id, r]) => ({
+      id, ...r,
+      actual: r.used + r.wasted - r.adjusted,
+      variance: r.wasted - r.adjusted,
+      varianceCost: r.wastedCost - r.adjustedCost,
+    })).sort((a, b) => b.usedCost + b.wastedCost - (a.usedCost + a.wastedCost));
   }, [movements, start]);
   const usedTotal = usage.reduce((s, r) => s + r.usedCost, 0);
   const wastedTotal = usage.reduce((s, r) => s + r.wastedCost, 0);
+  const varianceTotal = usage.reduce((s, r) => s + r.varianceCost, 0);
+
+  // ── Menu costing ─────────────────────────────────────────────────────────
+  const costing = useMemo(() => {
+    if (shop) return [];
+    const sizeOf = (mods: ChosenModifier[] | undefined) => mods?.find((m) => m.groupId === SIZE_GROUP_ID)?.optionId ?? "";
+    // What sold in the period, per item and size. Refunds carry negative
+    // quantities, so they net out. Cost is today's, options included.
+    const sold = new Map<string, { qty: number; sales: number; soldCost: number }>();
+    for (const inv of invoices) {
+      if (inv.date < start) continue;
+      for (const it of inv.items) {
+        if (it.type !== "product" || !it.itemId) continue;
+        const key = `${it.itemId}|${sizeOf(it.modifiers)}`;
+        const row = sold.get(key) ?? { qty: 0, sales: 0, soldCost: 0 };
+        row.qty += it.qty;
+        row.sales += it.total;
+        row.soldCost += it.qty * lineCost(it as { itemId: string; modifiers?: ChosenModifier[] }, items, groups);
+        sold.set(key, row);
+      }
+    }
+    const rows = items.flatMap((item) => {
+      const variants = item.sizes?.length
+        ? item.sizes.map((sz) => ({ sizeId: sz.id, label: `${item.name} · ${sz.name}`, price: sz.price }))
+        : (item.retailPrice ?? 0) > 0 ? [{ sizeId: "", label: item.name, price: item.retailPrice! }] : [];
+      return variants.map((v) => {
+        const mods: ChosenModifier[] = v.sizeId ? [{ groupId: SIZE_GROUP_ID, group: "Size", optionId: v.sizeId, name: "", price: v.price }] : [];
+        const cost = lineCost({ itemId: item.id, modifiers: mods }, items, groups);
+        const s = sold.get(`${item.id}|${v.sizeId}`) ?? { qty: 0, sales: 0, soldCost: 0 };
+        return { key: `${item.id}|${v.sizeId}`, label: v.label, price: v.price, cost, hasRecipe: !tracksStock(item), ...s, profit: s.sales - s.soldCost };
+      });
+    });
+    return rows.sort((a, b) => b.profit - a.profit || (b.price - b.cost) - (a.price - a.cost));
+  }, [shop, invoices, items, groups, start]);
+  const costingTotals = costing.reduce((t, r) => ({ sales: t.sales + r.sales, cost: t.cost + r.soldCost }), { sales: 0, cost: 0 });
+
+  const rangeButtons = (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {([["today", "Today"], ["7d", "7 days"], ["30d", "30 days"], ["month", "This month"]] as [Range, string][]).map(([r, label]) => (
+        <button key={r} type="button" onClick={() => setRange(r)}
+          style={{ ...btn, height: 32, borderColor: range === r ? "#1d1d2f" : "#e6e6f0", background: range === r ? "#1d1d2f" : "#fff", color: range === r ? "#fff" : "#5a5a78" }}>{label}</button>
+      ))}
+    </div>
+  );
 
   const TABS: { id: Tab; label: string; badge?: number }[] = [
     { id: "stock", label: "Stock", badge: lowItems.length || undefined },
     { id: "orders", label: "Purchase orders", badge: openOrders.length || undefined },
     { id: "suppliers", label: "Suppliers" },
     { id: "history", label: "Usage & wastage" },
+    ...(shop ? [] : [{ id: "costing" as Tab, label: "Menu costing" }]),
   ];
 
   const actions = (
@@ -452,29 +512,78 @@ export default function InventoryPage() {
           </div>
         )}
 
+        {/* ── Menu costing ── */}
+        {tab === "costing" && (
+          <>
+            {rangeButtons}
+            <div style={card}>
+              <div style={{ padding: "12px 14px", borderBottom: "1px solid #f2f2f8", display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
+                <span style={{ fontWeight: 800, color: "#1d1d2f" }}>Menu profitability</span>
+                <span style={{ color: "#1d4ed8", fontWeight: 700 }}>Sales {money(costingTotals.sales)}</span>
+                <span style={{ color: "#b91c1c", fontWeight: 700 }}>Food cost {money(costingTotals.cost)}</span>
+                <span style={{ color: "#047857", fontWeight: 700 }}>Gross profit {money(costingTotals.sales - costingTotals.cost)}</span>
+                {costingTotals.sales > 0 && <span style={{ color: "#6b6b8a" }}>Food cost {costPercent(costingTotals.cost, costingTotals.sales)}%</span>}
+              </div>
+              {costing.length === 0 && <div style={{ padding: 24, fontSize: 13, color: "#9898b0", textAlign: "center" }}>No menu items with a selling price yet.</div>}
+              {costing.length > 0 && (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 780 }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", color: "#9898b0", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        {["Menu item", "Price", "Food cost", "Gross profit", "Food cost %", "Sold", "Sales", "Profit in period"].map((h) => <th key={h} style={{ padding: "9px 14px", fontWeight: 800 }}>{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {costing.map((r) => {
+                        const pct = costPercent(r.cost, r.price);
+                        return (
+                          <tr key={r.key} style={{ borderTop: "1px solid #f4f4f8" }}>
+                            <td style={{ padding: "9px 14px", fontWeight: 800, color: "#1d1d2f" }}>
+                              {r.label}
+                              {!r.hasRecipe && r.cost === 0 && <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: "#d97706" }}>no recipe or cost</span>}
+                            </td>
+                            <td style={{ padding: "9px 14px" }}>{money(r.price)}</td>
+                            <td style={{ padding: "9px 14px" }}>{r.cost ? money(r.cost) : "—"}</td>
+                            <td style={{ padding: "9px 14px", fontWeight: 700 }}>{money(r.price - r.cost)}</td>
+                            <td style={{ padding: "9px 14px", fontWeight: 700, color: pct !== null && pct > 35 ? "#d97706" : "#047857" }}>{r.cost && pct !== null ? `${pct}%` : "—"}</td>
+                            <td style={{ padding: "9px 14px" }}>{r.qty || "—"}</td>
+                            <td style={{ padding: "9px 14px" }}>{r.sales ? money(r.sales) : "—"}</td>
+                            <td style={{ padding: "9px 14px", fontWeight: 800, color: r.profit < 0 ? "#b91c1c" : "#1d1d2f" }}>{r.qty ? money(r.profit) : "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div style={{ padding: "10px 14px", borderTop: "1px solid #f2f2f8", fontSize: 11, color: "#9898b0" }}>
+                Costs are today&apos;s ingredient prices through each recipe, options included. Sales are before bill discounts, tax and service charge. Above 35% food cost is flagged.
+              </div>
+            </div>
+          </>
+        )}
+
         {/* ── Usage & wastage ── */}
         {tab === "history" && (
           <>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {([["today", "Today"], ["7d", "7 days"], ["30d", "30 days"], ["month", "This month"]] as [Range, string][]).map(([r, label]) => (
-                <button key={r} type="button" onClick={() => setRange(r)}
-                  style={{ ...btn, height: 32, borderColor: range === r ? "#1d1d2f" : "#e6e6f0", background: range === r ? "#1d1d2f" : "#fff", color: range === r ? "#fff" : "#5a5a78" }}>{label}</button>
-              ))}
-            </div>
+            {rangeButtons}
             <div style={card}>
               <div style={{ padding: "12px 14px", borderBottom: "1px solid #f2f2f8", display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
                 <span style={{ fontWeight: 800, color: "#1d1d2f" }}>{shop ? "Stock movement" : "Ingredient consumption"}</span>
                 <span style={{ color: "#1d4ed8", fontWeight: 700 }}>Used in sales {money(usedTotal)}</span>
                 <span style={{ color: "#b91c1c", fontWeight: 700 }}>Wasted {money(wastedTotal)}</span>
+                {varianceTotal !== 0 && <span style={{ color: varianceTotal > 0 ? "#b45309" : "#047857", fontWeight: 700 }}>Variance {varianceTotal < 0 ? "−" : ""}{money(Math.abs(varianceTotal))}</span>}
                 {usedTotal + wastedTotal > 0 && <span style={{ color: "#6b6b8a" }}>Waste is {Math.round((wastedTotal / (usedTotal + wastedTotal)) * 1000) / 10}% of what went out</span>}
               </div>
               {usage.length === 0 && <div style={{ padding: 24, fontSize: 13, color: "#9898b0", textAlign: "center" }}>No stock moved in this period.</div>}
               {usage.length > 0 && (
                 <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 560 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 820 }}>
                     <thead>
                       <tr style={{ textAlign: "left", color: "#9898b0", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                        {["Item", "Used", "Wasted", "Received", "Count adj.", "Cost used", "Cost wasted"].map((h) => <th key={h} style={{ padding: "9px 14px", fontWeight: 800 }}>{h}</th>)}
+                        {["Item", shop ? "Sold" : "Theoretical", "Wasted", "Count adj.", "Actual used", "Variance", "Received", "Cost used", "Variance cost"].map((h) => (
+                          <th key={h} style={{ padding: "9px 14px", fontWeight: 800 }} title={h === "Theoretical" ? "What the recipes say the period's sales used" : h === "Actual used" ? "Theoretical + wasted + any shortfall a stock count found" : undefined}>{h}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -483,10 +592,14 @@ export default function InventoryPage() {
                           <td style={{ padding: "9px 14px", fontWeight: 800, color: "#1d1d2f" }}>{r.name}</td>
                           <td style={{ padding: "9px 14px" }}>{r.used ? fmtQty(r.used, r.unit) : "—"}</td>
                           <td style={{ padding: "9px 14px", color: r.wasted ? "#b91c1c" : undefined }}>{r.wasted ? fmtQty(r.wasted, r.unit) : "—"}</td>
-                          <td style={{ padding: "9px 14px", color: r.received ? "#047857" : undefined }}>{r.received ? fmtQty(r.received, r.unit) : "—"}</td>
                           <td style={{ padding: "9px 14px" }}>{r.adjusted ? `${r.adjusted > 0 ? "+" : "−"}${fmtQty(Math.abs(r.adjusted), r.unit)}` : "—"}</td>
+                          <td style={{ padding: "9px 14px", fontWeight: 700 }}>{r.actual ? fmtQty(r.actual, r.unit) : "—"}</td>
+                          <td style={{ padding: "9px 14px", fontWeight: 700, color: r.variance > 0 ? "#b45309" : r.variance < 0 ? "#047857" : undefined }}>
+                            {r.variance ? `${r.variance > 0 ? "+" : "−"}${fmtQty(Math.abs(r.variance), r.unit)}${r.used > 0 ? ` (${Math.round((r.variance / r.used) * 1000) / 10}%)` : ""}` : "—"}
+                          </td>
+                          <td style={{ padding: "9px 14px", color: r.received ? "#047857" : undefined }}>{r.received ? fmtQty(r.received, r.unit) : "—"}</td>
                           <td style={{ padding: "9px 14px" }}>{r.usedCost ? money(r.usedCost) : "—"}</td>
-                          <td style={{ padding: "9px 14px" }}>{r.wastedCost ? money(r.wastedCost) : "—"}</td>
+                          <td style={{ padding: "9px 14px", color: r.varianceCost > 0 ? "#b45309" : undefined }}>{r.varianceCost ? `${r.varianceCost < 0 ? "−" : ""}${money(Math.abs(r.varianceCost))}` : "—"}</td>
                         </tr>
                       ))}
                     </tbody>

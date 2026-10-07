@@ -3,7 +3,8 @@
 /**
  * Edits a recipe (lib/stock.ts): which stocked items, and how much of each.
  * Used for a menu item's own recipe and for what a menu option adds or takes
- * away (`allowNegative`).
+ * away (`allowNegative`). A menu item's own recipe also takes a prep-loss
+ * percentage per ingredient.
  */
 
 import { Plus, Trash2 } from "lucide-react";
@@ -55,7 +56,7 @@ export default function RecipeEditor({ lines, onChange, items, money, allowNegat
         const units: InventoryUnit[] = item ? compatibleUnits(item.unit) : [line.unit];
         const lineCost = recipeCost([line], items);
         return (
-          <div key={index} className="rc-row" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 72px 58px 64px 30px", gap: 6, alignItems: "center" }}>
+          <div key={index} className={allowNegative ? "rc-row" : "rc-row rc-waste"} style={{ display: "grid", gridTemplateColumns: allowNegative ? "minmax(0, 1fr) 72px 58px 64px 30px" : "minmax(0, 1fr) 72px 58px 56px 64px 30px", gap: 6, alignItems: "center" }}>
             <select className="rc-item" value={line.itemId} onChange={(e) => pick(index, e.target.value)} style={INP} aria-label="Ingredient">
               {!item && <option value={line.itemId}>(deleted item)</option>}
               {sorted.map((i) => (
@@ -67,6 +68,10 @@ export default function RecipeEditor({ lines, onChange, items, money, allowNegat
             <select value={line.unit} onChange={(e) => patch(index, { unit: e.target.value as InventoryUnit })} style={INP} aria-label="Unit">
               {units.map((u) => <option key={u} value={u}>{u}</option>)}
             </select>
+            {!allowNegative && (
+              <input type="number" step="any" min={0} max={100} value={line.waste || ""} placeholder="0%" title="Prep loss % — trimming, peeling, bones"
+                onChange={(e) => patch(index, { waste: Math.min(100, Math.max(0, Number(e.target.value) || 0)) || undefined })} style={INP} aria-label={`Prep loss % of ${item?.name ?? "ingredient"}`} />
+            )}
             <div style={{ fontSize: 11.5, fontWeight: 700, color: lineCost < 0 ? "#059669" : "#6b6b8a", textAlign: "right", whiteSpace: "nowrap" }}>
               {lineCost < 0 ? "−" : ""}{money(Math.abs(lineCost))}
             </div>
@@ -89,6 +94,9 @@ export default function RecipeEditor({ lines, onChange, items, money, allowNegat
           </span>
         )}
       </div>
+      {!allowNegative && lines.length > 0 && (
+        <div style={{ fontSize: 11, color: "#9898b0" }}>Prep loss % (optional): the share lost to trimming or peeling — 10% on 20 g takes 22 g out of stock.</div>
+      )}
       {allowNegative && lines.length > 0 && (
         <div style={{ fontSize: 11, color: "#9898b0" }}>A negative amount takes that much back out of the item&apos;s own recipe.</div>
       )}

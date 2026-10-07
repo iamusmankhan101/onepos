@@ -12,6 +12,11 @@
  *     (tracksStock() is false); selling one takes its ingredients out instead.
  *   • A recipe line can point at another item that itself has a recipe — a
  *     prepared base, or the burger inside a combo — and is expanded through it.
+ *     A recipe may make a batch (recipeYield): a sauce recipe that makes 2 kg,
+ *     of which a pizza uses 100 g.
+ *   • A sized item can have a recipe per size (ItemSize.recipe); the size
+ *     picked on the order decides which one is used.
+ *   • A recipe line can carry a prep-loss percentage (RecipeLine.waste).
  *   • A menu option (lib/menu.ts) can carry recipe lines too: "Large" adds
  *     milk and beans; "Oat milk" adds oat milk and, with a negative quantity,
  *     takes back the full-cream milk the base recipe uses.
@@ -25,7 +30,7 @@ import { persistEntity } from "./turso-sync";
 import { entityStorageKey } from "./sync-records";
 import { getStoredInventory, saveInventory } from "./storage";
 import type { InventoryItem, InventoryUnit, RecipeLine } from "./types";
-import type { ChosenModifier, ModifierGroup } from "./menu";
+import { SIZE_GROUP_ID, type ChosenModifier, type ModifierGroup } from "./menu";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -166,6 +171,11 @@ function add(usage: Usage, itemId: string, qty: number) {
 
 const MAX_DEPTH = 5;
 
+/** A recipe line's amount with its prep loss added: 20 g at 10% waste takes 22 g. */
+function grossQty(line: RecipeLine): number {
+  return line.qty * (1 + Math.max(0, line.waste ?? 0) / 100);
+}
+
 /**
  * Adds what `qty` (in `unit`) of an item consumes to `usage`, in each stocked
  * item's own unit. An item with a recipe is expanded through it — its recipe
@@ -179,7 +189,8 @@ function consume(usage: Usage, byId: Map<string, InventoryItem>, itemId: string,
   const own = qty * factor;
   if (hasRecipe(item) && depth < MAX_DEPTH && !seen.has(itemId)) {
     const next = new Set(seen).add(itemId);
-    for (const line of item.recipe!) consume(usage, byId, line.itemId, line.qty * own, line.unit, depth + 1, next);
+    const batches = own / ((item.recipeYield ?? 0) > 0 ? item.recipeYield! : 1);
+    for (const line of item.recipe!) consume(usage, byId, line.itemId, grossQty(line) * batches, line.unit, depth + 1, next);
     return;
   }
   add(usage, itemId, own);
@@ -189,10 +200,18 @@ function optionRecipe(groups: ModifierGroup[], mod: ChosenModifier): RecipeLine[
   return groups.find((g) => g.id === mod.groupId)?.options.find((o) => o.id === mod.optionId)?.recipe ?? [];
 }
 
+/** The recipe of the size picked on an order line, when that size has its own. */
+function sizeRecipe(item: InventoryItem | undefined, modifiers: ChosenModifier[] | undefined): RecipeLine[] | undefined {
+  const sizeId = modifiers?.find((m) => m.groupId === SIZE_GROUP_ID)?.optionId;
+  const recipe = sizeId ? item?.sizes?.find((sz) => sz.id === sizeId)?.recipe : undefined;
+  return recipe?.length ? recipe : undefined;
+}
+
 /**
- * What one order line uses: the item's recipe (or the item itself) plus its
- * options' recipe lines, times the quantity. A line never puts stock back —
- * an ingredient an option takes away below zero counts as zero.
+ * What one order line uses: the picked size's recipe, else the item's recipe
+ * (or the item itself), plus its options' recipe lines, times the quantity. A
+ * line never puts stock back — an ingredient an option takes away below zero
+ * counts as zero.
  */
 export function lineUsage(
   line: { itemId: string; qty: number; modifiers?: ChosenModifier[] },
@@ -201,12 +220,29 @@ export function lineUsage(
 ): Usage {
   const byId = new Map(items.map((i) => [i.id, i]));
   const usage: Usage = new Map();
-  consume(usage, byId, line.itemId, line.qty, undefined, 0, new Set());
+  const bySize = sizeRecipe(byId.get(line.itemId), line.modifiers);
+  if (bySize) {
+    for (const r of bySize) consume(usage, byId, r.itemId, grossQty(r) * line.qty, r.unit, 1, new Set([line.itemId]));
+  } else {
+    consume(usage, byId, line.itemId, line.qty, undefined, 0, new Set());
+  }
   for (const mod of line.modifiers ?? []) {
-    for (const r of optionRecipe(groups, mod)) consume(usage, byId, r.itemId, r.qty * line.qty, r.unit, 1, new Set([line.itemId]));
+    for (const r of optionRecipe(groups, mod)) consume(usage, byId, r.itemId, grossQty(r) * line.qty, r.unit, 1, new Set([line.itemId]));
   }
   for (const [id, q] of usage) if (q <= 0) usage.delete(id);
   return usage;
+}
+
+/** What one of an order line costs to make — its size and options included — at today's cost prices. */
+export function lineCost(
+  line: { itemId: string; modifiers?: ChosenModifier[] },
+  items: InventoryItem[],
+  groups: ModifierGroup[],
+): number {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  let total = 0;
+  for (const [id, q] of lineUsage({ ...line, qty: 1 }, items, groups)) total += q * (byId.get(id)?.costPrice ?? 0);
+  return total;
 }
 
 /** Cost of `qty` (in `unit`) of an item: through its recipe if it has one. */
@@ -226,7 +262,7 @@ export function itemCost(item: InventoryItem, items: InventoryItem[]): number {
 /** Cost a recipe adds (or saves, when negative). */
 export function recipeCost(lines: RecipeLine[] | undefined, items: InventoryItem[]): number {
   const byId = new Map(items.map((i) => [i.id, i]));
-  return (lines ?? []).reduce((sum, l) => sum + Math.sign(l.qty) * costOf(byId, l.itemId, Math.abs(l.qty), l.unit), 0);
+  return (lines ?? []).reduce((sum, l) => sum + Math.sign(l.qty) * costOf(byId, l.itemId, Math.abs(grossQty(l)), l.unit), 0);
 }
 
 /**
