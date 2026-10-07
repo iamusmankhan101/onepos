@@ -65,9 +65,14 @@ export default function RecipeEditor({ lines, onChange, items, money, allowNegat
             </select>
             <input type="number" step="any" min={allowNegative ? undefined : 0} value={line.qty || ""} placeholder="0"
               onChange={(e) => patch(index, { qty: Number(e.target.value) || 0 })} style={INP} aria-label={`Quantity of ${item?.name ?? "ingredient"}`} />
-            <select value={line.unit} onChange={(e) => patch(index, { unit: e.target.value as InventoryUnit })} style={INP} aria-label="Unit">
-              {units.map((u) => <option key={u} value={u}>{u}</option>)}
-            </select>
+            {units.length > 1 ? (
+              <select value={line.unit} onChange={(e) => patch(index, { unit: e.target.value as InventoryUnit })} style={INP} aria-label="Unit">
+                {units.map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
+            ) : (
+              // Counted stock (pcs, pack…) has no g/ml to convert to — say so rather than offer a one-item list.
+              <span style={{ ...INP, background: "#f7f7fb", color: "#6b6b8a", textAlign: "center" }} title={`${item?.name ?? "This item"} is stocked in ${line.unit}`}>{line.unit}</span>
+            )}
             {!allowNegative && (
               <input type="number" step="any" min={0} max={100} value={line.waste || ""} placeholder="0%" title="Prep loss % — trimming, peeling, bones"
                 onChange={(e) => patch(index, { waste: Math.min(100, Math.max(0, Number(e.target.value) || 0)) || undefined })} style={INP} aria-label={`Prep loss % of ${item?.name ?? "ingredient"}`} />
@@ -94,6 +99,17 @@ export default function RecipeEditor({ lines, onChange, items, money, allowNegat
           </span>
         )}
       </div>
+      {(() => {
+        // Counted ingredients can only be used in their own unit; point at where that's changed.
+        const counted = lines.map((l) => byId.get(l.itemId)).filter((i): i is InventoryItem => !!i && compatibleUnits(i.unit).length === 1);
+        if (!counted.length) return null;
+        const names = [...new Set(counted.map((i) => `${i.name} (${i.unit})`))].join(", ");
+        return (
+          <div style={{ fontSize: 11, color: "#9898b0" }}>
+            {names}: counted in whole units, so the recipe uses the same unit. To measure in g or ml, change the stock unit to kg or l on the Inventory page.
+          </div>
+        );
+      })()}
       {!allowNegative && lines.length > 0 && (
         <div style={{ fontSize: 11, color: "#9898b0" }}>Prep loss % (optional): the share lost to trimming or peeling — 10% on 20 g takes 22 g out of stock.</div>
       )}
