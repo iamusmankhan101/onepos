@@ -11,7 +11,7 @@ import PageTitle from "@/components/page-title";
 import { useBusinessType } from "@/lib/use-business-type";
 import ModifierGroupsEditor from "@/components/modifier-groups-editor";
 import { CAFE_MENU_CATEGORIES, RESTAURANT_MENU_CATEGORIES, getModifierGroups, sizePriceRange } from "@/lib/menu";
-import { costPercent, recipeCandidates, recipeCost, refreshRecipeCosts, stockLevel, tracksStock } from "@/lib/stock";
+import { costPercent, isCounted, recipeCandidates, recipeCost, refreshRecipeCosts, stockLevel, tracksStock } from "@/lib/stock";
 import RecipeEditor from "@/components/recipe-editor";
 import type { RecipeLine } from "@/lib/types";
 import {
@@ -179,6 +179,8 @@ type ItemForm = {
   useRecipe: boolean; recipe: RecipeLine[];
   /** How much one batch of the recipe makes, in the item's unit — "2" kg of sauce. */
   recipeYield: string;
+  /** Counted units: what one holds — 1 bottle = 1500 ml — so recipes can use ml of it. */
+  holdsQty: string; holdsUnit: InventoryUnit;
   /** Sold in sizes, each at its own price (replaces the single selling price). */
   useSizes: boolean; sizes: SizeDraft[];
 };
@@ -201,7 +203,7 @@ const EMPTY_FORM: ItemForm = {
   variablePrice: false, priceRangeMin: "", priceRangeMax: "",
   menuCategory: "", modifierGroupIds: [],
   takeawayPrice: "", deliveryPrice: "",
-  useRecipe: false, recipe: [], recipeYield: "",
+  useRecipe: false, recipe: [], recipeYield: "", holdsQty: "", holdsUnit: "ml",
   useSizes: false, sizes: [],
 };
 
@@ -223,6 +225,7 @@ function itemToForm(item: InventoryItem): ItemForm {
     useRecipe: !!item.recipe?.length,
     recipe: item.recipe ?? [],
     recipeYield: item.recipeYield ? String(item.recipeYield) : "",
+    holdsQty: item.contents ? String(item.contents.qty) : "", holdsUnit: item.contents?.unit ?? "ml",
     useSizes: !!item.sizes?.length,
     // A size without its own recipe used the item's — start it from that.
     sizes: (item.sizes ?? []).map((sz) => ({ id: sz.id, name: sz.name, price: String(sz.price), recipe: sz.recipe ?? item.recipe ?? [] })),
@@ -257,6 +260,8 @@ function formToItem(form: ItemForm, existing: InventoryItem | undefined, items: 
     costPrice: madeToOrder ? Math.round((recipeCost(recipe, items) / (recipeYield ?? 1)) * 100) / 100 : Number(form.costPrice),
     recipe: madeToOrder ? recipe : undefined,
     recipeYield,
+    contents: !madeToOrder && isCounted(form.unit) && Number(form.holdsQty) > 0 && form.holdsUnit !== form.unit
+      ? { qty: Number(form.holdsQty), unit: form.holdsUnit } : undefined,
     // A sized item's "price" is its cheapest size — what the POS tile shows as "from".
     retailPrice: sized
       ? Math.min(...sizes.map((sz) => sz.price))
@@ -394,6 +399,16 @@ function ItemFormFields({ form, set, items, selfId }: { form: ItemForm; set: (k:
       </Field>}
       {businessType.restaurantMode && (
         <RecipeSection form={form} set={set} items={items} selfId={selfId} />
+      )}
+      {businessType.restaurantMode && !form.useRecipe && isCounted(form.unit) && (
+        <Field label={`Each ${form.unit} holds`} hint={`Optional. Lets recipes use ml, g or pcs of it — 1 ${form.unit} = 1500 ml.`}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input type="number" min="0" step="any" value={form.holdsQty} onChange={(e) => set("holdsQty", e.target.value)} placeholder="e.g. 1500" style={INP} />
+            <select value={form.holdsUnit} onChange={(e) => set("holdsUnit", e.target.value)} style={{ ...INP, width: 90 }} aria-label="Unit it holds">
+              {UNITS.filter((u) => u !== form.unit).map((u) => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </div>
+        </Field>
       )}
       {!(businessType.restaurantMode && form.useRecipe) && (
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

@@ -133,6 +133,36 @@ export function compatibleUnits(unit: InventoryUnit): InventoryUnit[] {
   return (Object.keys(SCALE) as InventoryUnit[]).filter((u) => SCALE[u]!.base === s.base);
 }
 
+/**
+ * Multiplier turning a quantity in `from` into the item's own unit: g → kg
+ * directly, or ml → bottles through what one bottle holds (item.contents).
+ * Null when there's no way across (ml of something counted in pcs).
+ */
+export function itemUnitFactor(from: InventoryUnit, item: Pick<InventoryItem, "unit" | "contents">): number | null {
+  const direct = unitFactor(from, item.unit);
+  if (direct !== null) return direct;
+  const c = item.contents;
+  if (!c || !(c.qty > 0)) return null;
+  const f = unitFactor(from, c.unit);
+  return f === null ? null : f / c.qty;
+}
+
+/** Whether an item is counted (pcs, pack, box, bottle) rather than weighed or measured. */
+export function isCounted(unit: InventoryUnit): boolean {
+  return compatibleUnits(unit).length === 1;
+}
+
+/** Every unit a recipe can measure this item in: its own family, plus what one of it holds. */
+export function recipeUnits(item: Pick<InventoryItem, "unit" | "contents">): InventoryUnit[] {
+  const extra = item.contents && item.contents.qty > 0 ? compatibleUnits(item.contents.unit) : [];
+  return [...new Set([...compatibleUnits(item.unit), ...extra])];
+}
+
+/** The unit a new recipe line uses: ml for a bottle that holds 1.5 l, g for kg stock. */
+export function recipeUnit(item: Pick<InventoryItem, "unit" | "contents">): InventoryUnit {
+  return portionUnit(item.contents && item.contents.qty > 0 && isCounted(item.unit) ? item.contents.unit : item.unit);
+}
+
 /** A sensible unit to measure a portion of this item in: g for kg stock, ml for l. */
 export function portionUnit(unit: InventoryUnit): InventoryUnit {
   return unit === "kg" ? "g" : unit === "l" ? "ml" : unit;
@@ -184,7 +214,7 @@ function grossQty(line: RecipeLine): number {
 function consume(usage: Usage, byId: Map<string, InventoryItem>, itemId: string, qty: number, unit: InventoryUnit | undefined, depth: number, seen: Set<string>) {
   const item = byId.get(itemId);
   if (!item) return;
-  const factor = unit ? unitFactor(unit, item.unit) : 1;
+  const factor = unit ? itemUnitFactor(unit, item) : 1;
   if (factor === null) return;
   const own = qty * factor;
   if (hasRecipe(item) && depth < MAX_DEPTH && !seen.has(itemId)) {

@@ -211,6 +211,11 @@ export interface InventoryItem {
   /** Which business section this item belongs to (e.g. "Men's", "Women's"). Free text, cosmetic only. */
   section?: string;
   unit: InventoryUnit;
+  /**
+   * What one of a counted unit holds — a bottle of 1500 ml, a pack of 500 g, a
+   * box of 24 pcs — so recipes can use ml, g or pcs of it (lib/stock.ts).
+   */
+  contents?: { qty: number; unit: InventoryUnit };
   currentStock: number;
   minStock: number;
   costPrice: number;

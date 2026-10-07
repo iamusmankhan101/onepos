@@ -9,9 +9,9 @@
 import { useMemo, useState } from "react";
 import { Plus, Trash2, X } from "lucide-react";
 import {
-  WASTE_REASONS, compatibleUnits, fmtQty, hasRecipe, localDate, newStockId, nextPurchaseNumber,
-  portionUnit, purchaseTotal, recordMovement, refreshRecipeCosts, saleChanges, savePurchaseOrder,
-  saveSuppliers, tracksStock, unitFactor,
+  WASTE_REASONS, fmtQty, hasRecipe, isCounted, itemUnitFactor, localDate, newStockId, nextPurchaseNumber,
+  purchaseTotal, recipeUnit, recipeUnits, recordMovement, refreshRecipeCosts, saleChanges, savePurchaseOrder,
+  saveSuppliers, tracksStock,
   type PurchaseLine, type PurchaseOrder, type Supplier,
 } from "@/lib/stock";
 import { getModifierGroups } from "@/lib/menu";
@@ -97,6 +97,8 @@ export function IngredientModal({ item, suppliers, money, onClose, noun = "ingre
 }) {
   const [name, setName] = useState(item?.name ?? "");
   const [unit, setUnit] = useState<InventoryUnit>(item?.unit ?? "kg");
+  const [holdsQty, setHoldsQty] = useState(item?.contents ? String(item.contents.qty) : "");
+  const [holdsUnit, setHoldsUnit] = useState<InventoryUnit>(item?.contents?.unit ?? "ml");
   const [category, setCategory] = useState<InventoryCategory>(item?.category ?? "supplies");
   const [opening, setOpening] = useState("");
   const [minStock, setMinStock] = useState(item ? String(item.minStock) : "");
@@ -120,6 +122,7 @@ export function IngredientModal({ item, suppliers, money, onClose, noun = "ingre
         costPrice: Number(cost) || 0,
         supplier: supplier.trim() || undefined,
         expiresOn: expiresOn || undefined,
+        contents: isCounted(unit) && Number(holdsQty) > 0 && holdsUnit !== unit ? { qty: Number(holdsQty), unit: holdsUnit } : undefined,
       };
       const list = item ? all.map((i) => (i.id === item.id ? next : i)) : [next, ...all];
       saveInventory(refreshRecipeCosts(list));
@@ -174,6 +177,25 @@ export function IngredientModal({ item, suppliers, money, onClose, noun = "ingre
         </Field>
         <Field label="Expires on"><input type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} style={INP} /></Field>
       </div>
+      {isCounted(unit) && (
+        <Field label={`Each ${unit} holds`} hint={`Optional. Lets recipes use ml, g or pcs of it — "1 ${unit} = 1500 ml" makes 30 ml in a recipe take 0.02 ${unit}.`}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input type="number" min={0} step="any" value={holdsQty} onChange={(e) => setHoldsQty(e.target.value)} placeholder="e.g. 1500" style={INP} />
+            <select value={holdsUnit} onChange={(e) => setHoldsUnit(e.target.value as InventoryUnit)} style={{ ...INP, width: 90 }} aria-label="Unit it holds">
+              {UNITS.filter((u) => u !== unit).map((u) => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </div>
+        </Field>
+      )}
+      {Number(cost) > 0 && isCounted(unit) && Number(holdsQty) > 0 && (() => {
+        // An example a cashier can sanity-check: 100 ml / 100 g, or one of anything else.
+        const example = holdsUnit === "ml" || holdsUnit === "g" ? 100 : 1;
+        return (
+          <div style={{ fontSize: 12, color: "#6b6b8a" }}>
+            So {example} {holdsUnit} in a recipe costs {money((Number(cost) * example) / Number(holdsQty))}.
+          </div>
+        );
+      })()}
       {Number(cost) > 0 && (unit === "kg" || unit === "l") && (
         <div style={{ fontSize: 12, color: "#6b6b8a" }}>
           So {unit === "kg" ? "18 g" : "250 ml"} in a recipe costs {money(Number(cost) * (unit === "kg" ? 0.018 : 0.25))}.
@@ -462,7 +484,7 @@ export function WasteModal({ items, initialItemId, money, by, onClose }: {
   const item = items.find((i) => i.id === itemId);
   const recipe = hasRecipe(item);
   const [qty, setQty] = useState("");
-  const [unit, setUnit] = useState<InventoryUnit>(item ? (recipe ? item.unit : portionUnit(item.unit)) : "pcs");
+  const [unit, setUnit] = useState<InventoryUnit>(item ? (recipe ? item.unit : recipeUnit(item)) : "pcs");
   const [reason, setReason] = useState(WASTE_REASONS[0]);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -470,14 +492,14 @@ export function WasteModal({ items, initialItemId, money, by, onClose }: {
   function pick(id: string) {
     setItemId(id);
     const it = items.find((i) => i.id === id);
-    if (it) setUnit(hasRecipe(it) ? it.unit : portionUnit(it.unit));
+    if (it) setUnit(hasRecipe(it) ? it.unit : recipeUnit(it));
   }
 
   const amount = Number(qty) || 0;
   const changes = useMemo(() => {
     if (!item || amount <= 0) return [];
     if (recipe) return saleChanges([{ itemId: item.id, qty: amount }], items, getModifierGroups());
-    const f = unitFactor(unit, item.unit) ?? 1;
+    const f = itemUnitFactor(unit, item) ?? 1;
     return [{ itemId: item.id, qty: -amount * f }];
   }, [item, amount, recipe, unit, items]);
   const value = changes.reduce((s, c) => s + Math.abs(c.qty) * (items.find((i) => i.id === c.itemId)?.costPrice ?? 0), 0);
@@ -509,7 +531,7 @@ export function WasteModal({ items, initialItemId, money, by, onClose }: {
             <input autoFocus type="number" min={0} step="any" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" style={INP} />
             {!recipe && item && (
               <select value={unit} onChange={(e) => setUnit(e.target.value as InventoryUnit)} style={{ ...INP, width: 76 }} aria-label="Unit">
-                {compatibleUnits(item.unit).map((u) => <option key={u} value={u}>{u}</option>)}
+                {recipeUnits(item).map((u) => <option key={u} value={u}>{u}</option>)}
               </select>
             )}
           </div>

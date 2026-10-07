@@ -26,6 +26,9 @@ const items: InventoryItem[] = [
     { id: "s", name: "Small", price: 900, recipe: [{ itemId: "dough", qty: 180, unit: "g" }, { itemId: "sauce", qty: 100, unit: "g" }] },
     { id: "l", name: "Large", price: 1800, recipe: [{ itemId: "dough", qty: 350, unit: "g" }, { itemId: "cheese", qty: 220, unit: "g" }, { itemId: "sauce", qty: 100, unit: "g" }] },
   ] },
+  // Syrup stocked in bottles of 1.5 l at 900 each; a mocktail uses 30 ml.
+  { ...ing("syrup", "bottle", 900), contents: { qty: 1.5, unit: "l" } },
+  { ...ing("mocktail", "pcs", 0), retailPrice: 500, recipe: [{ itemId: "syrup", qty: 30, unit: "ml" }] },
 ];
 const by = (changes: { itemId: string; qty: number }[]) => Object.fromEntries(changes.map((c) => [c.itemId, c.qty]));
 const size = (optionId: string) => [{ groupId: SIZE_GROUP_ID, group: "Size", optionId, name: optionId, price: 0 }];
@@ -41,6 +44,10 @@ assert.deepEqual(by(saleChanges([{ itemId: "pizza", qty: 1, modifiers: size("l")
 // A small one uses the small recipe.
 assert.deepEqual(by(saleChanges([{ itemId: "pizza", qty: 2, modifiers: size("s") }], items, [])),
   { dough: -0.36, paste: -0.05, garlic: -0.003 });
+
+// 30 ml of a 1.5 l bottle: −0.02 bottle, costing 18.
+assert.deepEqual(by(saleChanges([{ itemId: "mocktail", qty: 1 }], items, [])), { syrup: -0.02 });
+assert.equal(Math.round(lineCost({ itemId: "mocktail" }, items, []) * 100) / 100, 18);
 
 // Automatic sold-out: 100 patties in stock. 99 already on open orders leaves
 // one burger; a second runs short of patties.

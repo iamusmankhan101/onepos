@@ -8,7 +8,7 @@
  */
 
 import { Plus, Trash2 } from "lucide-react";
-import { compatibleUnits, hasRecipe, portionUnit, recipeCost } from "@/lib/stock";
+import { hasRecipe, isCounted, recipeCost, recipeUnit, recipeUnits } from "@/lib/stock";
 import type { InventoryItem, InventoryUnit, RecipeLine } from "@/lib/types";
 
 const INP: React.CSSProperties = {
@@ -37,13 +37,13 @@ export default function RecipeEditor({ lines, onChange, items, money, allowNegat
   function pick(index: number, itemId: string) {
     const item = byId.get(itemId);
     if (!item) return;
-    patch(index, { itemId, unit: portionUnit(item.unit) });
+    patch(index, { itemId, unit: recipeUnit(item) });
   }
 
   function addLine() {
     const first = sorted.find((i) => !lines.some((l) => l.itemId === i.id));
     if (!first) return;
-    onChange([...lines, { itemId: first.id, qty: 0, unit: portionUnit(first.unit) }]);
+    onChange([...lines, { itemId: first.id, qty: 0, unit: recipeUnit(first) }]);
   }
 
   return (
@@ -53,7 +53,7 @@ export default function RecipeEditor({ lines, onChange, items, money, allowNegat
       )}
       {lines.map((line, index) => {
         const item = byId.get(line.itemId);
-        const units: InventoryUnit[] = item ? compatibleUnits(item.unit) : [line.unit];
+        const units: InventoryUnit[] = item ? recipeUnits(item) : [line.unit];
         const lineCost = recipeCost([line], items);
         return (
           <div key={index} className={allowNegative ? "rc-row" : "rc-row rc-waste"} style={{ display: "grid", gridTemplateColumns: allowNegative ? "minmax(0, 1fr) 72px 58px 64px 30px" : "minmax(0, 1fr) 72px 58px 56px 64px 30px", gap: 6, alignItems: "center" }}>
@@ -100,13 +100,13 @@ export default function RecipeEditor({ lines, onChange, items, money, allowNegat
         )}
       </div>
       {(() => {
-        // Counted ingredients can only be used in their own unit; point at where that's changed.
-        const counted = lines.map((l) => byId.get(l.itemId)).filter((i): i is InventoryItem => !!i && compatibleUnits(i.unit).length === 1);
+        // A counted ingredient needs its size (1 bottle = 1500 ml) before a recipe can use ml or g of it.
+        const counted = lines.map((l) => byId.get(l.itemId)).filter((i): i is InventoryItem => !!i && isCounted(i.unit) && !i.contents);
         if (!counted.length) return null;
-        const names = [...new Set(counted.map((i) => `${i.name} (${i.unit})`))].join(", ");
+        const names = [...new Set(counted.map((i) => i.name))].join(", ");
         return (
           <div style={{ fontSize: 11, color: "#9898b0" }}>
-            {names}: counted in whole units, so the recipe uses the same unit. To measure in g or ml, change the stock unit to kg or l on the Inventory page.
+            {names}: to use ml, g or pcs instead of {counted[0].unit}, set what one {counted[0].unit} holds — Inventory → edit → &quot;Each {counted[0].unit} holds&quot;.
           </div>
         );
       })()}
