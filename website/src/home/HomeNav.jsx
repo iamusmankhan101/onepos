@@ -33,9 +33,9 @@ export default function HomeNav() {
           <a className="hp-nav__mark" href="#top" aria-label="Pointly, back to top">
             <img
               className="hp-lockup"
-              src="/pointly-lockup.png"
-              width="965"
-              height="362"
+              src="/pointly-lockup-orange.png"
+              width="321"
+              height="120"
               alt="Pointly, powered by Salon Central"
             />
           </a>
@@ -50,7 +50,7 @@ export default function HomeNav() {
 
           <div className="hp-nav__end">
             <a
-              className="hp-btn hp-btn--white hp-btn--sm"
+              className="hp-btn hp-btn--orange hp-btn--sm"
               href={whatsAppLink('Hi Pointly, I have a question about the point of sale.')}
               target="_blank"
               rel="noopener noreferrer"

@@ -1,88 +1,98 @@
-import Ripple from './Ripple.jsx'
-import Till from './Till.jsx'
-import { Arrow } from '../components/Icons.jsx'
+import { Arrow, FeatureIcon } from '../components/Icons.jsx'
 import { whatsAppLink } from './copy.js'
 
-const Info = () => (
-  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-    <circle cx="12" cy="12" r="9" />
-    <path d="M12 11v5M12 8h.01" strokeLinecap="round" />
-  </svg>
-)
+// The six ways the till takes payment, strung along an arc above the screens.
+// `t` is the position along the curve, left to right.
+const RAIL = [
+  { t: 0.05, icon: 'cash', label: 'Cash' },
+  { t: 0.2, icon: 'card', label: 'Card' },
+  { t: 0.35, icon: 'phone', label: 'JazzCash' },
+  { t: 0.5, icon: 'receipt', label: 'Receipt', hub: true },
+  { t: 0.65, icon: 'phone', label: 'EasyPaisa' },
+  { t: 0.8, icon: 'bolt', label: 'Raast' },
+  { t: 0.95, icon: 'bank', label: 'Bank' },
+]
+
+// Height of the arc path below at t, as a % of its 120-unit viewBox, so the
+// bubbles sit exactly on the drawn line at any width.
+const arcTop = (t) => ((120 - 360 * t + 360 * t * t) / 120) * 100
 
 export default function HomeHero() {
   return (
     <section className="hp-hero" id="top">
-      <div className="hp-hero__glow" aria-hidden="true" />
-      <Ripple className="hp-ripple hp-ripple--l" />
-      <Ripple className="hp-ripple hp-ripple--r" />
+      <h1 className="hp-hero__title">
+        Sell, Stock And Get Paid <br />
+        <em>From One Screen</em>
+      </h1>
 
-      <div className="hp-shell">
-        <h1 className="hp-hero__title">
-          Sell, Stock And Get Paid <br />
-          From <em>One Screen</em>
-        </h1>
+      <p className="hp-hero__sub">
+        Pointly is the point of sale for salons, clinics and shops. Ring up services and
+        products, take cash, card or a wallet, and hand over the receipt. Stock, loyalty points
+        and today's profit update themselves.
+      </p>
 
-        <p className="hp-hero__sub">
-          Pointly is the point of sale for salons, clinics and shops. Ring up services and products,
-          take cash, card or a wallet, and hand over the receipt. Stock, loyalty points and
-          today's profit update themselves.
-        </p>
-
-        <div className="hp-hero__cta">
-          <a
-            className="hp-btn hp-btn--orange hp-btn--lg"
-            href={whatsAppLink("Hi Pointly, I'd like to get started. Can you show me the app?")}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Get Started
-            <Arrow />
-          </a>
-          <a className="hp-btn hp-btn--dark hp-btn--lg" href="#features">
-            See Features
-          </a>
-        </div>
-
-        <div className="hp-float">
-          <div className="hp-float__inner">
-            <span className="hp-chip hp-chip--a">
-              <i aria-hidden="true">↑</i>
-              347.23%
-            </span>
-
-            {/* display:contents on desktop, a real row once the layout narrows */}
-            <div className="hp-statRow">
-              <div className="hp-stat hp-stat--a">
-                <p className="hp-stat__k">
-                  Total Sales
-                  <Info />
-                </p>
-                <p className="hp-stat__v">Rs 234.98K</p>
-                <p className="hp-stat__d">↑ 25.45%</p>
-              </div>
-
-              <div className="hp-stat hp-stat--b">
-                <p className="hp-stat__k">
-                  Monthly GMV
-                  <Info />
-                </p>
-                <p className="hp-stat__v">Rs 567.34K</p>
-                <p className="hp-stat__d hp-stat__d--muted">This month</p>
-              </div>
-            </div>
-
-            <span className="hp-chip hp-chip--b">
-              <i aria-hidden="true">●</i>
-              Sells offline
-            </span>
-
-            <Till />
-          </div>
-        </div>
+      <div className="hp-hero__cta">
+        <a
+          className="hp-btn hp-btn--orange hp-btn--lg"
+          href={whatsAppLink("Hi Pointly, I'd like to get started. Can you show me the app?")}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Get Started
+          <Arrow />
+        </a>
+        <a className="hp-btn hp-btn--line hp-btn--lg" href="#features">
+          See Features
+        </a>
       </div>
 
-      <div className="hp-hero__floor" aria-hidden="true" />
+      <div className="hp-rail">
+        <svg className="hp-rail__line" viewBox="0 0 1000 120" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0 120 Q500 -60 1000 120" />
+        </svg>
+        <ul aria-label="Ways to take payment">
+          {RAIL.map((r) => (
+            <li
+              key={r.label}
+              className={`hp-rail__dot${r.hub ? ' hp-rail__dot--hub' : ''}`}
+              style={{ left: `${r.t * 100}%`, top: `${arcTop(r.t)}%` }}
+            >
+              <FeatureIcon name={r.icon} />
+              <span>{r.label}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* Real captures of the app (the same ones HomeScreens.jsx shows), the
+          till up front and two more screens fanned out behind it. */}
+      <div className="hp-stage">
+        <img className="hp-stage__side hp-stage__side--l" src="/screens/revenue.webp" width="1600" height="1000" alt="" decoding="async" />
+        <img className="hp-stage__side hp-stage__side--r" src="/screens/clients.webp" width="1600" height="1000" alt="" decoding="async" />
+
+        <figure className="hp-stage__main">
+          <div className="hp-stage__bar" aria-hidden="true">
+            <span className="hp-stage__dots">
+              <i />
+              <i />
+              <i />
+            </span>
+            <span className="hp-stage__url">pointly.app/dashboard/pos</span>
+            <span className="hp-stage__live">
+              <i />
+              Posting live
+            </span>
+          </div>
+          <img
+            src="/screens/pos.webp"
+            width="1600"
+            height="1000"
+            alt="The Pointly point-of-sale screen: a selected customer with 1,845 loyalty points, the service and product catalogue, and a three-item cart totalling PKR 16,600"
+            fetchPriority="high"
+            decoding="async"
+          />
+        </figure>
+      </div>
     </section>
   )
 }

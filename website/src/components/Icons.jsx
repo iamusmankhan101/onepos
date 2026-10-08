@@ -95,6 +95,31 @@ const glyphs = {
       <path d="M12 9.5v5M9.8 12.4L12 14.6l2.2-2.2" />
     </>
   ),
+  cash: (
+    <>
+      <rect x="3" y="6.5" width="18" height="11" rx="1.5" />
+      <circle cx="12" cy="12" r="2.4" />
+      <path d="M6.5 9.5v.01M17.5 14.5v.01" />
+    </>
+  ),
+  card: (
+    <>
+      <rect x="3" y="5.5" width="18" height="13" rx="2" />
+      <path d="M3 10h18M7 15h3" />
+    </>
+  ),
+  phone: (
+    <>
+      <rect x="7" y="3" width="10" height="18" rx="2" />
+      <path d="M11 17.5h2" />
+    </>
+  ),
+  bank: (
+    <>
+      <path d="M3.5 9L12 4l8.5 5h-17z" />
+      <path d="M6 11.5v5.5M10 11.5v5.5M14 11.5v5.5M18 11.5v5.5M3.5 20h17" />
+    </>
+  ),
   api: (
     <>
       <path d="M9 4H6a2 2 0 00-2 2v3M15 4h3a2 2 0 012 2v3M9 20H6a2 2 0 01-2-2v-3M15 20h3a2 2 0 002-2v-3" />
