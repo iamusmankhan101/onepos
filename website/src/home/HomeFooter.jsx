@@ -1,14 +1,16 @@
-import { FOOTER } from '../data.js'
+import { FOOTER, FEATURES } from '../data.js'
 import { INDUSTRY_PAGES } from './industries.js'
 
-// The Industries column links to the real industry pages; the rest still point home.
-const COLUMNS = FOOTER.map((col) => ({
-  title: col.title,
-  links:
-    col.title === 'Industries'
-      ? INDUSTRY_PAGES.map((p) => ({ label: p.label, href: `/${p.slug}/` }))
-      : col.links.map((label) => ({ label, href: '/' })),
-}))
+// Features lists the homepage's module grid, Industries links to the industry
+// pages, and Company still points home.
+const COLUMNS = [
+  { title: 'Features', links: FEATURES.map((f) => ({ label: f.title, href: '/#platform' })) },
+  { title: 'Industries', links: INDUSTRY_PAGES.map((p) => ({ label: p.label, href: `/${p.slug}/` })) },
+  ...FOOTER.filter((col) => col.title === 'Company').map((col) => ({
+    title: col.title,
+    links: col.links.map((label) => ({ label, href: '/' })),
+  })),
+]
 
 export default function HomeFooter() {
   return (
