@@ -192,6 +192,7 @@ body {
   align-items: center;
   gap: 16px;
   height: 78px;
+  position: relative; /* the Features panel spans the whole row */
 }
 .hp-nav--stuck .hp-nav__row { height: 64px; }
 .hp-nav--open { background: #fff; }
@@ -240,6 +241,102 @@ body {
 .hp-nav__links a { transition: color 0.2s; }
 .hp-nav__links a:hover,
 .hp-nav__links a[aria-current] { color: var(--hp-o); }
+
+/* --- Features mega-menu -------------------------------------- */
+.hp-drop__trigger { display: inline-flex; align-items: center; gap: 6px; }
+.hp-drop__trigger svg { transition: transform 0.2s; }
+.hp-drop:hover .hp-drop__trigger,
+.hp-drop:focus-within .hp-drop__trigger { color: var(--hp-o); }
+.hp-drop:hover .hp-drop__trigger svg,
+.hp-drop:focus-within .hp-drop__trigger svg { transform: rotate(180deg); }
+
+.hp-drop__panel {
+  position: absolute;
+  top: calc(100% - 6px);
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: 290px 1fr;
+  gap: 14px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid var(--hp-line-2);
+  border-radius: var(--hp-r-lg);
+  box-shadow: 0 30px 70px rgba(28, 16, 8, 0.14), 0 4px 14px rgba(28, 16, 8, 0.05);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition: opacity 0.2s, transform 0.2s, visibility 0.2s;
+}
+/* a bridge over the gap between the link and the panel, so the pointer can cross it */
+.hp-drop__panel::before { content: ''; position: absolute; inset: -26px 0 100%; }
+.hp-drop:hover .hp-drop__panel,
+.hp-drop:focus-within .hp-drop__panel { opacity: 1; visibility: visible; transform: none; }
+
+.hp-drop__intro {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 28px 26px;
+  border-radius: var(--hp-r);
+  background: linear-gradient(160deg, var(--hp-o-tint) 0%, #fff 100%);
+}
+.hp-drop__intro .hp-label { color: var(--hp-o-deep); }
+.hp-drop__intro h3 {
+  margin-top: 10px;
+  font-family: var(--hp-display);
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+  color: var(--hp-ink);
+}
+.hp-drop__intro p:not(.hp-label) { margin-top: 10px; font-size: 0.875rem; line-height: 1.6; color: var(--hp-ink-3); }
+.hp-drop__intro a {
+  margin-top: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--hp-o);
+}
+
+.hp-drop__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.hp-drop__item {
+  height: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--hp-line-2);
+  border-radius: var(--hp-r);
+  transition: border-color 0.2s, background 0.2s;
+}
+.hp-drop__item:hover { border-color: var(--hp-o-pale); background: var(--hp-o-tint); }
+.hp-drop__icon {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--hp-o);
+  background: var(--hp-o-tint);
+}
+.hp-drop__item b {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--hp-ink);
+}
+.hp-drop__item small {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--hp-ink-3);
+}
 
 .hp-nav__end { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 
