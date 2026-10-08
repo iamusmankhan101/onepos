@@ -42,7 +42,7 @@ export default function HomeNav() {
 
           <nav className="hp-nav__links" aria-label="Primary">
             {NAV.map((l) => (
-              <a key={l.href} href={l.href}>
+              <a key={l.href} href={l.href} aria-current={l.href === window.location.pathname ? 'page' : undefined}>
                 {l.label}
               </a>
             ))}

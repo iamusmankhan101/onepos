@@ -1,0 +1,73 @@
+// One entry per industry page. Each page lives at /<slug>/ (an index.html in
+// website/<slug>/ that tells main.jsx which entry to render). Every point is
+// something the app does today for that business type — keep it that way.
+export const INDUSTRY_PAGES = [
+  {
+    slug: 'restaurants',
+    label: 'Restaurants & cafés',
+    eyebrow: 'For restaurants & cafés',
+    title: 'Tables, Kitchen And Bill',
+    em: 'On One Screen',
+    sub: 'Take dine-in, takeaway and delivery orders, send each ticket to the right kitchen station, and settle at the table or the counter. Every plate takes its recipe out of stock.',
+    screen: { src: '/screens/revenue.webp', alt: 'The Pointly revenue screen: takings, transactions and average ticket for the period, broken down day by day' },
+    points: [
+      { icon: 'store', title: 'Floor plan and tables', body: "See every table's state at a glance. Move, merge or split a table, and keep the order open until the guest is ready to pay." },
+      { icon: 'bolt', title: 'Kitchen display', body: 'Tickets reach the kitchen and bar stations the moment they are sent, or print as KOTs. Mark a dish 86 when it runs out.' },
+      { icon: 'box', title: 'Recipe-based stock', body: 'Each menu item carries its recipe, so a sale deducts the ingredients. Menu costing shows what every plate costs to make.' },
+      { icon: 'receipt', title: 'Tax, service and split bills', body: 'Tax and service charge are added for you. Split a bill across cash, card and wallets, or refund it with a proper credit note.' },
+      { icon: 'shield', title: 'Manager approvals', body: 'Voids, large discounts and invoice edits ask for a manager, and every change is logged with its reason.' },
+      { icon: 'ledger', title: 'Shifts and day closing', body: 'Open each shift with a float, record pay-ins and pay-outs, and print the Z report when the drawer closes.' },
+    ],
+  },
+  {
+    slug: 'coffee-shops',
+    label: 'Coffee shops',
+    eyebrow: 'For coffee shops',
+    title: 'Pour, Ring Up And Serve',
+    em: 'Without The Queue',
+    sub: 'Ring up an oat-milk flat white with an extra shot in a few taps. The order goes straight to the bar, and the milk, beans and cups come off stock by size.',
+    screen: { src: '/screens/cashflow.webp', alt: 'The Pointly cash flow screen: income against expenses for the month, split into cash and online payments' },
+    points: [
+      { icon: 'star', title: 'Options and add-ons', body: 'Milk, sweetness, extra shots and syrups as option groups, priced and printed on the ticket. Starts from a ready café set you can edit.' },
+      { icon: 'box', title: 'Recipes per size', body: 'Small, regular and large each carry their own recipe, so a large latte uses more milk than a small one. Prep loss is counted too.' },
+      { icon: 'bolt', title: 'Straight to the bar', body: 'Orders appear on the bar display the moment they are placed, with every option spelled out for the barista.' },
+      { icon: 'shield', title: 'Auto sold-out', body: "Switch it on and an item greys out at the till when its ingredients run short, counting what's already in open orders." },
+      { icon: 'chart', title: 'Menu costing', body: 'The cost and margin of every drink and pastry from its recipe, plus expected usage set against what you actually used.' },
+      { icon: 'ledger', title: 'Shifts and day closing', body: 'Open each shift with a float, record pay-ins and pay-outs, and close the drawer with a Z report.' },
+    ],
+  },
+  {
+    slug: 'retail',
+    label: 'Retail marts & grocery stores',
+    eyebrow: 'For marts & grocery stores',
+    title: 'Scan, Bag And Settle',
+    em: 'In Seconds',
+    sub: 'A barcode till that keeps up with the queue, stock that warns you before a shelf runs empty, and a khata for the regulars who settle up at the end of the month.',
+    screen: { src: '/screens/products.webp', alt: 'The Pointly products screen: cost and retail price, supplier, barcode and stock level for each item, with low-stock rows flagged' },
+    points: [
+      { icon: 'bolt', title: 'Barcode till', body: 'Scan straight into the cart, add a discount and take cash, card, JazzCash, EasyPaisa, Raast or bank. Hold a bill and serve the next customer.' },
+      { icon: 'box', title: 'Stock and restock', body: 'Cost and retail price, supplier and barcode on every product. Low-stock items collect into a restock list you can send on WhatsApp.' },
+      { icon: 'users', title: 'Customer khata', body: "Sell on credit, take part payments, and see each customer's outstanding balance and full ledger." },
+      { icon: 'store', title: 'Suppliers and purchases', body: 'Raise purchase orders, receive the stock, and track what you owe each supplier, purchase returns included.' },
+      { icon: 'ledger', title: 'Cash and day closing', body: 'Open each shift with a float, record pay-ins and pay-outs, and print the Z report at closing.' },
+      { icon: 'cloud', title: 'Sells offline', body: 'The till keeps working when the internet drops, and everything syncs when the line returns.' },
+    ],
+  },
+  {
+    slug: 'dental-clinics',
+    label: 'Dental clinics',
+    eyebrow: 'For dental clinics',
+    title: 'Bill Treatments, Keep Records',
+    em: 'From The Front Desk',
+    sub: "Bill treatments and products on one invoice, take payment however the patient prefers, and keep every patient's visits, spend and notes one tap from the billing screen.",
+    screen: { src: '/screens/clients.webp', alt: 'The Pointly clients screen: visit count, lifetime spend, loyalty points and notes for each patient' },
+    points: [
+      { icon: 'users', title: 'Patient records', body: 'Visit count, lifetime spend and notes on every patient, with their whole history one tap from the billing screen.' },
+      { icon: 'receipt', title: 'Treatments and products together', body: 'Bill a scaling and a tube of sensitive toothpaste on the same numbered invoice, then print it or send the PDF on WhatsApp.' },
+      { icon: 'card', title: 'Every way patients pay', body: 'Cash, card, JazzCash, EasyPaisa, Raast or bank transfer, all recorded against the invoice.' },
+      { icon: 'trail', title: 'Dentist pay', body: "Set each dentist's pay as a commission rate, a fixed salary or both." },
+      { icon: 'star', title: 'Loyalty for regulars', body: 'Patients earn points on every visit and redeem them at the desk, with Bronze to Platinum tiers. On the Pro plan.' },
+      { icon: 'chart', title: 'Revenue and cash flow', body: 'Takings, expenses and net profit for any period, split into cash and online, and exportable as a PDF.' },
+    ],
+  },
+]

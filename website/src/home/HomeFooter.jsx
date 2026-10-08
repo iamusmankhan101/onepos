@@ -1,4 +1,14 @@
 import { FOOTER } from '../data.js'
+import { INDUSTRY_PAGES } from './industries.js'
+
+// The Industries column links to the real industry pages; the rest still point home.
+const COLUMNS = FOOTER.map((col) => ({
+  title: col.title,
+  links:
+    col.title === 'Industries'
+      ? INDUSTRY_PAGES.map((p) => ({ label: p.label, href: `/${p.slug}/` }))
+      : col.links.map((label) => ({ label, href: '/' })),
+}))
 
 export default function HomeFooter() {
   return (
@@ -21,13 +31,13 @@ export default function HomeFooter() {
             </p>
           </div>
 
-          {FOOTER.map((col) => (
+          {COLUMNS.map((col) => (
             <div key={col.title}>
               <h4>{col.title}</h4>
               <ul>
                 {col.links.map((l) => (
-                  <li key={l}>
-                    <a href="#top">{l}</a>
+                  <li key={l.label}>
+                    <a href={l.href}>{l.label}</a>
                   </li>
                 ))}
               </ul>

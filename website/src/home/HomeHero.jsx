@@ -70,29 +70,31 @@ export default function HomeHero() {
         <img className="hp-stage__side hp-stage__side--l" src="/screens/revenue.webp" width="1600" height="1000" alt="" decoding="async" />
         <img className="hp-stage__side hp-stage__side--r" src="/screens/clients.webp" width="1600" height="1000" alt="" decoding="async" />
 
-        <figure className="hp-stage__main">
-          <div className="hp-stage__bar" aria-hidden="true">
-            <span className="hp-stage__dots">
-              <i />
-              <i />
-              <i />
-            </span>
-            <span className="hp-stage__url">pointly.app/dashboard/pos</span>
-            <span className="hp-stage__live">
-              <i />
-              Posting live
-            </span>
-          </div>
-          <img
-            src="/screens/pos.webp"
-            width="1600"
-            height="1000"
-            alt="The Pointly point-of-sale screen: a selected customer with 1,845 loyalty points, the service and product catalogue, and a three-item cart totalling PKR 16,600"
-            fetchPriority="high"
-            decoding="async"
-          />
-        </figure>
+        <ScreenFrame
+          src="/screens/pos.webp"
+          alt="The Pointly point-of-sale screen: a selected customer with 1,845 loyalty points, the service and product catalogue, and a three-item cart totalling PKR 16,600"
+        />
       </div>
     </section>
+  )
+}
+
+// A screenshot in a slim app-window frame. Also used by the industry pages.
+export function ScreenFrame({ src, alt }) {
+  return (
+    <figure className="hp-stage__main">
+      <div className="hp-stage__bar" aria-hidden="true">
+        <span className="hp-stage__dots">
+          <i />
+          <i />
+          <i />
+        </span>
+        <span className="hp-stage__live">
+          <i />
+          Posting live
+        </span>
+      </div>
+      <img src={src} width="1600" height="1000" alt={alt} fetchPriority="high" decoding="async" />
+    </figure>
   )
 }

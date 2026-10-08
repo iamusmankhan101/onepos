@@ -4,7 +4,7 @@ import { FeatureIcon } from '../components/Icons.jsx'
 // The glow under the cursor: each card tracks the pointer in two custom
 // properties the CSS paints a radial gradient from. Pointer-only, so touch and
 // keyboard users simply don't get it.
-function trackGlow(e) {
+export function trackGlow(e) {
   const r = e.currentTarget.getBoundingClientRect()
   e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`)
   e.currentTarget.style.setProperty('--my', `${e.clientY - r.top}px`)

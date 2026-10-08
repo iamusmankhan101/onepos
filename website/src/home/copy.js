@@ -2,11 +2,11 @@
 // only the voice changes here.
 
 export const NAV = [
-  { label: 'Home', href: '#top' },
-  { label: 'About', href: '#platform' },
-  { label: 'Features', href: '#features' },
-  { label: 'Pricing', href: '#pricing' },
-  { label: 'Screens', href: '#screens' },
+  { label: 'Home', href: '/' },
+  { label: 'About', href: '/#platform' },
+  { label: 'Features', href: '/#features' },
+  { label: 'Pricing', href: '/#pricing' },
+  { label: 'Screens', href: '/#screens' },
 ]
 
 // Capability figures, not usage claims — each one is something the build does.

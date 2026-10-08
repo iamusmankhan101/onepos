@@ -239,7 +239,7 @@ body {
 }
 .hp-nav__links a { transition: color 0.2s; }
 .hp-nav__links a:hover,
-.hp-nav__links a:first-child { color: var(--hp-o); }
+.hp-nav__links a[aria-current] { color: var(--hp-o); }
 
 .hp-nav__end { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 
@@ -335,6 +335,10 @@ body {
   justify-content: center;
 }
 
+/* industry pages: a label over the title, one screen under the buttons */
+.hp-hero__eyebrow { margin-bottom: 16px; color: var(--hp-o-deep); }
+.hp-stage--solo { margin-top: clamp(40px, 5vw, 64px); }
+
 /* --- payment rail: bubbles on a shallow arc ----------------- */
 .hp-rail {
   position: relative;
@@ -417,18 +421,6 @@ body {
 .hp-stage__dots { display: flex; gap: 5px; }
 .hp-stage__dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--hp-line); }
 .hp-stage__dots i:first-child { background: var(--hp-o-lift); }
-.hp-stage__url {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--hp-mono);
-  font-size: 0.6875rem;
-  color: var(--hp-ink-3);
-  background: var(--hp-canvas);
-  border-radius: 999px;
-  padding: 3px 12px;
-}
 .hp-stage__live {
   margin-left: auto;
   flex-shrink: 0;
@@ -1344,7 +1336,6 @@ body {
   /* the fanned-out screens only crowd the till at this width */
   .hp-stage__side { display: none; }
   .hp-stage__main { width: 100%; }
-  .hp-stage__url { display: none; }
 }
 
 @media (max-width: 560px) {
