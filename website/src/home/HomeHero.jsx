@@ -4,7 +4,7 @@ import { whatsAppLink } from './copy.js'
 // The six ways the till takes payment, strung along an arc above the screens.
 // `t` is the position along the curve, left to right.
 const RAIL = [
-  { t: 0.05, logo: '/pay/cash.jpg', label: 'Cash', wide: true },
+  { t: 0.05, logo: '/pay/cash.png', label: 'Cash' },
   { t: 0.2, logo: '/pay/card.png', label: 'Card' },
   { t: 0.35, logo: '/pay/jazzcash.png', label: 'JazzCash' },
   { t: 0.5, icon: 'receipt', label: 'Receipt', hub: true },
@@ -54,7 +54,7 @@ export default function HomeHero() {
           {RAIL.map((r) => (
             <li
               key={r.label}
-              className={`hp-rail__dot${r.hub ? ' hp-rail__dot--hub' : ''}${r.wide ? ' hp-rail__dot--wide' : ''}`}
+              className={`hp-rail__dot${r.hub ? ' hp-rail__dot--hub' : ''}`}
               style={{ left: `${r.t * 100}%`, top: `${arcTop(r.t)}%` }}
             >
               {r.logo ? <img src={r.logo} alt="" /> : <FeatureIcon name={r.icon} />}
