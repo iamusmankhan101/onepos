@@ -487,6 +487,8 @@ body {
 }
 .hp-rail__dot--hub svg { width: 23px; height: 23px; }
 .hp-rail__dot img { width: 66%; height: 66%; object-fit: contain; }
+.hp-rail__dot--wide { overflow: hidden; }
+.hp-rail__dot--wide img { width: 100%; height: 100%; object-fit: cover; object-position: right; } /* the "5000" end of the note */
 
 /* --- the screens -------------------------------------------- */
 .hp-stage {
