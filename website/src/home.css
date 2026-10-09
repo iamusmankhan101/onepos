@@ -486,6 +486,7 @@ body {
   box-shadow: 0 0 0 7px rgba(255, 255, 255, 0.6), 0 12px 28px rgba(242, 104, 31, 0.4);
 }
 .hp-rail__dot--hub svg { width: 23px; height: 23px; }
+.hp-rail__dot img { width: 66%; height: 66%; object-fit: contain; }
 
 /* --- the screens -------------------------------------------- */
 .hp-stage {

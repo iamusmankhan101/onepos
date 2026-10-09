@@ -6,9 +6,9 @@ import { whatsAppLink } from './copy.js'
 const RAIL = [
   { t: 0.05, icon: 'cash', label: 'Cash' },
   { t: 0.2, icon: 'card', label: 'Card' },
-  { t: 0.35, icon: 'phone', label: 'JazzCash' },
+  { t: 0.35, logo: '/pay/jazzcash.png', label: 'JazzCash' },
   { t: 0.5, icon: 'receipt', label: 'Receipt', hub: true },
-  { t: 0.65, icon: 'phone', label: 'EasyPaisa' },
+  { t: 0.65, logo: '/pay/easypaisa.png', label: 'EasyPaisa' },
   { t: 0.8, icon: 'bolt', label: 'Raast' },
   { t: 0.95, icon: 'bank', label: 'Bank' },
 ]
@@ -57,7 +57,7 @@ export default function HomeHero() {
               className={`hp-rail__dot${r.hub ? ' hp-rail__dot--hub' : ''}`}
               style={{ left: `${r.t * 100}%`, top: `${arcTop(r.t)}%` }}
             >
-              <FeatureIcon name={r.icon} />
+              {r.logo ? <img src={r.logo} alt="" /> : <FeatureIcon name={r.icon} />}
               <span>{r.label}</span>
             </li>
           ))}
