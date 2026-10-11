@@ -68,6 +68,8 @@ export interface OrderLine {
   /** "No onions", "extra spicy" — printed on the kitchen ticket. */
   note?: string;
   station: Station;
+  /** Ordered by the guest from the QR menu (app/api/menu) — staff send it to the kitchen. */
+  fromQr?: boolean;
   /** Set once the line has gone to the kitchen; the line is locked from then on. */
   firedAt?: string;
   voided?: Approval;

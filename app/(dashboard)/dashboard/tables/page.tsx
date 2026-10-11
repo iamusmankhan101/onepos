@@ -14,16 +14,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   LayoutGrid, Plus, Pencil, Check, X, Users, Clock, Printer, ArrowRightLeft, Merge,
-  Split, Flame, Trash2, ReceiptText, UtensilsCrossed, BellRing, History, ShoppingBag, Bike,
+  Split, Flame, Trash2, ReceiptText, UtensilsCrossed, BellRing, History, ShoppingBag, Bike, QrCode, Send,
 } from "lucide-react";
 import MobilePageHeader from "@/components/mobile-page-header";
 import PageTitle from "@/components/page-title";
 import KotPrint from "@/components/kot-print";
 import ManagerApproval from "@/components/manager-approval";
+import QrMenuDialog from "@/components/qr-menu-dialog";
 import { useRestaurantData, chime } from "@/lib/use-restaurant";
 import {
-  ORDER_TYPE_LABEL, cancelOrder, deleteTable, freeTableSpot, getTables, liveLines, mergeOrders, minutesSince, moveOrder,
-  newId, nextOrderNumber, orderBill, orderLabel, saveOrder, saveTable, serveOrder, splitOrder,
+  ORDER_TYPE_LABEL, cancelOrder, deleteTable, fireOrder, freeTableSpot, getTables, liveLines, mergeOrders, minutesSince, moveOrder,
+  newId, nextOrderNumber, orderBill, orderLabel, saveOrder, saveTable, serveOrder, splitOrder, unfiredLines,
   tableState, type DiningTable, type KitchenTicket, type RestaurantOrder, type TableState,
 } from "@/lib/restaurant";
 import { getStoredStaff } from "@/lib/storage";
@@ -59,12 +60,14 @@ export default function TablesPage() {
   const [seatTable, setSeatTable] = useState<DiningTable | null>(null);
   const [openOrderId, setOpenOrderId] = useState<string | null>(null);
   const [historyTable, setHistoryTable] = useState<DiningTable | null>(null);
+  const [showQr, setShowQr] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   // Set once a drag actually moves a table, so the click that ends it doesn't also open the editor.
   const dragMoved = useRef(false);
   const readySeen = useRef<Set<string> | null>(null);
+  const qrSeen = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setStaff(getStoredStaff().filter((s) => s.isActive)), 0);
@@ -86,6 +89,16 @@ export default function TablesPage() {
     readySeen.current = ready;
     if (fresh) chime("ready");
   }, [tickets]);
+
+  // Orders with guest-sent (QR) lines nobody has sent to the kitchen yet.
+  const qrWaiting = useMemo(() => new Set(openOrders.filter((o) => unfiredLines(o).some((l) => l.fromQr)).map((o) => o.id)), [openOrders]);
+  useEffect(() => {
+    const lines = new Set(openOrders.flatMap((o) => unfiredLines(o).filter((l) => l.fromQr).map((l) => l.id)));
+    if (qrSeen.current === null) { qrSeen.current = lines; return; }
+    const fresh = [...lines].some((id) => !qrSeen.current!.has(id));
+    qrSeen.current = lines;
+    if (fresh) chime("new");
+  }, [openOrders]);
 
   const counts = useMemo(() => {
     const c: Record<TableState, number> = { free: 0, occupied: 0, ready: 0, bill: 0 };
@@ -165,6 +178,7 @@ export default function TablesPage() {
             subtitle={`${tables.length} tables · ${counts.free} free · ${counts.occupied + counts.ready + counts.bill} seated · ${counts.ready} with food ready`}
             right={
               <div style={{ display: "flex", gap: 8 }}>
+                {!editing && <button type="button" style={btn} onClick={() => setShowQr(true)}><QrCode size={14} /> QR menu</button>}
                 {editing && <button type="button" style={btn} onClick={() => setEditTable("new")}><Plus size={14} /> Add table</button>}
                 <button type="button" style={editing ? primary : btn} onClick={() => setEditing((v) => !v)}>
                   {editing ? <><Check size={14} /> Done</> : <><Pencil size={14} /> Edit layout</>}
@@ -183,6 +197,7 @@ export default function TablesPage() {
             </button>
           ))}
           {editing && <button type="button" className="mobile-only-flex" style={{ ...btn, height: 32, display: "none" }} onClick={() => setEditTable("new")}><Plus size={13} /> Add table</button>}
+          {!editing && <button type="button" className="mobile-only-flex" style={{ ...btn, height: 32, display: "none" }} onClick={() => setShowQr(true)}><QrCode size={13} /> QR menu</button>}
           <div style={{ flex: 1 }} />
           {(Object.keys(STATE_STYLE) as TableState[]).map((s) => (
             <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#6b6b8a" }}>
@@ -230,7 +245,7 @@ export default function TablesPage() {
                 type="button"
                 onPointerDown={(e) => onTablePointerDown(e, table)}
                 onClick={() => { if (dragMoved.current) { dragMoved.current = false; return; } clickTable(table); }}
-                className={state === "ready" && !editing ? "table-ready" : undefined}
+                className={!editing && order && qrWaiting.has(order.id) ? "table-qr" : state === "ready" && !editing ? "table-ready" : undefined}
                 style={{
                   position: "absolute", left: `${pos.x}%`, top: `${pos.y}%`, width: size.w, height: size.h,
                   minWidth: 74, minHeight: 64, borderRadius: table.shape === "round" ? "50%" : 14,
@@ -242,6 +257,9 @@ export default function TablesPage() {
                 }}
               >
                 <span style={{ fontSize: 14, fontWeight: 900, color: "#1d1d2f", lineHeight: 1 }}>{table.name}</span>
+                {!editing && order && qrWaiting.has(order.id) && (
+                  <span style={{ position: "absolute", top: -9, right: -6, fontSize: 9, fontWeight: 900, color: "#fff", background: "#2563eb", borderRadius: 99, padding: "2px 6px" }}>QR ORDER</span>
+                )}
                 {order && !editing ? (
                   <>
                     <span style={{ fontSize: 11, fontWeight: 800, color: style.color }}>{fmt(orderBill(order).total)}</span>
@@ -277,6 +295,7 @@ export default function TablesPage() {
                     <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 900, color: "#1d1d2f" }}>
                       <Icon size={14} color="#EA580C" /> {ORDER_TYPE_LABEL[o.type]} #{o.number}
                       {ready && <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 900, color: "#047857" }}>READY</span>}
+                      {qrWaiting.has(o.id) && <span style={{ marginLeft: ready ? 4 : "auto", fontSize: 10, fontWeight: 900, color: "#2563eb" }}>QR ORDER</span>}
                     </div>
                     <div style={{ fontSize: 11, color: "#9999b0", marginTop: 4 }}>
                       {o.clientName || "Walk-in"} · {liveLines(o).length} item{liveLines(o).length === 1 ? "" : "s"} · {fmt(orderBill(o).total)} · {minutesSince(o.createdAt, now)}m
@@ -314,9 +333,12 @@ export default function TablesPage() {
         />
       )}
       {historyTable && <TableHistory table={historyTable} orders={orders} onClose={() => setHistoryTable(null)} />}
+      {showQr && <QrMenuDialog tables={tables} onClose={() => setShowQr(false)} />}
 
       <style>{`
         .table-ready { animation: tableReady 1.4s ease-in-out infinite; }
+        .table-qr { animation: tableQr 1.4s ease-in-out infinite; }
+        @keyframes tableQr { 50% { box-shadow: 0 0 0 6px rgba(37,99,235,.3); } }
         @keyframes tableReady { 50% { box-shadow: 0 0 0 6px rgba(16,185,129,.28); } }
         @media (max-width: 900px) { .floor { aspect-ratio: 3 / 4 !important; } }
       `}</style>
@@ -450,6 +472,7 @@ function OrderPanel({ order, tables, openOrders, staff, readyCount, tickets, now
   const freeTables = tables.filter((t) => !occupiedIds.has(t.id));
   const otherOrders = openOrders.filter((o) => o.id !== order.id);
   const hasFired = liveLines(order).some((l) => l.firedAt);
+  const unsent = unfiredLines(order).length;
   const bill = orderBill(order);
 
   async function run(action: () => Promise<unknown>) {
@@ -507,7 +530,10 @@ function OrderPanel({ order, tables, openOrders, staff, readyCount, tickets, now
                   onChange={() => setSplitIds((prev) => { const n = new Set(prev); if (n.has(l.id)) n.delete(l.id); else n.add(l.id); return n; })} />
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 750, color: "#1d1d2f", textDecoration: l.voided ? "line-through" : "none" }}>{l.qty} × {l.name}</div>
+                <div style={{ fontSize: 13, fontWeight: 750, color: "#1d1d2f", textDecoration: l.voided ? "line-through" : "none" }}>
+                  {l.qty} × {l.name}
+                  {l.fromQr && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 900, color: "#2563eb" }}>QR</span>}
+                </div>
                 {l.modifiers && l.modifiers.length > 0 && <div style={{ fontSize: 11, fontWeight: 600, color: "#1d4ed8" }}>{l.modifiers.map((m) => m.name).join(" · ")}</div>}
                 {l.note && <div style={{ fontSize: 11, color: "#b45309" }}>{l.note}</div>}
                 <div style={{ fontSize: 10, fontWeight: 700, color: l.voided ? "#dc2626" : !l.firedAt ? "#d97706" : lineStatus.get(l.id) === "ready" ? "#047857" : lineStatus.get(l.id) === "served" ? "#6b7280" : "#059669", marginTop: 2 }}>
@@ -576,6 +602,11 @@ function OrderPanel({ order, tables, openOrders, staff, readyCount, tickets, now
             </span>
             <span style={{ fontSize: 22, fontWeight: 900, color: "#1d1d2f", whiteSpace: "nowrap" }}>{fmt(bill.total)}</span>
           </div>
+          {unsent > 0 && (
+            <button type="button" style={{ ...primary, width: "100%", marginBottom: 8, background: "#2563eb" }} onClick={() => run(() => fireOrder(order))}>
+              <Send size={14} /> Send {unsent} new item{unsent === 1 ? "" : "s"} to the kitchen
+            </button>
+          )}
           {readyCount > 0 && (
             <button type="button" style={{ ...primary, width: "100%", marginBottom: 8, background: "#059669" }} onClick={() => run(() => serveOrder(order.id))}>
               <BellRing size={14} /> Food ready — mark {readyCount} ticket{readyCount === 1 ? "" : "s"} served

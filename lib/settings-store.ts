@@ -180,6 +180,11 @@ const defaults = {
     requireOpenShift: false,    // restaurant mode: no sale until the cash drawer is opened
     autoSoldOut: false,         // restaurant mode: grey out a dish its ingredients can't cover
   },
+  // Restaurant mode: the public menu a table's QR code opens — see app/api/menu.
+  qrMenu: {
+    enabled: false,   // the menu page is live
+    ordering: false,  // guests can send orders from it (staff still send them to the kitchen)
+  },
 };
 
 function load() {
@@ -238,6 +243,7 @@ function load() {
       printer:  { ...dynamicDefaults.printer,  ...saved.printer  },
       charges:  { ...dynamicDefaults.charges,  ...saved.charges  },
       posRules: { ...dynamicDefaults.posRules, ...saved.posRules },
+      qrMenu:   { ...dynamicDefaults.qrMenu,   ...saved.qrMenu   },
     };
   } catch {
     return structuredClone(defaults);
